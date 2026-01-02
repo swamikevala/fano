@@ -35,6 +35,7 @@ from models import (
 from storage.db import Database
 from chunking import AtomicExtractor, AtomicInsight, InsightStatus
 from review_panel import AutomatedReviewer
+from augmentation import get_augmenter, Augmenter
 
 # Setup logging with UTF-8 encoding for Windows compatibility
 logging.basicConfig(
@@ -75,6 +76,9 @@ class Orchestrator:
 
         # Automated reviewer (initialized after browsers connect)
         self.reviewer: Optional[AutomatedReviewer] = None
+
+        # Augmenter for blessed insights (initialized after reviewer)
+        self.augmenter: Optional[Augmenter] = None
         
     async def run(self, process_backlog_first: bool = True):
         """Main exploration loop.
@@ -204,6 +208,17 @@ class Orchestrator:
                     data_dir=self.data_dir,
                 )
                 logger.info("Initialized automated review panel")
+
+                # Initialize augmenter (uses reviewer's Claude instance)
+                if CONFIG.get("augmentation", {}).get("enabled", False):
+                    self.augmenter = get_augmenter(
+                        claude_reviewer=self.reviewer.claude_reviewer,
+                        config=CONFIG,
+                        data_dir=self.data_dir,
+                    )
+                    if self.augmenter:
+                        logger.info("Initialized augmenter for blessed insights")
+
             except Exception as e:
                 logger.warning(f"Could not initialize review panel: {e}")
                 self.reviewer = None
@@ -901,8 +916,10 @@ CONTENT:
                 # Update status based on rating
                 if review.final_rating == "⚡":
                     insight.status = InsightStatus.BLESSED
-                    # Add to blessed insights
-                    self._bless_insight(insight)
+                    # Build review summary for augmentation context
+                    review_summary = self._build_review_summary(review)
+                    # Add to blessed insights and augment
+                    await self._bless_insight(insight, review_summary)
                 elif review.final_rating == "✗":
                     insight.status = InsightStatus.REJECTED
                 else:
@@ -920,6 +937,39 @@ CONTENT:
         """Get a summary of blessed axioms/insights for prompts."""
         # Use the axiom store's context method
         return self.axioms.get_context_for_exploration()
+
+    def _build_review_summary(self, review) -> str:
+        """
+        Build a summary of reviewer findings for augmentation context.
+
+        Extracts key points that reviewers found compelling, which helps
+        the augmenter understand what makes this insight worth illustrating.
+        """
+        parts = []
+
+        if not review.rounds:
+            return ""
+
+        # Get final round (most relevant reasoning)
+        final_round = review.rounds[-1]
+
+        for llm, resp in final_round.responses.items():
+            if resp.rating == "⚡":  # Only include endorsements
+                parts.append(f"{llm.title()} found compelling:")
+                if resp.naturalness_assessment:
+                    parts.append(f"  - Naturalness: {resp.naturalness_assessment}")
+                if resp.structural_analysis:
+                    parts.append(f"  - Structure: {resp.structural_analysis}")
+                if resp.reasoning:
+                    parts.append(f"  - Reasoning: {resp.reasoning}")
+
+        # Note if there were mind changes
+        if review.mind_changes:
+            for mc in review.mind_changes:
+                if mc.to_rating == "⚡":
+                    parts.append(f"{mc.llm.title()} changed to bless because: {mc.reason}")
+
+        return "\n".join(parts)
 
     def _get_blessed_insights(self) -> list[dict]:
         """Get list of blessed insights for dependency matching."""
@@ -950,8 +1000,8 @@ CONTENT:
 
         return blessed
 
-    def _bless_insight(self, insight: AtomicInsight):
-        """Add an insight to the blessed insights store."""
+    async def _bless_insight(self, insight: AtomicInsight, review_summary: str = ""):
+        """Add an insight to the blessed insights store and augment it."""
         import json
 
         blessed_file = self.data_dir / "blessed_insights.json"
@@ -979,3 +1029,19 @@ CONTENT:
             json.dump(data, f, indent=2, ensure_ascii=False)
 
         logger.info(f"Blessed insight [{insight.id}] added to axiom store")
+
+        # Augment the blessed insight (generate diagrams, tables, proofs, code)
+        if self.augmenter:
+            try:
+                augmented = await self.augmenter.augment_insight(
+                    insight_id=insight.id,
+                    insight_text=insight.insight,
+                    tags=insight.tags,
+                    dependencies=insight.depends_on,
+                    review_summary=review_summary,
+                )
+                aug_count = len(augmented.augmentations)
+                if aug_count > 0:
+                    logger.info(f"[{insight.id}] Generated {aug_count} augmentations")
+            except Exception as e:
+                logger.warning(f"[{insight.id}] Augmentation failed: {e}")

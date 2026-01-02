@@ -3,9 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Fano Explorer - Review</title>
+    <title>Fano Explorer - {{ page_title }}</title>
 
-    <!-- Google Fonts - similar to LLM interfaces -->
+    <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -22,11 +22,6 @@
             options: {
                 skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code'],
                 ignoreHtmlClass: 'no-mathjax'
-            },
-            startup: {
-                pageReady: () => {
-                    return MathJax.startup.defaultPageReady();
-                }
             }
         };
     </script>
@@ -39,81 +34,97 @@
             --border: #e5e7eb;
             --text: #1f2937;
             --text-dim: #6b7280;
-            --profound: #eab308;
+            --blessed: #eab308;
             --interesting: #3b82f6;
             --rejected: #ef4444;
             --accent: #0ea5e9;
             --code-bg: #f3f4f6;
+            --success: #22c55e;
+            --warning: #f59e0b;
         }
-        
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
         body {
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
             background: var(--bg);
             color: var(--text);
             min-height: 100vh;
-            padding: 2rem;
             font-size: 16px;
             line-height: 1.6;
         }
-        
-        .header {
-            text-align: center;
-            margin-bottom: 3rem;
-        }
-        
-        .header h1 {
-            font-size: 1.75rem;
-            letter-spacing: 0.1em;
-            color: var(--text);
-            margin-bottom: 0.5rem;
-            font-weight: 600;
-        }
-        
-        .header .subtitle {
-            color: var(--text-dim);
-            font-size: 0.9rem;
-        }
-        
-        .stats {
+
+        /* Navigation */
+        .nav {
+            background: var(--card);
+            border-bottom: 1px solid var(--border);
+            padding: 1rem 2rem;
             display: flex;
-            justify-content: center;
+            align-items: center;
             gap: 2rem;
-            margin-bottom: 3rem;
+            position: sticky;
+            top: 0;
+            z-index: 100;
         }
-        
-        .stat {
-            text-align: center;
+
+        .nav-brand {
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: var(--text);
+            text-decoration: none;
+            letter-spacing: 0.05em;
         }
-        
-        .stat-value {
-            font-size: 2rem;
-            font-weight: bold;
+
+        .nav-links {
+            display: flex;
+            gap: 0.5rem;
         }
-        
-        .stat-label {
-            font-size: 0.8rem;
+
+        .nav-link {
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            text-decoration: none;
             color: var(--text-dim);
-            text-transform: uppercase;
-            letter-spacing: 0.1em;
+            font-weight: 500;
+            font-size: 0.9rem;
+            transition: all 0.2s;
         }
-        
-        .stat.profound .stat-value { color: var(--profound); }
-        .stat.interesting .stat-value { color: var(--interesting); }
-        .stat.rejected .stat-value { color: var(--rejected); }
-        .stat.pending .stat-value { color: var(--accent); }
-        
-        .chunks {
-            max-width: 900px;
+
+        .nav-link:hover { background: var(--bg); color: var(--text); }
+        .nav-link.active { background: var(--accent); color: white; }
+        .nav-link.blessed { color: var(--blessed); }
+        .nav-link.interesting { color: var(--interesting); }
+        .nav-link.rejected { color: var(--rejected); }
+
+        .nav-stats {
+            margin-left: auto;
+            display: flex;
+            gap: 1.5rem;
+            font-size: 0.85rem;
+        }
+
+        .nav-stat { color: var(--text-dim); }
+        .nav-stat strong { font-weight: 600; }
+
+        /* Main Content */
+        .main {
+            max-width: 1000px;
             margin: 0 auto;
+            padding: 2rem;
         }
-        
-        .chunk {
+
+        .page-header {
+            margin-bottom: 2rem;
+        }
+
+        .page-title {
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: var(--text);
+        }
+
+        /* Insight Card */
+        .insight-card {
             background: var(--card);
             border: 1px solid var(--border);
             border-radius: 12px;
@@ -121,398 +132,830 @@
             overflow: hidden;
             box-shadow: 0 1px 3px rgba(0,0,0,0.1);
         }
-        
-        .chunk-header {
-            padding: 1.5rem;
+
+        .insight-card.disputed {
+            border-left: 4px solid var(--warning);
+        }
+
+        .insight-header {
+            padding: 1.25rem 1.5rem;
             border-bottom: 1px solid var(--border);
-        }
-        
-        .chunk-title {
-            font-size: 1.25rem;
-            margin-bottom: 0.5rem;
-            color: var(--text);
-            font-weight: 600;
-        }
-        
-        .chunk-meta {
             display: flex;
-            gap: 2rem;
-            color: var(--text-dim);
-            font-size: 0.85rem;
+            align-items: flex-start;
+            gap: 1rem;
         }
-        
-        .chunk-summary {
-            padding: 1rem 1.5rem;
-            background: #f0f9ff;
-            border-bottom: 1px solid var(--border);
-            font-style: italic;
+
+        .insight-rating {
+            font-size: 1.5rem;
+            line-height: 1;
+        }
+
+        .insight-meta {
+            flex: 1;
+        }
+
+        .insight-id {
+            font-family: 'SF Mono', monospace;
+            font-size: 0.8rem;
+            color: var(--text-dim);
+            margin-bottom: 0.25rem;
+        }
+
+        .insight-tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin-top: 0.5rem;
+        }
+
+        .tag {
+            background: var(--bg);
+            padding: 0.2rem 0.6rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
             color: var(--text-dim);
         }
-        
-        .chunk-content {
+
+        .tag.confidence-high { background: #dcfce7; color: #166534; }
+        .tag.confidence-medium { background: #fef3c7; color: #92400e; }
+        .tag.confidence-low { background: #fee2e2; color: #991b1b; }
+        .tag.disputed { background: #fef3c7; color: #92400e; }
+
+        /* Insight Content */
+        .insight-content {
             padding: 1.5rem;
-            max-height: 500px;
-            overflow-y: auto;
-            line-height: 1.7;
-        }
-        
-        /* Markdown content styling - LLM-like clean look */
-        .markdown-body {
-            font-size: 1rem;
-            line-height: 1.75;
-            color: var(--text);
+            font-size: 1.1rem;
+            line-height: 1.8;
+            background: #fafbfc;
         }
 
-        .markdown-body h1, .markdown-body h2, .markdown-body h3,
-        .markdown-body h4, .markdown-body h5, .markdown-body h6 {
-            color: var(--text);
-            margin: 1.5rem 0 0.75rem;
+        .insight-content blockquote {
+            border-left: 3px solid var(--accent);
+            padding-left: 1rem;
+            margin: 0;
+            font-style: italic;
+        }
+
+        /* Collapsible Sections */
+        .section {
+            border-top: 1px solid var(--border);
+        }
+
+        .section-header {
+            padding: 1rem 1.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            cursor: pointer;
+            background: var(--card);
+            transition: background 0.2s;
+        }
+
+        .section-header:hover { background: var(--bg); }
+
+        .section-icon { font-size: 1.25rem; }
+        .section-title { font-weight: 600; font-size: 0.95rem; }
+        .section-badge {
+            margin-left: auto;
+            background: var(--bg);
+            padding: 0.2rem 0.6rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            color: var(--text-dim);
+        }
+
+        .section-toggle {
+            margin-left: 0.5rem;
+            color: var(--text-dim);
+            transition: transform 0.2s;
+        }
+
+        .section.collapsed .section-toggle { transform: rotate(-90deg); }
+        .section.collapsed .section-content { display: none; }
+
+        .section-content {
+            padding: 1rem 1.5rem;
+            background: #fafbfc;
+            border-top: 1px solid var(--border);
+        }
+
+        /* Review Panel Display */
+        .review-round {
+            margin-bottom: 1.5rem;
+            padding-bottom: 1.5rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .review-round:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
+
+        .round-header {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            margin-bottom: 1rem;
+        }
+
+        .round-number {
+            background: var(--accent);
+            color: white;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
             font-weight: 600;
-            line-height: 1.3;
         }
 
-        .markdown-body h1 { font-size: 1.5rem; }
-        .markdown-body h2 { font-size: 1.35rem; border-bottom: 1px solid var(--border); padding-bottom: 0.4rem; }
-        .markdown-body h3 { font-size: 1.2rem; }
-        .markdown-body h4 { font-size: 1.1rem; }
-
-        .markdown-body h1:first-child, .markdown-body h2:first-child { margin-top: 0; }
-
-        .markdown-body p {
-            margin: 1rem 0;
+        .round-title { font-weight: 600; font-size: 0.9rem; }
+        .round-mode {
+            font-size: 0.75rem;
+            color: var(--text-dim);
+            background: var(--bg);
+            padding: 0.2rem 0.5rem;
+            border-radius: 4px;
         }
 
-        .markdown-body ul, .markdown-body ol {
-            margin: 1rem 0;
-            padding-left: 1.75rem;
+        .round-outcome {
+            margin-left: auto;
+            font-size: 0.8rem;
+            font-weight: 500;
         }
 
-        .markdown-body li {
+        .round-outcome.unanimous { color: var(--success); }
+        .round-outcome.split { color: var(--warning); }
+
+        .reviewer-responses {
+            display: grid;
+            gap: 0.75rem;
+        }
+
+        .reviewer-response {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 1rem;
+        }
+
+        .reviewer-header {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-bottom: 0.75rem;
+        }
+
+        .reviewer-name {
+            font-weight: 600;
+            font-size: 0.9rem;
+            text-transform: capitalize;
+        }
+
+        .reviewer-rating { font-size: 1.1rem; }
+        .reviewer-mode {
+            font-size: 0.7rem;
+            color: var(--text-dim);
+            background: var(--bg);
+            padding: 0.15rem 0.4rem;
+            border-radius: 3px;
+        }
+
+        .reviewer-changed {
+            margin-left: auto;
+            font-size: 0.75rem;
+            color: var(--warning);
+            font-weight: 500;
+        }
+
+        .reviewer-content {
+            font-size: 0.85rem;
+            color: var(--text-dim);
+            line-height: 1.6;
+        }
+
+        .reviewer-content strong { color: var(--text); }
+
+        /* Refinement Display */
+        .refinement-history {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .refinement-step {
+            display: flex;
+            gap: 1rem;
+            align-items: flex-start;
+        }
+
+        .refinement-arrow {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding-top: 0.5rem;
+        }
+
+        .refinement-version {
+            background: var(--accent);
+            color: white;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+
+        .refinement-line {
+            width: 2px;
+            height: 40px;
+            background: var(--border);
             margin: 0.5rem 0;
         }
 
-        .markdown-body li > ul, .markdown-body li > ol {
-            margin: 0.25rem 0;
+        .refinement-content {
+            flex: 1;
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 1rem;
         }
 
-        .markdown-body blockquote {
-            border-left: 3px solid var(--accent);
-            margin: 1rem 0;
-            padding: 0.75rem 1rem;
-            background: #f8fafc;
+        .refinement-text {
+            font-size: 0.9rem;
+            line-height: 1.6;
+            margin-bottom: 0.75rem;
+        }
+
+        .refinement-changes {
+            font-size: 0.8rem;
             color: var(--text-dim);
         }
 
-        .markdown-body blockquote p {
-            margin: 0;
+        .refinement-changes li { margin: 0.25rem 0; }
+
+        /* Augmentations Display */
+        .augmentation {
+            margin-bottom: 1.5rem;
+            padding-bottom: 1.5rem;
+            border-bottom: 1px solid var(--border);
         }
 
-        .markdown-body code {
-            background: var(--code-bg);
-            padding: 0.2em 0.4em;
-            border-radius: 4px;
-            font-size: 0.875em;
-            font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
-            color: #e11d48;
+        .augmentation:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
+
+        .augmentation-header {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            margin-bottom: 1rem;
         }
 
-        .markdown-body pre {
+        .augmentation-type {
+            font-size: 1.25rem;
+        }
+
+        .augmentation-title {
+            font-weight: 600;
+            font-size: 0.95rem;
+        }
+
+        .augmentation-verified {
+            margin-left: auto;
+            font-size: 0.8rem;
+            display: flex;
+            align-items: center;
+            gap: 0.25rem;
+        }
+
+        .augmentation-verified.success { color: var(--success); }
+        .augmentation-verified.failed { color: var(--rejected); }
+
+        .augmentation-content {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        /* Diagram */
+        .diagram-container {
+            padding: 1rem;
+            text-align: center;
+            background: white;
+        }
+
+        .diagram-container img {
+            max-width: 100%;
+            height: auto;
+        }
+
+        .diagram-caption {
+            padding: 0.75rem 1rem;
+            background: var(--bg);
+            font-size: 0.85rem;
+            color: var(--text-dim);
+            border-top: 1px solid var(--border);
+        }
+
+        /* Table */
+        .table-container {
+            overflow-x: auto;
+        }
+
+        .table-container table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .table-container th,
+        .table-container td {
+            border: 1px solid var(--border);
+            padding: 0.5rem 0.75rem;
+            text-align: left;
+            font-size: 0.85rem;
+        }
+
+        .table-container th {
+            background: var(--bg);
+            font-weight: 600;
+        }
+
+        /* Proof */
+        .proof-container {
+            padding: 1rem;
+            font-family: 'Georgia', serif;
+            line-height: 1.8;
+        }
+
+        .proof-container .theorem {
+            font-weight: 600;
+            margin-bottom: 1rem;
+        }
+
+        .proof-container .qed {
+            text-align: right;
+            margin-top: 1rem;
+        }
+
+        /* Code */
+        .code-container pre {
             background: #1e293b;
             color: #e2e8f0;
-            padding: 1rem 1.25rem;
-            border-radius: 8px;
+            padding: 1rem;
             overflow-x: auto;
-            margin: 1rem 0;
+            font-size: 0.85rem;
+            line-height: 1.5;
         }
 
-        .markdown-body pre code {
-            background: none;
-            padding: 0;
-            font-size: 0.875rem;
-            color: inherit;
-        }
-
-        .markdown-body table {
-            border-collapse: collapse;
-            width: 100%;
-            margin: 1rem 0;
-        }
-
-        .markdown-body th, .markdown-body td {
-            border: 1px solid var(--border);
-            padding: 0.625rem 0.875rem;
-            text-align: left;
-        }
-
-        .markdown-body th {
-            background: #f8fafc;
-            font-weight: 600;
-        }
-
-        .markdown-body hr {
-            border: none;
+        .code-output {
+            background: var(--bg);
+            padding: 1rem;
             border-top: 1px solid var(--border);
-            margin: 2rem 0;
         }
 
-        .markdown-body strong {
-            color: var(--text);
-            font-weight: 600;
+        .code-output-label {
+            font-size: 0.75rem;
+            color: var(--text-dim);
+            margin-bottom: 0.5rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
         }
 
-        .markdown-body em {
-            font-style: italic;
+        .code-output pre {
+            background: white;
+            border: 1px solid var(--border);
+            padding: 0.75rem;
+            font-size: 0.85rem;
+            border-radius: 4px;
         }
 
-        /* MathJax styling */
-        .MathJax {
-            font-size: 1em !important;
-        }
-
-        mjx-container {
-            overflow-x: auto;
-            overflow-y: hidden;
-            max-width: 100%;
-        }
-
-        mjx-container[display="true"] {
-            display: block;
-            margin: 1.25rem 0 !important;
-            text-align: center;
-        }
-        
-        .chunk-actions {
-            padding: 1.5rem;
+        /* Actions */
+        .insight-actions {
+            padding: 1.25rem 1.5rem;
             border-top: 1px solid var(--border);
             display: flex;
             gap: 1rem;
             align-items: center;
         }
-        
+
         .btn {
-            padding: 0.8rem 1.5rem;
+            padding: 0.6rem 1.25rem;
             border: none;
-            border-radius: 4px;
+            border-radius: 6px;
             cursor: pointer;
             font-family: inherit;
-            font-size: 1rem;
-            font-weight: bold;
+            font-size: 0.9rem;
+            font-weight: 600;
             transition: all 0.2s;
             display: flex;
             align-items: center;
-            gap: 0.5rem;
-        }
-        
-        .btn:hover {
-            transform: translateY(-1px);
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            gap: 0.4rem;
         }
 
-        .btn-profound {
-            background: var(--profound);
-            color: #000;
-        }
+        .btn:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
+        .btn-bless { background: var(--blessed); color: #000; }
+        .btn-interesting { background: var(--interesting); color: #fff; }
+        .btn-reject { background: #fff; border: 2px solid var(--rejected); color: var(--rejected); }
+        .btn-reject:hover { background: var(--rejected); color: #fff; }
 
-        .btn-interesting {
-            background: var(--interesting);
-            color: #fff;
-        }
-
-        .btn-rejected {
-            background: #fff;
-            border: 2px solid var(--rejected);
-            color: var(--rejected);
-        }
-
-        .btn-rejected:hover {
-            background: var(--rejected);
-            color: #fff;
-        }
-        
         .notes-input {
             flex: 1;
-            padding: 0.8rem;
+            padding: 0.6rem;
             background: #fff;
             border: 1px solid var(--border);
             border-radius: 6px;
-            color: var(--text);
             font-family: inherit;
-            font-size: 0.9rem;
+            font-size: 0.85rem;
         }
 
         .notes-input:focus {
             outline: none;
             border-color: var(--accent);
-            box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.1);
         }
 
-        .notes-input::placeholder {
-            color: var(--text-dim);
-        }
-        
+        /* Empty State */
         .empty-state {
             text-align: center;
             padding: 4rem 2rem;
             color: var(--text-dim);
         }
-        
-        .empty-state .icon {
-            font-size: 4rem;
-            margin-bottom: 1rem;
-        }
-        
-        .feedback-toast {
+
+        .empty-state .icon { font-size: 4rem; margin-bottom: 1rem; }
+
+        /* Toast */
+        .toast {
             position: fixed;
             bottom: 2rem;
             right: 2rem;
             padding: 1rem 2rem;
-            border-radius: 4px;
-            font-weight: bold;
+            border-radius: 8px;
+            font-weight: 600;
             animation: slideIn 0.3s ease;
             z-index: 1000;
-        }
-        
-        .feedback-toast.success {
-            background: var(--profound);
-            color: #000;
-        }
-        
-        @keyframes slideIn {
-            from {
-                transform: translateX(100%);
-                opacity: 0;
-            }
-            to {
-                transform: translateX(0);
-                opacity: 1;
-            }
-        }
-        
-        .profundity-bar {
-            height: 4px;
-            background: #e5e7eb;
-            border-radius: 2px;
-            margin-top: 0.5rem;
-            overflow: hidden;
+            background: var(--success);
+            color: white;
         }
 
-        .profundity-fill {
-            height: 100%;
-            background: linear-gradient(90deg, var(--interesting), var(--profound));
-            transition: width 0.3s;
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
         }
+
+        /* Markdown in content */
+        .markdown-body h1, .markdown-body h2, .markdown-body h3 {
+            margin: 1rem 0 0.5rem;
+            font-weight: 600;
+        }
+        .markdown-body p { margin: 0.5rem 0; }
+        .markdown-body ul, .markdown-body ol { margin: 0.5rem 0; padding-left: 1.5rem; }
+        .markdown-body code {
+            background: var(--code-bg);
+            padding: 0.15em 0.3em;
+            border-radius: 3px;
+            font-size: 0.875em;
+        }
+        .markdown-body pre {
+            background: #1e293b;
+            color: #e2e8f0;
+            padding: 1rem;
+            border-radius: 8px;
+            overflow-x: auto;
+        }
+        .markdown-body pre code { background: none; padding: 0; color: inherit; }
+        .markdown-body table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+        .markdown-body th, .markdown-body td { border: 1px solid var(--border); padding: 0.5rem; }
+        .markdown-body th { background: var(--bg); font-weight: 600; }
     </style>
 </head>
 <body>
-    <div class="header">
-        <h1>FANO EXPLORER</h1>
-        <p class="subtitle">Mathematical Research Review Interface</p>
-    </div>
-    
-    <div class="stats">
-        <div class="stat pending">
-            <div class="stat-value" id="stat-pending">{{ stats.pending or 0 }}</div>
-            <div class="stat-label">Pending</div>
+    <!-- Navigation -->
+    <nav class="nav">
+        <a href="/" class="nav-brand">FANO EXPLORER</a>
+        <div class="nav-links">
+            <a href="/" class="nav-link {% if current_status == 'pending' %}active{% endif %}">
+                Pending
+            </a>
+            <a href="/blessed" class="nav-link blessed {% if current_status == 'blessed' %}active{% endif %}">
+                ⚡ Blessed
+            </a>
+            <a href="/interesting" class="nav-link interesting {% if current_status == 'interesting' %}active{% endif %}">
+                ? Interesting
+            </a>
+            <a href="/rejected" class="nav-link rejected {% if current_status == 'rejected' %}active{% endif %}">
+                ✗ Rejected
+            </a>
         </div>
-        <div class="stat profound">
-            <div class="stat-value" id="stat-profound">{{ stats.profound or 0 }}</div>
-            <div class="stat-label">⚡ Profound</div>
+        <div class="nav-stats">
+            <span class="nav-stat"><strong id="stat-pending">{{ stats.pending or 0 }}</strong> pending</span>
+            <span class="nav-stat"><strong id="stat-blessed">{{ stats.blessed or 0 }}</strong> blessed</span>
+            <span class="nav-stat"><strong id="stat-interesting">{{ stats.interesting or 0 }}</strong> interesting</span>
         </div>
-        <div class="stat interesting">
-            <div class="stat-value" id="stat-interesting">{{ stats.interesting or 0 }}</div>
-            <div class="stat-label">? Interesting</div>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="main">
+        <div class="page-header">
+            <h1 class="page-title">{{ page_title }}</h1>
         </div>
-        <div class="stat rejected">
-            <div class="stat-value" id="stat-rejected">{{ stats.rejected or 0 }}</div>
-            <div class="stat-label">✗ Rejected</div>
-        </div>
-    </div>
-    
-    <div class="chunks">
-        {% if chunks %}
-            {% for chunk in chunks %}
-            <div class="chunk" id="chunk-{{ chunk.id }}">
-                <div class="chunk-header">
-                    <h2 class="chunk-title">{{ chunk.title }}</h2>
-                    <div class="chunk-meta">
-                        <span>ID: {{ chunk.id }}</span>
-                        <span>Thread: {{ chunk.thread_id }}</span>
-                        <span>{{ chunk.created_at.strftime('%Y-%m-%d %H:%M') }}</span>
-                        <span>Critiques: {{ chunk.critique_rounds }}</span>
+
+        {% if insights %}
+            {% for item in insights %}
+            {% set insight = item.insight %}
+            {% set review = item.review %}
+            {% set augmentations = item.augmentations %}
+
+            <article class="insight-card {% if insight.is_disputed %}disputed{% endif %}" id="insight-{{ insight.id }}">
+                <!-- Header -->
+                <div class="insight-header">
+                    <span class="insight-rating">{{ insight.rating or '○' }}</span>
+                    <div class="insight-meta">
+                        <div class="insight-id">
+                            {{ insight.id }} · {{ insight.extracted_at.strftime('%Y-%m-%d %H:%M') }}
+                            · via {{ insight.extraction_model }}
+                        </div>
+                        <div class="insight-tags">
+                            <span class="tag confidence-{{ insight.confidence }}">{{ insight.confidence }} confidence</span>
+                            {% if insight.is_disputed %}
+                            <span class="tag disputed">DISPUTED</span>
+                            {% endif %}
+                            {% for tag in insight.tags %}
+                            <span class="tag">{{ tag }}</span>
+                            {% endfor %}
+                        </div>
                     </div>
-                    <div class="profundity-bar">
-                        <div class="profundity-fill" style="width: {{ (chunk.profundity_score * 100)|int }}%"></div>
+                </div>
+
+                <!-- Insight Content -->
+                <div class="insight-content">
+                    <blockquote>{{ insight.insight }}</blockquote>
+                </div>
+
+                <!-- Dependencies -->
+                {% if insight.depends_on or insight.pending_dependencies %}
+                <div class="section collapsed">
+                    <div class="section-header" onclick="toggleSection(this)">
+                        <span class="section-icon">🔗</span>
+                        <span class="section-title">Dependencies</span>
+                        <span class="section-badge">{{ insight.depends_on|length + insight.pending_dependencies|length }}</span>
+                        <span class="section-toggle">▼</span>
+                    </div>
+                    <div class="section-content">
+                        {% if insight.depends_on %}
+                        <p><strong>Resolved:</strong> {{ insight.depends_on|join(', ') }}</p>
+                        {% endif %}
+                        {% if insight.pending_dependencies %}
+                        <p><strong>Pending:</strong></p>
+                        <ul>
+                            {% for dep in insight.pending_dependencies %}
+                            <li>{{ dep }}</li>
+                            {% endfor %}
+                        </ul>
+                        {% endif %}
                     </div>
                 </div>
-                
-                <div class="chunk-summary">
-                    {{ chunk.summary }}
+                {% endif %}
+
+                <!-- Review Panel -->
+                {% if review %}
+                <div class="section">
+                    <div class="section-header" onclick="toggleSection(this)">
+                        <span class="section-icon">🎯</span>
+                        <span class="section-title">Review Panel</span>
+                        <span class="section-badge">
+                            {% if review.is_unanimous %}Unanimous{% else %}{{ review.rounds|length }} rounds{% endif %}
+                        </span>
+                        <span class="section-toggle">▼</span>
+                    </div>
+                    <div class="section-content">
+                        {% for round in review.rounds %}
+                        <div class="review-round">
+                            <div class="round-header">
+                                <span class="round-number">{{ round.round_number }}</span>
+                                <span class="round-title">Round {{ round.round_number }}</span>
+                                <span class="round-mode">{{ round.mode }}</span>
+                                <span class="round-outcome {% if round.outcome == 'unanimous' %}unanimous{% else %}split{% endif %}">
+                                    {{ round.outcome }}
+                                </span>
+                            </div>
+                            <div class="reviewer-responses">
+                                {% for llm, resp in round.responses.items() %}
+                                <div class="reviewer-response">
+                                    <div class="reviewer-header">
+                                        <span class="reviewer-name">{{ llm }}</span>
+                                        <span class="reviewer-rating">{{ resp.rating }}</span>
+                                        <span class="reviewer-mode">{{ resp.mode }}</span>
+                                        {% if resp.changed_mind %}
+                                        <span class="reviewer-changed">↻ Changed from {{ resp.previous_rating }}</span>
+                                        {% endif %}
+                                    </div>
+                                    <div class="reviewer-content">
+                                        <p><strong>Reasoning:</strong> {{ resp.reasoning }}</p>
+                                        {% if resp.naturalness_assessment %}
+                                        <p><strong>Naturalness:</strong> {{ resp.naturalness_assessment }}</p>
+                                        {% endif %}
+                                        {% if resp.structural_analysis %}
+                                        <p><strong>Structure:</strong> {{ resp.structural_analysis }}</p>
+                                        {% endif %}
+                                    </div>
+                                </div>
+                                {% endfor %}
+                            </div>
+                        </div>
+                        {% endfor %}
+
+                        {% if review.mind_changes %}
+                        <div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border);">
+                            <strong>Mind Changes:</strong>
+                            <ul style="margin-top: 0.5rem; font-size: 0.85rem;">
+                                {% for mc in review.mind_changes %}
+                                <li>{{ mc.llm }} changed from {{ mc.from_rating }} to {{ mc.to_rating }}: {{ mc.reason }}</li>
+                                {% endfor %}
+                            </ul>
+                        </div>
+                        {% endif %}
+                    </div>
                 </div>
-                
-                <div class="chunk-content markdown-body">
-                    {{ chunk.content | markdown | safe }}
+                {% endif %}
+
+                <!-- Refinement History -->
+                {% if review and review.refinements %}
+                <div class="section collapsed">
+                    <div class="section-header" onclick="toggleSection(this)">
+                        <span class="section-icon">✏️</span>
+                        <span class="section-title">Refinement History</span>
+                        <span class="section-badge">{{ review.refinements|length }} refinements</span>
+                        <span class="section-toggle">▼</span>
+                    </div>
+                    <div class="section-content">
+                        <div class="refinement-history">
+                            {% for ref in review.refinements %}
+                            <div class="refinement-step">
+                                <div class="refinement-arrow">
+                                    <span class="refinement-version">v{{ ref.from_version }}</span>
+                                    <div class="refinement-line"></div>
+                                    <span class="refinement-version">v{{ ref.to_version }}</span>
+                                </div>
+                                <div class="refinement-content">
+                                    <div class="refinement-text">
+                                        <p style="text-decoration: line-through; color: var(--text-dim);">{{ ref.original_insight }}</p>
+                                        <p style="margin-top: 0.5rem;">→ {{ ref.refined_insight }}</p>
+                                    </div>
+                                    {% if ref.changes_made %}
+                                    <div class="refinement-changes">
+                                        <strong>Changes:</strong>
+                                        <ul>
+                                            {% for change in ref.changes_made %}
+                                            <li>{{ change }}</li>
+                                            {% endfor %}
+                                        </ul>
+                                    </div>
+                                    {% endif %}
+                                </div>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </div>
                 </div>
-                
-                <div class="chunk-actions">
-                    <button class="btn btn-profound" onclick="submitFeedback('{{ chunk.id }}', 'profound')">
-                        ⚡ Profound
+                {% endif %}
+
+                <!-- Augmentations -->
+                {% if augmentations and augmentations.augmentations %}
+                <div class="section">
+                    <div class="section-header" onclick="toggleSection(this)">
+                        <span class="section-icon">📎</span>
+                        <span class="section-title">Augmentations</span>
+                        <span class="section-badge">{{ augmentations.augmentations|length }}</span>
+                        <span class="section-toggle">▼</span>
+                    </div>
+                    <div class="section-content">
+                        {% for aug in augmentations.augmentations %}
+                        <div class="augmentation">
+                            <div class="augmentation-header">
+                                {% if aug.type.value == 'diagram' %}
+                                <span class="augmentation-type">📊</span>
+                                <span class="augmentation-title">Diagram</span>
+                                {% elif aug.type.value == 'table' %}
+                                <span class="augmentation-type">📋</span>
+                                <span class="augmentation-title">Table</span>
+                                {% elif aug.type.value == 'proof' %}
+                                <span class="augmentation-type">📝</span>
+                                <span class="augmentation-title">Formal Proof</span>
+                                {% elif aug.type.value == 'code' %}
+                                <span class="augmentation-type">💻</span>
+                                <span class="augmentation-title">Verification Code</span>
+                                {% endif %}
+
+                                {% if aug.verified %}
+                                <span class="augmentation-verified success">✓ Verified</span>
+                                {% elif aug.execution_success == false %}
+                                <span class="augmentation-verified failed">✗ Failed</span>
+                                {% endif %}
+                            </div>
+
+                            <div class="augmentation-content">
+                                {% if aug.type.value == 'diagram' %}
+                                <div class="diagram-container">
+                                    <img src="/api/augmentation/{{ insight.id }}/diagram"
+                                         alt="{{ aug.caption }}"
+                                         onerror="this.parentElement.innerHTML='<p style=\'color: var(--text-dim); padding: 2rem;\'>Diagram not yet generated. Run the diagram code to create the image.</p><pre style=\'text-align: left; font-size: 0.8rem; background: #1e293b; color: #e2e8f0; padding: 1rem; margin: 1rem; border-radius: 8px; overflow-x: auto;\'>{{ aug.content | e }}</pre>'">
+                                </div>
+                                {% if aug.caption %}
+                                <div class="diagram-caption">{{ aug.caption }}</div>
+                                {% endif %}
+
+                                {% elif aug.type.value == 'table' %}
+                                <div class="table-container markdown-body">
+                                    {{ aug.content | markdown | safe }}
+                                </div>
+
+                                {% elif aug.type.value == 'proof' %}
+                                <div class="proof-container markdown-body">
+                                    {{ aug.content | markdown | safe }}
+                                </div>
+                                {% if aug.verification_notes %}
+                                <div style="padding: 0.75rem 1rem; background: var(--bg); border-top: 1px solid var(--border); font-size: 0.85rem; color: var(--text-dim);">
+                                    {{ aug.verification_notes }}
+                                </div>
+                                {% endif %}
+
+                                {% elif aug.type.value == 'code' %}
+                                <div class="code-container">
+                                    <pre><code>{{ aug.content }}</code></pre>
+                                </div>
+                                {% if aug.execution_output %}
+                                <div class="code-output">
+                                    <div class="code-output-label">Output</div>
+                                    <pre>{{ aug.execution_output }}</pre>
+                                </div>
+                                {% endif %}
+                                {% endif %}
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endif %}
+
+                <!-- Actions (only for pending) -->
+                {% if current_status == 'pending' %}
+                <div class="insight-actions">
+                    <button class="btn btn-bless" onclick="submitFeedback('{{ insight.id }}', 'bless')">
+                        ⚡ Bless
                     </button>
-                    <button class="btn btn-interesting" onclick="submitFeedback('{{ chunk.id }}', 'interesting')">
+                    <button class="btn btn-interesting" onclick="submitFeedback('{{ insight.id }}', 'interesting')">
                         ? Interesting
                     </button>
-                    <button class="btn btn-rejected" onclick="submitFeedback('{{ chunk.id }}', 'rejected')">
-                        ✗ Wrong
+                    <button class="btn btn-reject" onclick="submitFeedback('{{ insight.id }}', 'reject')">
+                        ✗ Reject
                     </button>
-                    <input type="text" class="notes-input" id="notes-{{ chunk.id }}" 
+                    <input type="text" class="notes-input" id="notes-{{ insight.id }}"
                            placeholder="Optional notes...">
                 </div>
-            </div>
+                {% endif %}
+            </article>
             {% endfor %}
         {% else %}
             <div class="empty-state">
                 <div class="icon">✨</div>
-                <h2>No chunks pending review</h2>
-                <p>The exploration is running. Check back soon for new insights.</p>
+                <h2>No insights in this category</h2>
+                <p>{% if current_status == 'pending' %}The exploration is running. Check back soon for new insights.{% else %}Nothing here yet.{% endif %}</p>
             </div>
         {% endif %}
-    </div>
-    
+    </main>
+
     <script>
-        async function submitFeedback(chunkId, feedback) {
-            const notes = document.getElementById(`notes-${chunkId}`).value;
-            
+        function toggleSection(header) {
+            header.parentElement.classList.toggle('collapsed');
+        }
+
+        async function submitFeedback(insightId, feedback) {
+            const notes = document.getElementById(`notes-${insightId}`).value;
+
             try {
                 const response = await fetch('/api/feedback', {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
+                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        chunk_id: chunkId,
+                        insight_id: insightId,
                         feedback: feedback,
                         notes: notes
                     })
                 });
-                
+
                 const data = await response.json();
-                
+
                 if (data.success) {
-                    // Remove the chunk from the UI
-                    const chunkEl = document.getElementById(`chunk-${chunkId}`);
-                    chunkEl.style.opacity = '0';
-                    chunkEl.style.transform = 'translateX(100%)';
-                    chunkEl.style.transition = 'all 0.3s';
-                    
+                    const card = document.getElementById(`insight-${insightId}`);
+                    card.style.opacity = '0';
+                    card.style.transform = 'translateX(100%)';
+                    card.style.transition = 'all 0.3s';
+
                     setTimeout(() => {
-                        chunkEl.remove();
+                        card.remove();
                         updateStats();
-                        
-                        // Check if no more chunks
-                        if (document.querySelectorAll('.chunk').length === 0) {
+                        if (document.querySelectorAll('.insight-card').length === 0) {
                             location.reload();
                         }
                     }, 300);
-                    
+
                     showToast(`Marked as ${feedback}`);
                 } else {
                     alert('Error: ' + data.error);
@@ -522,43 +965,37 @@
                 alert('Failed to submit feedback');
             }
         }
-        
+
         async function updateStats() {
             try {
                 const response = await fetch('/api/stats');
                 const stats = await response.json();
-                
+
                 document.getElementById('stat-pending').textContent = stats.pending || 0;
-                document.getElementById('stat-profound').textContent = stats.profound || 0;
+                document.getElementById('stat-blessed').textContent = stats.blessed || 0;
                 document.getElementById('stat-interesting').textContent = stats.interesting || 0;
-                document.getElementById('stat-rejected').textContent = stats.rejected || 0;
             } catch (error) {
                 console.error('Error updating stats:', error);
             }
         }
-        
+
         function showToast(message) {
             const toast = document.createElement('div');
-            toast.className = 'feedback-toast success';
+            toast.className = 'toast';
             toast.textContent = message;
             document.body.appendChild(toast);
-            
-            setTimeout(() => {
-                toast.remove();
-            }, 2000);
+            setTimeout(() => toast.remove(), 2000);
         }
-        
-        // Refresh stats periodically
-        setInterval(updateStats, 30000);
 
-        // Trigger MathJax rendering after page load
+        // Trigger MathJax rendering
         document.addEventListener('DOMContentLoaded', function() {
             if (typeof MathJax !== 'undefined' && MathJax.typesetPromise) {
-                MathJax.typesetPromise().catch(function (err) {
-                    console.log('MathJax typeset failed: ' + err.message);
-                });
+                MathJax.typesetPromise().catch(err => console.log('MathJax error:', err));
             }
         });
+
+        // Refresh stats periodically
+        setInterval(updateStats, 30000);
     </script>
 </body>
 </html>

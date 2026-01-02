@@ -1,28 +1,35 @@
 """
-Review Server - Web UI for reviewing research chunks.
+Review Server - Web UI for reviewing research insights.
 
-Provides a simple local web interface for the human oracle to
-review pending chunks and provide feedback:
-- ⚡ Profound ("This is real")
-- ? Interesting ("Not sure yet")  
-- ✗ Wrong ("This isn't right")
+Provides a local web interface to view:
+- Atomic insights (pending, blessed, interesting, rejected)
+- Review panel decisions and deliberation
+- Refinement history
+- Augmentations (diagrams, tables, proofs, code)
 """
 
 import json
+import re
 from pathlib import Path
-from flask import Flask, render_template, request, jsonify, redirect, url_for
+from flask import Flask, render_template, request, jsonify, send_file
 import markdown
 import yaml
 
-from models import Chunk, ChunkStatus, ChunkFeedback, AxiomStore, BlessedInsight
+# Import models
+import sys
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from chunking import AtomicInsight, InsightStatus
+from review_panel.models import ChunkReview, ReviewRound, ReviewResponse
+from augmentation import AugmentedInsight, Augmentation, AugmentationType
 
-import re
 
 def render_markdown(text: str) -> str:
     """Convert markdown to HTML while preserving LaTeX math."""
+    if not text:
+        return ""
+
     # Protect LaTeX blocks from markdown processing
-    # Store math blocks and replace with placeholders
     math_blocks = []
 
     def save_math(match):
@@ -64,6 +71,7 @@ TEMPLATE_DIR = Path(__file__).parent.parent.parent / "templates"
 
 app = Flask(__name__, template_folder=str(TEMPLATE_DIR))
 
+
 # Register markdown filter for templates
 @app.template_filter('markdown')
 def markdown_filter(text):
@@ -73,128 +81,283 @@ def markdown_filter(text):
     return render_markdown(text)
 
 
-def get_pending_chunks() -> list[Chunk]:
-    """Load all pending chunks."""
-    chunks_dir = DATA_DIR / "chunks" / "pending"
-    chunks = []
-    print(f"[review] Looking for chunks in: {chunks_dir}")
-    if chunks_dir.exists():
-        json_files = list(chunks_dir.glob("*.json"))
-        print(f"[review] Found {len(json_files)} JSON files")
-        for json_file in json_files:
+def get_insights_by_status(status: str) -> list[AtomicInsight]:
+    """Load all insights with a given status."""
+    insights_dir = DATA_DIR / "chunks" / "insights" / status
+    insights = []
+
+    if insights_dir.exists():
+        for json_file in insights_dir.glob("*.json"):
             try:
-                chunk = Chunk.load(json_file)
-                print(f"[review] Loaded chunk: {chunk.id} - {chunk.title[:40]}...")
-                chunks.append(chunk)
+                insight = AtomicInsight.load(json_file)
+                insights.append(insight)
             except Exception as e:
                 print(f"[review] Error loading {json_file}: {e}")
-                import traceback
-                traceback.print_exc()
-    else:
-        print(f"[review] Chunks directory does not exist: {chunks_dir}")
-    print(f"[review] Returning {len(chunks)} chunks")
-    return sorted(chunks, key=lambda c: c.created_at, reverse=True)
+
+    return sorted(insights, key=lambda i: i.extracted_at, reverse=True)
 
 
-def get_chunk_by_id(chunk_id: str) -> Chunk:
-    """Load a specific chunk by ID."""
-    for status in ["pending", "profound", "interesting", "rejected"]:
-        json_path = DATA_DIR / "chunks" / status / f"{chunk_id}.json"
+def get_insight_by_id(insight_id: str) -> tuple[AtomicInsight, str]:
+    """Load a specific insight by ID, return (insight, status)."""
+    for status in ["pending", "blessed", "interesting", "rejected"]:
+        json_path = DATA_DIR / "chunks" / "insights" / status / f"{insight_id}.json"
         if json_path.exists():
-            return Chunk.load(json_path)
+            return AtomicInsight.load(json_path), status
+    return None, None
+
+
+def get_review_for_insight(insight_id: str) -> ChunkReview:
+    """Load review data for an insight."""
+    # Check completed reviews
+    review_path = DATA_DIR / "reviews" / "completed" / f"{insight_id}.json"
+    if review_path.exists():
+        with open(review_path, encoding="utf-8") as f:
+            return ChunkReview.from_dict(json.load(f))
+
+    # Check disputed reviews
+    review_path = DATA_DIR / "reviews" / "disputed" / f"{insight_id}.json"
+    if review_path.exists():
+        with open(review_path, encoding="utf-8") as f:
+            return ChunkReview.from_dict(json.load(f))
+
     return None
+
+
+def get_augmentations_for_insight(insight_id: str) -> AugmentedInsight:
+    """Load augmentations for an insight."""
+    aug_dir = DATA_DIR / "augmentations" / f"chunk_{insight_id}"
+    if aug_dir.exists():
+        return AugmentedInsight.load(aug_dir)
+    return None
+
+
+def get_stats() -> dict:
+    """Get insight counts by status."""
+    stats = {}
+    for status in ["pending", "blessed", "interesting", "rejected"]:
+        dir_path = DATA_DIR / "chunks" / "insights" / status
+        if dir_path.exists():
+            stats[status] = len(list(dir_path.glob("*.json")))
+        else:
+            stats[status] = 0
+    return stats
 
 
 @app.route("/")
 def index():
-    """Main review page showing pending chunks."""
-    chunks = get_pending_chunks()
-    
-    # Get stats
-    stats = {
-        "pending": len(list((DATA_DIR / "chunks" / "pending").glob("*.json"))) if (DATA_DIR / "chunks" / "pending").exists() else 0,
-        "profound": len(list((DATA_DIR / "chunks" / "profound").glob("*.json"))) if (DATA_DIR / "chunks" / "profound").exists() else 0,
-        "interesting": len(list((DATA_DIR / "chunks" / "interesting").glob("*.json"))) if (DATA_DIR / "chunks" / "interesting").exists() else 0,
-        "rejected": len(list((DATA_DIR / "chunks" / "rejected").glob("*.json"))) if (DATA_DIR / "chunks" / "rejected").exists() else 0,
-    }
-    
-    return render_template("review.html", chunks=chunks, stats=stats)
+    """Main page - show pending insights."""
+    insights = get_insights_by_status("pending")
+    stats = get_stats()
+
+    # Enrich insights with review and augmentation data
+    enriched = []
+    for insight in insights:
+        enriched.append({
+            "insight": insight,
+            "review": get_review_for_insight(insight.id),
+            "augmentations": get_augmentations_for_insight(insight.id),
+        })
+
+    return render_template(
+        "review.html",
+        insights=enriched,
+        stats=stats,
+        current_status="pending",
+        page_title="Pending Review",
+    )
 
 
-@app.route("/chunk/<chunk_id>")
-def view_chunk(chunk_id: str):
-    """View a specific chunk."""
-    chunk = get_chunk_by_id(chunk_id)
-    if not chunk:
-        return "Chunk not found", 404
-    return render_template("review.html", chunks=[chunk], viewing_single=True, stats={})
+@app.route("/blessed")
+def blessed():
+    """Show blessed insights with augmentations."""
+    insights = get_insights_by_status("blessed")
+    stats = get_stats()
+
+    enriched = []
+    for insight in insights:
+        enriched.append({
+            "insight": insight,
+            "review": get_review_for_insight(insight.id),
+            "augmentations": get_augmentations_for_insight(insight.id),
+        })
+
+    return render_template(
+        "review.html",
+        insights=enriched,
+        stats=stats,
+        current_status="blessed",
+        page_title="⚡ Blessed Insights",
+    )
+
+
+@app.route("/interesting")
+def interesting():
+    """Show interesting insights."""
+    insights = get_insights_by_status("interesting")
+    stats = get_stats()
+
+    enriched = []
+    for insight in insights:
+        enriched.append({
+            "insight": insight,
+            "review": get_review_for_insight(insight.id),
+            "augmentations": get_augmentations_for_insight(insight.id),
+        })
+
+    return render_template(
+        "review.html",
+        insights=enriched,
+        stats=stats,
+        current_status="interesting",
+        page_title="? Interesting",
+    )
+
+
+@app.route("/rejected")
+def rejected():
+    """Show rejected insights."""
+    insights = get_insights_by_status("rejected")
+    stats = get_stats()
+
+    enriched = []
+    for insight in insights:
+        enriched.append({
+            "insight": insight,
+            "review": get_review_for_insight(insight.id),
+            "augmentations": None,  # No augmentations for rejected
+        })
+
+    return render_template(
+        "review.html",
+        insights=enriched,
+        stats=stats,
+        current_status="rejected",
+        page_title="✗ Rejected",
+    )
+
+
+@app.route("/insight/<insight_id>")
+def view_insight(insight_id: str):
+    """View a single insight with full details."""
+    insight, status = get_insight_by_id(insight_id)
+    if not insight:
+        return "Insight not found", 404
+
+    enriched = [{
+        "insight": insight,
+        "review": get_review_for_insight(insight_id),
+        "augmentations": get_augmentations_for_insight(insight_id),
+    }]
+
+    return render_template(
+        "review.html",
+        insights=enriched,
+        stats=get_stats(),
+        current_status=status,
+        page_title=f"Insight {insight_id}",
+        viewing_single=True,
+    )
+
+
+@app.route("/api/insight/<insight_id>/review")
+def get_review_api(insight_id: str):
+    """API endpoint to get review data for an insight."""
+    review = get_review_for_insight(insight_id)
+    if not review:
+        return jsonify({"error": "Review not found"}), 404
+    return jsonify(review.to_dict())
+
+
+@app.route("/api/insight/<insight_id>/augmentations")
+def get_augmentations_api(insight_id: str):
+    """API endpoint to get augmentations for an insight."""
+    aug = get_augmentations_for_insight(insight_id)
+    if not aug:
+        return jsonify({"error": "No augmentations found"}), 404
+    return jsonify(aug.to_dict())
+
+
+@app.route("/api/augmentation/<insight_id>/diagram")
+def get_diagram(insight_id: str):
+    """Serve generated diagram image."""
+    # Check for generated image files
+    aug_dir = DATA_DIR / "augmentations" / f"chunk_{insight_id}"
+
+    for ext in ["svg", "png", "jpg"]:
+        img_path = aug_dir / f"diagram.{ext}"
+        if img_path.exists():
+            return send_file(img_path)
+
+    return "Diagram not found", 404
+
+
+@app.route("/api/stats")
+def stats_api():
+    """API endpoint to get stats."""
+    return jsonify(get_stats())
 
 
 @app.route("/api/feedback", methods=["POST"])
 def submit_feedback():
-    """Submit feedback for a chunk."""
+    """Submit manual feedback for a pending insight."""
     data = request.json
-    chunk_id = data.get("chunk_id")
-    feedback = data.get("feedback")  # profound, interesting, rejected
+    insight_id = data.get("insight_id")
+    feedback = data.get("feedback")  # "bless", "interesting", "reject"
     notes = data.get("notes", "")
-    
-    if not chunk_id or not feedback:
-        return jsonify({"error": "Missing chunk_id or feedback"}), 400
-    
-    if feedback not in ["profound", "interesting", "rejected"]:
-        return jsonify({"error": "Invalid feedback value"}), 400
-    
-    # Load chunk
-    chunk = get_chunk_by_id(chunk_id)
-    if not chunk:
-        return jsonify({"error": "Chunk not found"}), 404
-    
-    # Apply feedback
-    feedback_enum = ChunkFeedback(feedback)
-    chunk.apply_feedback(feedback_enum, notes)
-    
-    # Move to appropriate directory
-    old_status = ChunkStatus.PENDING
-    new_status = {
-        ChunkFeedback.PROFOUND: ChunkStatus.PROFOUND,
-        ChunkFeedback.INTERESTING: ChunkStatus.INTERESTING,
-        ChunkFeedback.REJECTED: ChunkStatus.REJECTED,
-    }[feedback_enum]
-    
-    chunk.move_to_status(DATA_DIR, new_status)
-    chunk.save(DATA_DIR)
-    
-    # If profound, also add to blessed insights
-    if feedback_enum == ChunkFeedback.PROFOUND:
-        axioms = AxiomStore(DATA_DIR)
-        insight = BlessedInsight.from_chunk(chunk)
-        axioms.add_blessed_insight(insight)
-    
-    return jsonify({"success": True, "new_status": new_status.value})
 
+    if not insight_id or not feedback:
+        return jsonify({"error": "Missing insight_id or feedback"}), 400
 
-@app.route("/api/stats")
-def get_stats():
-    """Get exploration statistics."""
-    stats = {
-        "pending": len(list((DATA_DIR / "chunks" / "pending").glob("*.json"))) if (DATA_DIR / "chunks" / "pending").exists() else 0,
-        "profound": len(list((DATA_DIR / "chunks" / "profound").glob("*.json"))) if (DATA_DIR / "chunks" / "profound").exists() else 0,
-        "interesting": len(list((DATA_DIR / "chunks" / "interesting").glob("*.json"))) if (DATA_DIR / "chunks" / "interesting").exists() else 0,
-        "rejected": len(list((DATA_DIR / "chunks" / "rejected").glob("*.json"))) if (DATA_DIR / "chunks" / "rejected").exists() else 0,
+    insight, current_status = get_insight_by_id(insight_id)
+    if not insight:
+        return jsonify({"error": "Insight not found"}), 404
+
+    # Map feedback to rating
+    rating_map = {
+        "bless": "⚡",
+        "interesting": "?",
+        "reject": "✗",
     }
-    return jsonify(stats)
+
+    if feedback not in rating_map:
+        return jsonify({"error": "Invalid feedback value"}), 400
+
+    # Apply rating
+    insight.apply_rating(rating_map[feedback], notes=f"Manual review: {notes}")
+
+    # Remove from old location
+    old_path = DATA_DIR / "chunks" / "insights" / current_status / f"{insight_id}.json"
+    old_md_path = DATA_DIR / "chunks" / "insights" / current_status / f"{insight_id}.md"
+
+    # Save to new location
+    insight.save(DATA_DIR / "chunks")
+
+    # Clean up old files
+    if old_path.exists():
+        old_path.unlink()
+    if old_md_path.exists():
+        old_md_path.unlink()
+
+    return jsonify({"success": True, "new_status": insight.status.value})
 
 
 def start_server():
     """Start the review server."""
     host = CONFIG["review_server"]["host"]
     port = CONFIG["review_server"]["port"]
-    
+
     print(f"\n  Fano Explorer Review Server")
     print(f"  ===========================")
     print(f"  Running at: http://{host}:{port}")
+    print(f"")
+    print(f"  Pages:")
+    print(f"    /         - Pending insights")
+    print(f"    /blessed  - Blessed insights with augmentations")
+    print(f"    /interesting - Interesting insights")
+    print(f"    /rejected - Rejected insights")
+    print(f"")
     print(f"  Press Ctrl+C to stop\n")
-    
+
     app.run(host=host, port=port, debug=False)
 
 

@@ -159,6 +159,32 @@ review_panel:
     disputed_majority_bless: "bless_with_flag"
     disputed_majority_reject: "reject_with_flag"
 
+# Chunk augmentation settings
+augmentation:
+  # Enable augmentation of blessed insights
+  enabled: true
+  # Automatically generate augmentations for all blessed chunks
+  auto_generate: true
+  # Must pass verification before attaching
+  require_verification: true
+
+  # Type-specific settings
+  types:
+    diagram:
+      enabled: true
+      format: "svg"  # or "png"
+      tool: "matplotlib"  # or "graphviz"
+    table:
+      enabled: true
+      format: "markdown"
+    proof:
+      enabled: true
+      require_review: true  # Second LLM must verify
+    code:
+      enabled: true
+      execute: true  # Actually run the code
+      timeout_seconds: 30
+
 # Logging
 logging:
   level: "INFO"  # DEBUG, INFO, WARNING, ERROR
