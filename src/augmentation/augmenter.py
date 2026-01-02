@@ -7,6 +7,8 @@ Analyzes blessed insights and generates appropriate augmentations
 
 import asyncio
 import logging
+import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -134,6 +136,8 @@ class Augmenter:
                         analysis.diagram_description,
                     )
                     if aug:
+                        # Execute diagram code to generate image
+                        aug = await self._execute_diagram(aug, insight_id)
                         augmentations.append(aug)
 
             elif "table" in rec_lower and analysis.table_helpful:
@@ -238,6 +242,89 @@ class Augmenter:
         except Exception as e:
             logger.error(f"[augmenter] Diagram generation failed: {e}")
             return None
+
+    async def _execute_diagram(self, aug: Augmentation, insight_id: str) -> Augmentation:
+        """Execute diagram code to generate the image file."""
+        logger.info(f"[augmenter] Executing diagram code for {insight_id}")
+
+        timeout = self.types_config.get("diagram", {}).get("timeout_seconds", 60)
+        chunk_dir = self.data_dir / f"chunk_{insight_id}"
+        chunk_dir.mkdir(parents=True, exist_ok=True)
+
+        try:
+            # Modify the code to save to our standard location
+            code = aug.content
+            output_path = chunk_dir / "diagram.png"
+
+            # Replace various savefig patterns
+            code = re.sub(
+                r"plt\.savefig\(['\"][^'\"]+['\"](.*?)\)",
+                f"plt.savefig(r'{output_path}'\\1)",
+                code
+            )
+
+            # Also add a savefig at the end if not present
+            if "savefig" not in code:
+                code = code.rstrip()
+                if "plt.show()" in code:
+                    code = code.replace("plt.show()", f"plt.savefig(r'{output_path}', dpi=150, bbox_inches='tight')\nplt.show()")
+                else:
+                    code += f"\nplt.savefig(r'{output_path}', dpi=150, bbox_inches='tight')"
+
+            # Write code to temp file
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".py", delete=False, encoding="utf-8"
+            ) as f:
+                # Add non-interactive backend at the top
+                f.write("import matplotlib\nmatplotlib.use('Agg')\n")
+                f.write(code)
+                temp_path = f.name
+
+            # Execute with timeout
+            result = await asyncio.to_thread(
+                self._run_python_code, temp_path, timeout
+            )
+
+            # Clean up temp file
+            Path(temp_path).unlink(missing_ok=True)
+
+            if result["success"]:
+                # Check if image was created
+                if output_path.exists():
+                    aug.file_path = str(output_path)
+                    aug.execution_success = True
+                    aug.verified = True
+                    aug.verification_notes = "Diagram generated successfully"
+                    logger.info(f"[augmenter] Diagram saved to {output_path}")
+                else:
+                    # Check for other image files that might have been created
+                    for ext in ["png", "svg", "jpg", "pdf"]:
+                        for img_file in chunk_dir.glob(f"*.{ext}"):
+                            # Found an image, rename to standard name
+                            target = chunk_dir / f"diagram.{ext}"
+                            if img_file != target:
+                                shutil.move(str(img_file), str(target))
+                            aug.file_path = str(target)
+                            aug.execution_success = True
+                            aug.verified = True
+                            aug.verification_notes = "Diagram generated successfully"
+                            logger.info(f"[augmenter] Diagram saved to {target}")
+                            return aug
+
+                    aug.execution_success = False
+                    aug.verification_notes = "Code ran but no image file was generated"
+                    logger.warning("[augmenter] Diagram code ran but no image found")
+            else:
+                aug.execution_success = False
+                aug.verification_notes = f"Diagram generation failed: {result['error']}"
+                logger.warning(f"[augmenter] Diagram execution failed: {result['error']}")
+
+            return aug
+        except Exception as e:
+            logger.error(f"[augmenter] Diagram execution error: {e}")
+            aug.execution_success = False
+            aug.verification_notes = f"Execution error: {e}"
+            return aug
 
     async def _generate_table(
         self,
