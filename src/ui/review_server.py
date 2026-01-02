@@ -17,17 +17,41 @@ import yaml
 from models import Chunk, ChunkStatus, ChunkFeedback, AxiomStore, BlessedInsight
 
 
+import re
+
 def render_markdown(text: str) -> str:
-    """Convert markdown to HTML with extensions."""
+    """Convert markdown to HTML while preserving LaTeX math."""
+    # Protect LaTeX blocks from markdown processing
+    # Store math blocks and replace with placeholders
+    math_blocks = []
+
+    def save_math(match):
+        math_blocks.append(match.group(0))
+        return f"%%MATH_{len(math_blocks)-1}%%"
+
+    # Protect display math \[...\] and $$...$$
+    text = re.sub(r'\\\[[\s\S]*?\\\]', save_math, text)
+    text = re.sub(r'\$\$[\s\S]*?\$\$', save_math, text)
+
+    # Protect inline math \(...\) and $...$
+    text = re.sub(r'\\\(.*?\\\)', save_math, text)
+    text = re.sub(r'\$[^\$\n]+\$', save_math, text)
+
+    # Process markdown
     md = markdown.Markdown(
         extensions=[
             'fenced_code',
             'tables',
-            'toc',
             'nl2br',
         ]
     )
-    return md.convert(text)
+    html = md.convert(text)
+
+    # Restore math blocks
+    for i, math in enumerate(math_blocks):
+        html = html.replace(f"%%MATH_{i}%%", math)
+
+    return html
 
 
 # Load config

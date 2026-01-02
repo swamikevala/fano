@@ -5,16 +5,28 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Fano Explorer - Review</title>
 
+    <!-- Google Fonts - similar to LLM interfaces -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
     <!-- MathJax for LaTeX rendering -->
     <script>
         MathJax = {
             tex: {
                 inlineMath: [['$', '$'], ['\\(', '\\)']],
                 displayMath: [['$$', '$$'], ['\\[', '\\]']],
-                processEscapes: true
+                processEscapes: true,
+                processEnvironments: true
             },
             options: {
-                skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code']
+                skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code'],
+                ignoreHtmlClass: 'no-mathjax'
+            },
+            startup: {
+                pageReady: () => {
+                    return MathJax.startup.defaultPageReady();
+                }
             }
         };
     </script>
@@ -22,15 +34,16 @@
 
     <style>
         :root {
-            --bg: #0a0a0f;
-            --card: #12121a;
-            --border: #2a2a3a;
-            --text: #e0e0e0;
-            --text-dim: #888;
-            --profound: #ffd700;
-            --interesting: #6b8afd;
-            --rejected: #ff4757;
-            --accent: #00d9ff;
+            --bg: #f9fafb;
+            --card: #ffffff;
+            --border: #e5e7eb;
+            --text: #1f2937;
+            --text-dim: #6b7280;
+            --profound: #eab308;
+            --interesting: #3b82f6;
+            --rejected: #ef4444;
+            --accent: #0ea5e9;
+            --code-bg: #f3f4f6;
         }
         
         * {
@@ -40,11 +53,13 @@
         }
         
         body {
-            font-family: 'SF Mono', 'Fira Code', monospace;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             background: var(--bg);
             color: var(--text);
             min-height: 100vh;
             padding: 2rem;
+            font-size: 16px;
+            line-height: 1.6;
         }
         
         .header {
@@ -53,10 +68,11 @@
         }
         
         .header h1 {
-            font-size: 2rem;
-            letter-spacing: 0.3em;
-            color: var(--accent);
+            font-size: 1.75rem;
+            letter-spacing: 0.1em;
+            color: var(--text);
             margin-bottom: 0.5rem;
+            font-weight: 600;
         }
         
         .header .subtitle {
@@ -100,9 +116,10 @@
         .chunk {
             background: var(--card);
             border: 1px solid var(--border);
-            border-radius: 8px;
+            border-radius: 12px;
             margin-bottom: 2rem;
             overflow: hidden;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
         }
         
         .chunk-header {
@@ -111,9 +128,10 @@
         }
         
         .chunk-title {
-            font-size: 1.3rem;
+            font-size: 1.25rem;
             margin-bottom: 0.5rem;
-            color: var(--accent);
+            color: var(--text);
+            font-weight: 600;
         }
         
         .chunk-meta {
@@ -125,9 +143,10 @@
         
         .chunk-summary {
             padding: 1rem 1.5rem;
-            background: rgba(0, 217, 255, 0.05);
+            background: #f0f9ff;
             border-bottom: 1px solid var(--border);
             font-style: italic;
+            color: var(--text-dim);
         }
         
         .chunk-content {
@@ -137,32 +156,39 @@
             line-height: 1.7;
         }
         
-        /* Markdown content styling */
-        .markdown-body h1, .markdown-body h2, .markdown-body h3,
-        .markdown-body h4, .markdown-body h5, .markdown-body h6 {
-            color: var(--accent);
-            margin: 1.5rem 0 0.75rem;
-            font-weight: 600;
+        /* Markdown content styling - LLM-like clean look */
+        .markdown-body {
+            font-size: 1rem;
+            line-height: 1.75;
+            color: var(--text);
         }
 
-        .markdown-body h1 { font-size: 1.6rem; border-bottom: 1px solid var(--border); padding-bottom: 0.3rem; }
-        .markdown-body h2 { font-size: 1.4rem; border-bottom: 1px solid var(--border); padding-bottom: 0.3rem; }
+        .markdown-body h1, .markdown-body h2, .markdown-body h3,
+        .markdown-body h4, .markdown-body h5, .markdown-body h6 {
+            color: var(--text);
+            margin: 1.5rem 0 0.75rem;
+            font-weight: 600;
+            line-height: 1.3;
+        }
+
+        .markdown-body h1 { font-size: 1.5rem; }
+        .markdown-body h2 { font-size: 1.35rem; border-bottom: 1px solid var(--border); padding-bottom: 0.4rem; }
         .markdown-body h3 { font-size: 1.2rem; }
         .markdown-body h4 { font-size: 1.1rem; }
 
         .markdown-body h1:first-child, .markdown-body h2:first-child { margin-top: 0; }
 
         .markdown-body p {
-            margin: 0.75rem 0;
+            margin: 1rem 0;
         }
 
         .markdown-body ul, .markdown-body ol {
-            margin: 0.75rem 0;
-            padding-left: 1.5rem;
+            margin: 1rem 0;
+            padding-left: 1.75rem;
         }
 
         .markdown-body li {
-            margin: 0.4rem 0;
+            margin: 0.5rem 0;
         }
 
         .markdown-body li > ul, .markdown-body li > ol {
@@ -170,10 +196,10 @@
         }
 
         .markdown-body blockquote {
-            border-left: 4px solid var(--accent);
+            border-left: 3px solid var(--accent);
             margin: 1rem 0;
-            padding: 0.5rem 1rem;
-            background: rgba(0, 217, 255, 0.05);
+            padding: 0.75rem 1rem;
+            background: #f8fafc;
             color: var(--text-dim);
         }
 
@@ -182,26 +208,28 @@
         }
 
         .markdown-body code {
-            background: rgba(255, 255, 255, 0.1);
+            background: var(--code-bg);
             padding: 0.2em 0.4em;
-            border-radius: 3px;
-            font-size: 0.9em;
-            font-family: 'SF Mono', 'Fira Code', monospace;
+            border-radius: 4px;
+            font-size: 0.875em;
+            font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+            color: #e11d48;
         }
 
         .markdown-body pre {
-            background: rgba(0, 0, 0, 0.4);
-            padding: 1rem;
-            border-radius: 6px;
+            background: #1e293b;
+            color: #e2e8f0;
+            padding: 1rem 1.25rem;
+            border-radius: 8px;
             overflow-x: auto;
             margin: 1rem 0;
-            border: 1px solid var(--border);
         }
 
         .markdown-body pre code {
             background: none;
             padding: 0;
-            font-size: 0.85rem;
+            font-size: 0.875rem;
+            color: inherit;
         }
 
         .markdown-body table {
@@ -212,38 +240,45 @@
 
         .markdown-body th, .markdown-body td {
             border: 1px solid var(--border);
-            padding: 0.5rem 0.75rem;
+            padding: 0.625rem 0.875rem;
             text-align: left;
         }
 
         .markdown-body th {
-            background: rgba(0, 217, 255, 0.1);
+            background: #f8fafc;
             font-weight: 600;
         }
 
         .markdown-body hr {
             border: none;
             border-top: 1px solid var(--border);
-            margin: 1.5rem 0;
+            margin: 2rem 0;
         }
 
         .markdown-body strong {
-            color: #fff;
+            color: var(--text);
             font-weight: 600;
         }
 
         .markdown-body em {
-            color: var(--text-dim);
+            font-style: italic;
         }
 
         /* MathJax styling */
         .MathJax {
-            font-size: 1.1em !important;
+            font-size: 1em !important;
+        }
+
+        mjx-container {
+            overflow-x: auto;
+            overflow-y: hidden;
+            max-width: 100%;
         }
 
         mjx-container[display="true"] {
-            margin: 1rem 0 !important;
-            overflow-x: auto;
+            display: block;
+            margin: 1.25rem 0 !important;
+            text-align: center;
         }
         
         .chunk-actions {
@@ -269,26 +304,26 @@
         }
         
         .btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
         }
-        
+
         .btn-profound {
             background: var(--profound);
             color: #000;
         }
-        
+
         .btn-interesting {
             background: var(--interesting);
             color: #fff;
         }
-        
+
         .btn-rejected {
-            background: transparent;
+            background: #fff;
             border: 2px solid var(--rejected);
             color: var(--rejected);
         }
-        
+
         .btn-rejected:hover {
             background: var(--rejected);
             color: #fff;
@@ -297,14 +332,20 @@
         .notes-input {
             flex: 1;
             padding: 0.8rem;
-            background: rgba(255, 255, 255, 0.05);
+            background: #fff;
             border: 1px solid var(--border);
-            border-radius: 4px;
+            border-radius: 6px;
             color: var(--text);
             font-family: inherit;
             font-size: 0.9rem;
         }
-        
+
+        .notes-input:focus {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.1);
+        }
+
         .notes-input::placeholder {
             color: var(--text-dim);
         }
@@ -349,12 +390,12 @@
         
         .profundity-bar {
             height: 4px;
-            background: var(--border);
+            background: #e5e7eb;
             border-radius: 2px;
             margin-top: 0.5rem;
             overflow: hidden;
         }
-        
+
         .profundity-fill {
             height: 100%;
             background: linear-gradient(90deg, var(--interesting), var(--profound));
