@@ -21,6 +21,54 @@ with open(CONFIG_PATH) as f:
 
 BROWSER_DATA_DIR = Path(__file__).resolve().parent.parent.parent / "browser_data"
 RATE_LIMIT_FILE = BROWSER_DATA_DIR / "rate_limits.json"
+CHAT_LOGS_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "chat_logs"
+
+
+class ChatLogger:
+    """Logs chat sessions to local files for reference."""
+
+    def __init__(self, model_name: str):
+        self.model_name = model_name
+        self.log_dir = CHAT_LOGS_DIR / model_name
+        self.log_dir.mkdir(parents=True, exist_ok=True)
+        self.current_session: Optional[Path] = None
+        self.session_start: Optional[datetime] = None
+
+    def start_session(self) -> str:
+        """Start a new chat session, returns the session ID (datetime string)."""
+        self.session_start = datetime.now()
+        session_id = self.session_start.strftime("%Y-%m-%d_%H-%M-%S")
+        self.current_session = self.log_dir / f"{session_id}.md"
+
+        # Write session header
+        with open(self.current_session, "w", encoding="utf-8") as f:
+            f.write(f"# {self.model_name.upper()} Chat Session\n")
+            f.write(f"**Started:** {self.session_start.strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write(f"**Model:** {self.model_name}\n")
+            f.write("\n---\n\n")
+
+        print(f"[{self.model_name}] Chat log: {self.current_session}")
+        return session_id
+
+    def log_exchange(self, prompt: str, response: str):
+        """Log a prompt/response exchange to the current session."""
+        if not self.current_session:
+            self.start_session()
+
+        timestamp = datetime.now().strftime("%H:%M:%S")
+
+        with open(self.current_session, "a", encoding="utf-8") as f:
+            f.write(f"## User ({timestamp})\n\n")
+            f.write(f"{prompt}\n\n")
+            f.write(f"## {self.model_name.upper()} ({timestamp})\n\n")
+            f.write(f"{response}\n\n")
+            f.write("---\n\n")
+
+    def get_session_id(self) -> Optional[str]:
+        """Get current session ID for chat naming."""
+        if self.session_start:
+            return self.session_start.strftime("%Y-%m-%d_%H-%M-%S")
+        return None
 
 
 class RateLimitTracker:
@@ -165,14 +213,15 @@ async def authenticate_all():
 
 class BaseLLMInterface:
     """Base class for LLM browser interfaces."""
-    
+
     model_name: str = "base"
-    
+
     def __init__(self):
         self.context: Optional[BrowserContext] = None
         self.page: Optional[Page] = None
         self.playwright = None
         self.config = CONFIG["models"].get(self.model_name, {})
+        self.chat_logger = ChatLogger(self.model_name)
     
     async def connect(self):
         """Establish browser connection."""

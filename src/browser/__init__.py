@@ -2,6 +2,7 @@
 
 from .base import (
     BaseLLMInterface,
+    ChatLogger,
     authenticate_all,
     get_rate_limit_status,
     rate_tracker,
@@ -11,7 +12,8 @@ from .gemini import GeminiInterface
 
 __all__ = [
     "BaseLLMInterface",
-    "ChatGPTInterface", 
+    "ChatGPTInterface",
+    "ChatLogger",
     "GeminiInterface",
     "authenticate_all",
     "get_rate_limit_status",

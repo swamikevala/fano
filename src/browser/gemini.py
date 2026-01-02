@@ -122,27 +122,14 @@ class GeminiInterface(BaseLLMInterface):
     async def start_new_chat(self):
         """Start a new conversation."""
         try:
-            new_chat_selectors = [
-                "button[aria-label='New chat']",
-                "a[href*='/new']",
-                "button:has-text('New chat')",
-                "[data-test-id='new-chat']",
-            ]
-            
-            for selector in new_chat_selectors:
-                btn = await self.page.query_selector(selector)
-                if btn:
-                    is_visible = await btn.is_visible()
-                    if is_visible:
-                        await btn.click()
-                        await asyncio.sleep(2)
-                        print(f"[gemini] Started new chat")
-                        return
-            
-            # Alternative: navigate to app root
+            # Just navigate to app root - more reliable than trying to click buttons
             await self.page.goto("https://gemini.google.com/app")
             await asyncio.sleep(2)
-            
+
+            # Start a new logging session
+            session_id = self.chat_logger.start_session()
+            print(f"[gemini] Started new chat (session: {session_id})")
+
         except Exception as e:
             print(f"[gemini] Could not start new chat: {e}")
     
@@ -187,16 +174,13 @@ class GeminiInterface(BaseLLMInterface):
             if not input_elem:
                 raise Exception("Could not find Gemini input element")
             
-            # Click and type
+            # Click and input message
             await input_elem.click()
             await asyncio.sleep(0.3)
-            
-            # Clear any existing content
-            await self.page.keyboard.press("Control+a")
-            await asyncio.sleep(0.1)
-            
-            # Type the message
-            await self.page.keyboard.type(message, delay=5)
+
+            # Use clipboard paste to avoid newline triggering premature submission
+            # (keyboard.type() is too slow and newlines cause issues)
+            await self._paste_text(input_elem, message)
             await asyncio.sleep(0.5)
             
             # Find and click send button
@@ -227,12 +211,18 @@ class GeminiInterface(BaseLLMInterface):
             
             # Wait for response
             response = await self._wait_for_response()
-            
+
             # Check for rate limiting
             if self._check_rate_limit(response):
                 rate_tracker.mark_limited(self.model_name)
                 raise RateLimitError("Gemini rate limit detected")
-            
+
+            # Log the exchange locally
+            self.chat_logger.log_exchange(message, response)
+
+            # Try to rename the chat with datetime (best effort)
+            await self._try_rename_chat()
+
             print(f"[gemini] Got response ({len(response)} chars)")
             return response
             
@@ -317,6 +307,73 @@ class GeminiInterface(BaseLLMInterface):
             history.append({"role": "assistant", "content": model_text.strip()})
         
         return history
+
+
+    async def _try_rename_chat(self):
+        """Try to rename the current chat with session datetime (best effort)."""
+        session_id = self.chat_logger.get_session_id()
+        if not session_id:
+            return
+
+        try:
+            # Gemini doesn't have easy rename UI, but we try to find it
+            # This is fragile - that's okay, logs are saved locally
+            chat_title = f"Fano_{session_id}"
+
+            # Look for menu/options button on current chat
+            menu_btn = await self.page.query_selector(
+                "button[aria-label*='Options'], button[aria-label*='Menu'], button[aria-label*='More']"
+            )
+            if menu_btn:
+                await menu_btn.click()
+                await asyncio.sleep(0.5)
+
+                # Look for rename option
+                rename_btn = await self.page.query_selector(
+                    "button:has-text('Rename'), [role='menuitem']:has-text('Rename')"
+                )
+                if rename_btn:
+                    await rename_btn.click()
+                    await asyncio.sleep(0.5)
+
+                    # Find input and type new name
+                    input_elem = await self.page.query_selector("input[type='text']")
+                    if input_elem:
+                        await input_elem.fill(chat_title)
+                        await self.page.keyboard.press("Enter")
+                        print(f"[gemini] Renamed chat to: {chat_title}")
+        except Exception as e:
+            # Renaming is best-effort, don't fail if it doesn't work
+            print(f"[gemini] Could not rename chat (non-critical): {e}")
+
+    async def _paste_text(self, element, text: str):
+        """
+        Paste text into an element using DOM manipulation.
+        This is faster than keyboard.type() and doesn't trigger form submission on newlines.
+        Works with Trusted Types security policies.
+        """
+        # Use DOM manipulation instead of innerHTML (blocked by Trusted Types)
+        await element.evaluate("""(el, text) => {
+            // Clear existing content
+            el.textContent = '';
+
+            // Focus the element
+            el.focus();
+
+            // Use DOM manipulation to add text with line breaks
+            const lines = text.split('\\n');
+            lines.forEach((line, index) => {
+                if (index > 0) {
+                    el.appendChild(document.createElement('br'));
+                }
+                if (line) {
+                    el.appendChild(document.createTextNode(line));
+                }
+            });
+
+            // Dispatch input event to notify any listeners
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+        }""", text)
 
 
 class RateLimitError(Exception):

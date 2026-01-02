@@ -57,26 +57,15 @@ class ChatGPTInterface(BaseLLMInterface):
     async def start_new_chat(self):
         """Start a new conversation."""
         try:
-            # Look for "New chat" button/link
-            new_chat_selectors = [
-                "a[href='/']",
-                "nav a:has-text('New chat')",
-                "button:has-text('New chat')",
-                "[data-testid='new-chat-button']",
-            ]
-            
-            for selector in new_chat_selectors:
-                btn = await self.page.query_selector(selector)
-                if btn:
-                    await btn.click()
-                    await asyncio.sleep(2)
-                    print(f"[chatgpt] Started new chat")
-                    return
-            
-            # Alternative: just navigate to root
-            await self.page.goto("https://chat.openai.com/")
+            # Just navigate to root - more reliable than trying to click buttons
+            # (sidebar elements often intercept clicks)
+            await self.page.goto("https://chatgpt.com/")
             await asyncio.sleep(2)
-            
+
+            # Start a new logging session
+            session_id = self.chat_logger.start_session()
+            print(f"[chatgpt] Started new chat (session: {session_id})")
+
         except Exception as e:
             print(f"[chatgpt] Could not start new chat: {e}")
     
@@ -113,14 +102,16 @@ class ChatGPTInterface(BaseLLMInterface):
             # Clear and type message
             await input_elem.click()
             await asyncio.sleep(0.3)
-            
-            # Use fill for textarea, or keyboard for contenteditable
+
+            # Use fill for textarea, or clipboard paste for contenteditable
+            # (keyboard.type() is too slow and newlines trigger premature submission)
             tag = await input_elem.evaluate("el => el.tagName.toLowerCase()")
             if tag == "textarea":
                 await input_elem.fill(message)
             else:
-                await self.page.keyboard.type(message, delay=5)
-            
+                # For contenteditable, use clipboard paste to avoid newline issues
+                await self._paste_text(input_elem, message)
+
             await asyncio.sleep(0.5)
             
             # Find and click send button
@@ -150,12 +141,18 @@ class ChatGPTInterface(BaseLLMInterface):
             
             # Wait for response
             response = await self._wait_for_response()
-            
+
             # Check for rate limiting
             if self._check_rate_limit(response):
                 rate_tracker.mark_limited(self.model_name)
                 raise RateLimitError("ChatGPT rate limit detected")
-            
+
+            # Log the exchange locally
+            self.chat_logger.log_exchange(message, response)
+
+            # Try to rename the chat with datetime (best effort)
+            await self._try_rename_chat()
+
             print(f"[chatgpt] Got response ({len(response)} chars)")
             return response
             
@@ -229,6 +226,70 @@ class ChatGPTInterface(BaseLLMInterface):
             history.append({"role": role, "content": text.strip()})
         
         return history
+
+
+    async def _try_rename_chat(self):
+        """Try to rename the current chat with session datetime (best effort)."""
+        session_id = self.chat_logger.get_session_id()
+        if not session_id:
+            return
+
+        try:
+            # ChatGPT auto-generates titles, but we can try to find and click the edit button
+            # This is fragile and may not work if UI changes - that's okay, logs are saved locally
+            chat_title = f"Fano_{session_id}"
+
+            # Look for the current chat title in sidebar and try to rename
+            # Find the active/current conversation item
+            active_chat = await self.page.query_selector(
+                "nav li.bg-token-sidebar-surface-secondary, nav [class*='active'], nav a[class*='bg-']"
+            )
+            if active_chat:
+                # Try to find edit/rename button
+                edit_btn = await active_chat.query_selector(
+                    "button[aria-label*='Rename'], button[aria-label*='Edit']"
+                )
+                if edit_btn:
+                    await edit_btn.click()
+                    await asyncio.sleep(0.5)
+                    # Find the input and type the new name
+                    input_elem = await self.page.query_selector("input[type='text']")
+                    if input_elem:
+                        await input_elem.fill(chat_title)
+                        await self.page.keyboard.press("Enter")
+                        print(f"[chatgpt] Renamed chat to: {chat_title}")
+        except Exception as e:
+            # Renaming is best-effort, don't fail if it doesn't work
+            print(f"[chatgpt] Could not rename chat (non-critical): {e}")
+
+    async def _paste_text(self, element, text: str):
+        """
+        Paste text into an element using DOM manipulation.
+        This is faster than keyboard.type() and doesn't trigger form submission on newlines.
+        Works with Trusted Types security policies.
+        """
+        # Use DOM manipulation instead of innerHTML (may be blocked by Trusted Types)
+        await element.evaluate("""(el, text) => {
+            // Clear existing content
+            el.textContent = '';
+
+            // Focus the element
+            el.focus();
+
+            // Use DOM manipulation to add text with line breaks
+            const lines = text.split('\\n');
+            lines.forEach((line, index) => {
+                if (index > 0) {
+                    el.appendChild(document.createElement('br'));
+                }
+                if (line) {
+                    el.appendChild(document.createTextNode(line));
+                }
+            });
+
+            // Dispatch input event to notify any listeners
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+        }""", text)
 
 
 class RateLimitError(Exception):
