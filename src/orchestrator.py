@@ -283,9 +283,10 @@ class Orchestrator:
     def _build_exploration_prompt(self, thread: ExplorationThread) -> str:
         """Build the prompt for exploration."""
         context = self.axioms.get_context_for_exploration()
-        
+        date_prefix = datetime.now().strftime("[FANO %m-%d]")
+
         prompt_parts = [
-            "You are exploring deep mathematical connections between:",
+            f"{date_prefix} You are exploring deep mathematical connections between:",
             "- Fano plane incidence geometry (7 points, 7 lines, 3 points per line)",
             "- Sanskrit grammar (particularly Panini's system)",
             "- Indian classical music theory (swaras, shrutis, ragas)",
@@ -321,8 +322,9 @@ class Orchestrator:
     def _build_critique_prompt(self, thread: ExplorationThread) -> str:
         """Build the prompt for critique."""
         context = thread.get_context_for_prompt()
-        
-        prompt = f"""You are a rigorous mathematical critic. Review the following exploration:
+        date_prefix = datetime.now().strftime("[FANO %m-%d]")
+
+        prompt = f"""{date_prefix} You are a rigorous mathematical critic. Review the following exploration:
 
 {context}
 
@@ -444,8 +446,9 @@ Push toward depth, not toward any particular application."""
     def _build_synthesis_prompt(self, thread: ExplorationThread) -> str:
         """Build prompt for chunk synthesis."""
         context = thread.get_context_for_prompt(max_exchanges=10)
-        
-        return f"""You are a mathematical writer. Synthesize the following exploration into a clear, well-structured write-up.
+        date_prefix = datetime.now().strftime("[FANO %m-%d]")
+
+        return f"""{date_prefix} You are a mathematical writer. Synthesize the following exploration into a clear, well-structured write-up.
 
 {context}
 
