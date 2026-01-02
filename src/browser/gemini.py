@@ -83,40 +83,99 @@ class GeminiInterface(BaseLLMInterface):
         """
         Enable Deep Think mode if available.
         Returns True if successfully enabled.
+        Note: This is specifically Deep Think, NOT Deep Research (which is different).
         """
         try:
             print(f"[gemini] Attempting to enable Deep Think...")
-            
-            # Look for Deep Think toggle/button
-            deep_think_selectors = [
-                "button[aria-label*='Deep']",
-                "button:has-text('Deep Think')",
-                "mat-button-toggle:has-text('Deep')",
-                "[data-test-id='deep-think-toggle']",
+
+            # Step 1: Look for model/mode selector dropdown
+            mode_selectors = [
+                "button[aria-label*='model']",
+                "button[aria-label*='Mode']",
+                "[data-test-id='model-selector']",
+                "mat-select",  # Angular Material select
+                "div[role='combobox']",
+                "button:has-text('Gemini')",  # Model name button
+                "button:has-text('1.5')",  # Model version button
+                "button:has-text('2.0')",  # Model version button
             ]
-            
-            for selector in deep_think_selectors:
-                btn = await self.page.query_selector(selector)
-                if btn:
-                    is_visible = await btn.is_visible()
-                    if is_visible:
-                        # Check if already enabled
-                        aria_pressed = await btn.get_attribute("aria-pressed")
-                        classes = await btn.get_attribute("class") or ""
-                        
-                        if aria_pressed != "true" and "selected" not in classes:
+
+            dropdown_opened = False
+            for selector in mode_selectors:
+                try:
+                    btn = await self.page.query_selector(selector)
+                    if btn:
+                        is_visible = await btn.is_visible()
+                        if is_visible:
+                            text = await btn.inner_text()
+                            print(f"[gemini] Found mode selector: '{text[:30]}...'")
+
+                            # Check if already on Deep Think mode
+                            if "deep think" in text.lower():
+                                print(f"[gemini] Already on Deep Think mode: {text[:30]}")
+                                self.deep_think_enabled = True
+                                return True
+
+                            # Click to open dropdown
                             await btn.click()
+                            await asyncio.sleep(0.5)
+                            dropdown_opened = True
+                            break
+                except Exception:
+                    continue
+
+            # Step 2: Look for Deep Think option specifically (NOT Deep Research)
+            deep_think_options = [
+                # Toggle buttons - most likely location
+                "button[aria-label*='Deep Think']",
+                "button:has-text('Deep Think')",
+                "mat-button-toggle:has-text('Deep Think')",
+                # Dropdown options
+                "[role='option']:has-text('Deep Think')",
+                "[role='menuitem']:has-text('Deep Think')",
+                "mat-option:has-text('Deep Think')",
+                # Generic clickable elements
+                "[role='button']:has-text('Deep Think')",
+                "div[tabindex]:has-text('Deep Think')",
+                # Fallback: any element with Deep Think text
+                "*:has-text('Deep Think')",
+            ]
+
+            for selector in deep_think_options:
+                try:
+                    option = await self.page.query_selector(selector)
+                    if option:
+                        is_visible = await option.is_visible()
+                        if is_visible:
+                            text = await option.inner_text()
+                            print(f"[gemini] Found Deep option: '{text[:30]}...'")
+
+                            # Check if already selected
+                            aria_pressed = await option.get_attribute("aria-pressed")
+                            aria_selected = await option.get_attribute("aria-selected")
+                            classes = await option.get_attribute("class") or ""
+
+                            if aria_pressed == "true" or aria_selected == "true" or "selected" in classes:
+                                print(f"[gemini] Deep mode already enabled")
+                                self.deep_think_enabled = True
+                                return True
+
+                            # Click to enable
+                            await option.click()
                             await asyncio.sleep(1)
-                            print(f"[gemini] Enabled Deep Think")
-                        else:
-                            print(f"[gemini] Deep Think already enabled")
-                        
-                        self.deep_think_enabled = True
-                        return True
-            
-            print(f"[gemini] Deep Think toggle not found")
+                            print(f"[gemini] Enabled Deep mode: {text[:30]}")
+                            self.deep_think_enabled = True
+                            return True
+                except Exception:
+                    continue
+
+            # Close dropdown if opened but nothing found
+            if dropdown_opened:
+                await self.page.keyboard.press("Escape")
+
+            print(f"[gemini] Deep Think toggle not found (may not be available)")
             return False
-            
+
         except Exception as e:
             print(f"[gemini] Could not enable Deep Think: {e}")
             return False

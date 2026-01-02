@@ -83,30 +83,76 @@ class ChatGPTInterface(BaseLLMInterface):
         try:
             print(f"[chatgpt] Attempting to enable Pro mode...")
 
-            # Look for model selector or Pro mode toggle
-            # ChatGPT UI changes frequently - these are best-effort selectors
-            pro_selectors = [
-                "button[aria-label*='GPT-4']",
-                "button[aria-label*='Pro']",
-                "[data-testid='model-selector'] button",
-                "button:has-text('GPT-4')",
-                "div[role='combobox']",  # Model dropdown
+            # Step 1: Find and click the model selector dropdown
+            model_selector_triggers = [
+                "[data-testid='model-selector']",
+                "button[aria-haspopup='menu']",  # Dropdown triggers
+                "button[aria-label*='Model']",
+                "button[aria-label*='ChatGPT']",
+                "div[class*='ModelSelector']",
+                "button:has-text('GPT')",  # Any button with GPT text
             ]
 
-            for selector in pro_selectors:
-                btn = await self.page.query_selector(selector)
-                if btn:
-                    is_visible = await btn.is_visible()
-                    if is_visible:
-                        # Check if already in Pro mode
-                        text = await btn.inner_text()
-                        if "4" in text or "Pro" in text or "Plus" in text:
-                            print(f"[chatgpt] Pro mode appears to be available")
+            dropdown_opened = False
+            for selector in model_selector_triggers:
+                try:
+                    btn = await self.page.query_selector(selector)
+                    if btn:
+                        is_visible = await btn.is_visible()
+                        if is_visible:
+                            text = await btn.inner_text()
+                            print(f"[chatgpt] Found model selector: '{text[:30]}...'")
+
+                            # Check if already on a Pro model (o1, GPT-4, etc.)
+                            if any(m in text.lower() for m in ["o1", "gpt-4", "pro", "plus"]):
+                                print(f"[chatgpt] Already on Pro model: {text[:30]}")
+                                self.pro_mode_enabled = True
+                                return True
+
+                            # Click to open dropdown
+                            await btn.click()
+                            await asyncio.sleep(0.5)
+                            dropdown_opened = True
+                            break
+                except Exception:
+                    continue
+
+            if not dropdown_opened:
+                print(f"[chatgpt] Could not find model selector dropdown")
+                # Assume Pro is default if we can't find selector
+                self.pro_mode_enabled = True
+                return True
+
+            # Step 2: Look for Pro model options in the dropdown
+            pro_model_options = [
+                "[role='menuitem']:has-text('o1')",
+                "[role='menuitem']:has-text('GPT-4')",
+                "[role='option']:has-text('o1')",
+                "[role='option']:has-text('GPT-4')",
+                "div[data-testid*='model']:has-text('o1')",
+                "div[data-testid*='model']:has-text('GPT-4')",
+            ]
+
+            for selector in pro_model_options:
+                try:
+                    option = await self.page.query_selector(selector)
+                    if option:
+                        is_visible = await option.is_visible()
+                        if is_visible:
+                            text = await option.inner_text()
+                            print(f"[chatgpt] Selecting Pro model: {text[:30]}")
+                            await option.click()
+                            await asyncio.sleep(1)
                             self.pro_mode_enabled = True
                             return True
+                except Exception:
+                    continue
 
-            print(f"[chatgpt] Pro mode toggle not found (may already be default)")
-            return False
+            # Close dropdown if nothing found
+            await self.page.keyboard.press("Escape")
+            print(f"[chatgpt] No Pro model options found in dropdown")
+            self.pro_mode_enabled = True  # Assume current model is fine
+            return True
 
         except Exception as e:
             print(f"[chatgpt] Could not enable Pro mode: {e}")

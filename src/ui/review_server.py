@@ -31,12 +31,22 @@ def get_pending_chunks() -> list[Chunk]:
     """Load all pending chunks."""
     chunks_dir = DATA_DIR / "chunks" / "pending"
     chunks = []
+    print(f"[review] Looking for chunks in: {chunks_dir}")
     if chunks_dir.exists():
-        for json_file in chunks_dir.glob("*.json"):
+        json_files = list(chunks_dir.glob("*.json"))
+        print(f"[review] Found {len(json_files)} JSON files")
+        for json_file in json_files:
             try:
-                chunks.append(Chunk.load(json_file))
+                chunk = Chunk.load(json_file)
+                print(f"[review] Loaded chunk: {chunk.id} - {chunk.title[:40]}...")
+                chunks.append(chunk)
             except Exception as e:
-                print(f"Error loading {json_file}: {e}")
+                print(f"[review] Error loading {json_file}: {e}")
+                import traceback
+                traceback.print_exc()
+    else:
+        print(f"[review] Chunks directory does not exist: {chunks_dir}")
+    print(f"[review] Returning {len(chunks)} chunks")
     return sorted(chunks, key=lambda c: c.created_at, reverse=True)
 
 
