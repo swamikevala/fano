@@ -88,6 +88,31 @@ class TargetNumberSet:
 
 
 @dataclass
+class SeedAphorism:
+    """
+    A seed aphorism provided by the user to guide exploration.
+    These are pre-blessed axioms that don't need to go through review.
+    """
+    id: str
+    text: str
+    tags: list[str] = field(default_factory=list)
+    confidence: str = "high"  # high, medium, low
+    source: str = "user"  # Where this seed came from
+    notes: str = ""  # Additional context
+
+    @classmethod
+    def from_dict(cls, data: dict, index: int = 0) -> "SeedAphorism":
+        return cls(
+            id=data.get("id", f"seed-{index:03d}"),
+            text=data.get("text", ""),
+            tags=data.get("tags", []),
+            confidence=data.get("confidence", "high"),
+            source=data.get("source", "user"),
+            notes=data.get("notes", ""),
+        )
+
+
+@dataclass
 class BlessedInsight:
     """
     A chunk that has been marked as ⚡ Profound.
@@ -125,7 +150,8 @@ class AxiomStore:
         self.excerpts_dir = data_dir / "axioms" / "sadhguru_excerpts"
         self.numbers_file = data_dir / "axioms" / "target_numbers.yaml"
         self.blessed_dir = data_dir / "axioms" / "blessed_insights"
-        
+        self.seeds_file = data_dir / "axioms" / "seeds.yaml"
+
         # Ensure directories exist
         self.excerpts_dir.mkdir(parents=True, exist_ok=True)
         self.blessed_dir.mkdir(parents=True, exist_ok=True)
@@ -144,16 +170,35 @@ class AxiomStore:
         """Load target numbers configuration."""
         if not self.numbers_file.exists():
             return []
-        
+
         with open(self.numbers_file, encoding="utf-8") as f:
             data = yaml.safe_load(f)
-        
+
         numbers = []
         for key, value in data.items():
             if isinstance(value, dict) and "numbers" in value:
                 numbers.append(TargetNumberSet.from_dict(key, value))
-        
+
         return numbers
+
+    def get_seed_aphorisms(self) -> list[SeedAphorism]:
+        """Load seed aphorisms from seeds.yaml."""
+        if not self.seeds_file.exists():
+            return []
+
+        with open(self.seeds_file, encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+
+        if not data:
+            return []
+
+        seeds = []
+        seed_list = data.get("seeds", [])
+        for i, seed_data in enumerate(seed_list):
+            if isinstance(seed_data, dict) and seed_data.get("text"):
+                seeds.append(SeedAphorism.from_dict(seed_data, i))
+
+        return seeds
     
     def get_blessed_insights(self) -> list[BlessedInsight]:
         """Load all blessed insights."""
@@ -192,10 +237,10 @@ class AxiomStore:
         content = f"---\n{yaml.dump(frontmatter, default_flow_style=False, allow_unicode=True)}---\n\n{insight.content}"
         filepath.write_text(content, encoding="utf-8")
     
-    def get_context_for_exploration(self, max_excerpts: int = 3, max_insights: int = 3) -> str:
+    def get_context_for_exploration(self, max_excerpts: int = 3, max_insights: int = 3, max_seeds: int = 10) -> str:
         """
         Build context string for exploration prompts.
-        Includes relevant excerpts, numbers, and insights.
+        Includes relevant excerpts, numbers, seeds, and insights.
 
         Covers four domains:
         - Fano plane geometry
@@ -205,10 +250,23 @@ class AxiomStore:
         """
         lines = []
 
+        # Add seed aphorisms first (user-provided starting points)
+        seeds = self.get_seed_aphorisms()[:max_seeds]
+        if seeds:
+            lines.append("=== SEED APHORISMS (Starting Points) ===")
+            lines.append("These are conjectured connections to explore and build upon:\n")
+            for seed in seeds:
+                confidence_marker = {"high": "⚡", "medium": "?", "low": "○"}.get(seed.confidence, "?")
+                lines.append(f"{confidence_marker} {seed.text}")
+                if seed.tags:
+                    lines.append(f"   [Tags: {', '.join(seed.tags)}]")
+                if seed.notes:
+                    lines.append(f"   Note: {seed.notes}")
+
         # Add excerpts
         excerpts = self.get_excerpts()[:max_excerpts]
         if excerpts:
-            lines.append("=== SOURCE TEACHINGS ===")
+            lines.append("\n\n=== SOURCE TEACHINGS ===")
             for ex in excerpts:
                 lines.append(f"\n[{ex.title}] ({ex.source})")
                 lines.append(ex.content[:1000])  # Truncate if needed
@@ -224,7 +282,7 @@ class AxiomStore:
                     lines.append(f"  {name}: {val}")
                 if ns.notes:
                     lines.append(f"  Notes: {ns.notes[:200]}")
-        
+
         # Add blessed insights
         insights = self.get_blessed_insights()[:max_insights]
         if insights:
@@ -232,7 +290,7 @@ class AxiomStore:
             for ins in insights:
                 lines.append(f"\n[{ins.title}]")
                 lines.append(ins.summary)
-        
+
         return "\n".join(lines)
     
     def get_unexplained_numbers(self) -> list[str]:

@@ -1,0 +1,21 @@
+# Seed Aphorisms
+# These are conjectured connections that guide exploration.
+# The system will use these as starting points and try to verify/develop them.
+#
+# Format:
+#   - text: The aphorism text (1-3 sentences)
+#     tags: [domain1, domain2]  # Helps with categorization
+#     confidence: high/medium/low  # How strongly you believe this
+#     source: Where this idea came from (optional)
+#     notes: Additional context (optional)
+
+seeds:
+  # Example seeds - replace with your own
+
+  - text: "The Fano plane's 7 points correspond to the 7 chakra dimensions and furthermore the 112 chakras correspond to the 28 'Fano Triangles' adjoined with each of the four remaining points, where the 112 chakras have a natural grouping into 7 groups of 16"
+    tags: [fano, chakras, triangles]
+    confidence: high
+    notes: "This is the basis for understanding the geometry of the entire energy system"
+    source: "Prior explorations"
+
+  

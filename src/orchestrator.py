@@ -1046,6 +1046,16 @@ CONTENT:
         """Get list of blessed insights for dependency matching."""
         blessed = []
 
+        # Load seed aphorisms first (user-provided starting points)
+        seeds = self.axioms.get_seed_aphorisms()
+        for seed in seeds:
+            blessed.append({
+                "id": seed.id,
+                "text": seed.text,
+                "tags": seed.tags,
+                "is_seed": True,
+            })
+
         # Load from blessed_insights.json if exists
         blessed_file = self.data_dir / "blessed_insights.json"
         if blessed_file.exists():
