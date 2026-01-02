@@ -53,11 +53,51 @@ class SimilarityResult:
     llm_explanation: str = ""
 
 
+def normalize_word(word: str) -> str:
+    """
+    Normalize a word by removing common suffixes (simple stemming).
+
+    This helps match "faces" with "face", "vertices" with "vertex", etc.
+    """
+    word = word.lower()
+
+    # Handle special cases first
+    if word == "vertices":
+        return "vertex"
+    if word == "indices":
+        return "index"
+
+    # Common suffix removals (simple stemming)
+    suffixes = [
+        ("ies", "y"),      # symmetries -> symmetry
+        ("es", "e"),       # faces -> face (but keep the 'e')
+        ("es", ""),        # edges -> edge... wait, this removes too much
+        ("s", ""),         # points -> point
+        ("ing", ""),       # mapping -> map
+        ("ed", ""),        # connected -> connect
+        ("tion", "t"),     # connection -> connect
+        ("sion", "s"),     # expression -> express
+    ]
+
+    # Only apply suffixes that make sense
+    if word.endswith("ices"):  # vertices, indices
+        return word[:-4] + "ex"
+    if word.endswith("ies") and len(word) > 4:
+        return word[:-3] + "y"
+    if word.endswith("es") and len(word) > 3:
+        # edges -> edge, faces -> face
+        return word[:-1]  # Just remove the 's', keep 'e'
+    if word.endswith("s") and len(word) > 3 and not word.endswith("ss"):
+        return word[:-1]
+
+    return word
+
+
 def extract_keywords(text: str) -> set[str]:
     """
     Extract meaningful keywords from insight text.
 
-    Returns normalized keywords (lowercase, no punctuation).
+    Returns normalized keywords (lowercase, no punctuation, stemmed).
     """
     # Normalize text
     text = text.lower()
@@ -65,13 +105,18 @@ def extract_keywords(text: str) -> set[str]:
     # Extract words (including numbers and hyphenated terms)
     words = re.findall(r'\b[\w-]+\b', text)
 
-    # Filter stop words and very short words
-    keywords = {
-        w for w in words
-        if w not in STOP_WORDS
-        and len(w) > 2
-        and not w.isdigit()  # Keep number words like "seven" but not "7"
-    }
+    # Filter stop words and very short words, then normalize
+    keywords = set()
+    for w in words:
+        if w in STOP_WORDS or len(w) <= 2:
+            continue
+        if w.isdigit():
+            continue  # Numbers handled separately
+
+        # Normalize and add
+        normalized = normalize_word(w)
+        if len(normalized) > 2:
+            keywords.add(normalized)
 
     # Also extract number-word combinations (e.g., "14", "7")
     numbers = re.findall(r'\b\d+\b', text)
@@ -106,19 +151,28 @@ def calculate_concept_overlap(text1: str, text2: str) -> float:
     """
     # Key concept patterns to look for
     concept_patterns = [
-        r'\b\d+\b',  # Numbers (7, 14, etc.)
-        r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b',  # Proper nouns (Fano, Heawood, etc.)
-        r'\b(?:point|line|vertex|vertices|edge|graph|plane|structure|sutra|sutras)\w*\b',
-        r'\b(?:incidence|duality|symmetry|correspondence|mapping)\w*\b',
-        r'\b(?:sanskrit|phonetic|grammar|linguistic)\w*\b',
+        r'\b\d+\b',  # Numbers (7, 14, 168, etc.)
+        r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b',  # Proper nouns (Fano, Heawood, Klein, etc.)
+        # Geometry/graph terms
+        r'\b(?:point|line|vertex|vertices|edge|edges|face|faces|graph|plane|tiling|quartic|hyperbolic)\w*\b',
+        # Group theory terms
+        r'\b(?:group|orbit|stabilizer|subgroup|automorphism|isomorphism|symmetry|psl|order)\w*\b',
+        # Structure/relationship terms
+        r'\b(?:incidence|duality|correspondence|bijection|mapping|homeomorphism)\w*\b',
+        # Sanskrit/music/yoga terms
+        r'\b(?:sanskrit|phonetic|grammar|linguistic|sutra|sutras|swara|shruti|raga|chakra|nadi)\w*\b',
+        # Mathematical object names
+        r'\b(?:fano|heawood|klein|petersen|steiner|galois|mobius|riemann)\b',
     ]
 
     def extract_concepts(text: str) -> set[str]:
         concepts = set()
-        text_lower = text.lower()
         for pattern in concept_patterns:
             matches = re.findall(pattern, text, re.IGNORECASE)
-            concepts.update(m.lower() for m in matches)
+            for m in matches:
+                # Normalize the concept
+                normalized = normalize_word(m.lower())
+                concepts.add(normalized)
         return concepts
 
     concepts1 = extract_concepts(text1)

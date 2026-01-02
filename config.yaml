@@ -172,10 +172,10 @@ dependencies:
 deduplication:
   # Enable deduplication checking
   enabled: true
-  # Keyword Jaccard similarity threshold for flagging potential duplicates
-  keyword_threshold: 0.6
-  # Concept overlap threshold (domain-specific terms)
-  concept_threshold: 0.7
+  # Keyword Jaccard similarity threshold for flagging potential duplicates (lowered for better catch rate)
+  keyword_threshold: 0.45
+  # Concept overlap threshold (domain-specific terms) - lowered to catch rephrased duplicates
+  concept_threshold: 0.5
   # Use LLM to confirm duplicates (slower but more accurate)
   use_llm_confirmation: true
 
