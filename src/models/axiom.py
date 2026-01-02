@@ -196,9 +196,15 @@ class AxiomStore:
         """
         Build context string for exploration prompts.
         Includes relevant excerpts, numbers, and insights.
+
+        Covers four domains:
+        - Fano plane geometry
+        - Sanskrit grammar (Panini)
+        - Indian music theory
+        - Yogic/Tantric cosmology and practice
         """
         lines = []
-        
+
         # Add excerpts
         excerpts = self.get_excerpts()[:max_excerpts]
         if excerpts:
@@ -206,11 +212,12 @@ class AxiomStore:
             for ex in excerpts:
                 lines.append(f"\n[{ex.title}] ({ex.source})")
                 lines.append(ex.content[:1000])  # Truncate if needed
-        
+
         # Add target numbers
         numbers = self.get_target_numbers()
         if numbers:
             lines.append("\n\n=== NUMBERS TO DECODE ===")
+            lines.append("(From music, grammar, yoga, tantra, and cosmology)")
             for ns in numbers:
                 lines.append(f"\n{ns.description}:")
                 for name, val in ns.numbers.items():

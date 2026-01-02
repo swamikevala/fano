@@ -64,6 +64,98 @@ breath:
     21600 = 360 × 60. Connection to geometry?
     1440 = 12 × 120 = Fano connections?
 
+# Tantric meditation techniques
+vijnana_bhairava:
+  description: "Dharanas in the Vijñāna Bhairava Tantra"
+  source: "Vijñāna Bhairava Tantra"
+  numbers:
+    dharanas: 112
+  notes: |
+    112 dharanas (meditation techniques) — same as active chakras.
+    This is unlikely to be coincidence. What geometric structure
+    yields exactly 112?
+
+# Samkhya philosophy
+samkhya_tattvas:
+  description: "Categories of existence in Samkhya philosophy"
+  source: "Samkhya Karika"
+  numbers:
+    prakriti_tattvas: 24
+    with_purusha: 25
+  notes: |
+    24 evolutes of Prakriti + Purusha = 25.
+    24 = 8 × 3 = faces of Fano dual?
+    How does this relate to Fano geometry?
+
+# Kashmir Shaivism tattvas
+kashmir_tattvas:
+  description: "Extended tattva system in Kashmir Shaivism"
+  source: "Tantraloka, Shiva Sutras"
+  numbers:
+    total_tattvas: 36
+    pure_tattvas: 5
+    mixed_tattvas: 7
+    impure_tattvas: 24
+  notes: |
+    36 = 24 + 7 + 5. Extension of Samkhya's 24.
+    The hierarchy from Shiva to Prithvi.
+    How does 36 emerge from projective structures?
+
+# Loka systems
+lokas:
+  description: "Planes of existence in Vedic cosmology"
+  source: "Puranas, Upanishads"
+  numbers:
+    vedic_lokas: 7
+    puranic_lokas: 14
+    upper_lokas: 7
+    lower_lokas: 7
+  notes: |
+    7 lokas = 7 points/lines of Fano plane?
+    14 = 7 + 7 (upper + lower) = Maheshvara Sutras.
+    The symmetry of the cosmological structure.
+
+# Yogic practices
+yoga_practices:
+  description: "Numbers in Hatha Yoga tradition"
+  source: "Hatha Yoga Pradipika, Gheranda Samhita"
+  numbers:
+    classical_asanas: 84
+    siddhas: 84
+    pranayama_kumbhakas: 8
+    mudras: 10
+    bandhas: 3
+  notes: |
+    84 = 7 × 12 = 168/2. Klein quartic connection?
+    84 siddhas and 84 asanas — same number.
+    What structure gives exactly 84?
+
+# Sacred repetitions
+sacred_numbers:
+  description: "Numbers in ritual and practice"
+  source: "Various traditions"
+  numbers:
+    mala_beads: 108
+    gayatri_syllables: 24
+    sacred_rivers: 7
+    ashtanga_limbs: 8
+  notes: |
+    108 = 27 × 4 = 12 × 9. Appears across traditions.
+    24 syllables in Gayatri = Samkhya tattvas.
+    Structural coincidence?
+
+# Maheshvara Sutras
+maheshvara:
+  description: "Foundational sutras of Sanskrit grammar"
+  source: "Panini's Ashtadhyayi"
+  numbers:
+    sutras: 14
+    phonemes_grouped: 42
+  notes: |
+    14 sutras group 42 phonemes.
+    14 = 7 + 7 = upper + lower lokas.
+    How do grammar and cosmology share structure?
+
 # Add more number sets below as you encounter them in the excerpts
 # ...
 

@@ -332,9 +332,36 @@ class Orchestrator:
     
     def _generate_topic(self, target_nums: list[str], seed_ids: list[str]) -> str:
         """Generate a topic description for a new thread."""
+        # Seed questions for specific numbers
+        number_topics = {
+            "7": "How do the 7 lines of the Fano plane relate to the 7 lokas in Vedic cosmology?",
+            "14": "The 14 Maheshvara Sutras and the 14 lokas — explore geometric necessity",
+            "22": "The 22 shrutis as projective structure — why exactly 22?",
+            "24": "Samkhya's 24 tattvas — how does this enumeration arise from geometry?",
+            "25": "The 25th tattva (Purusha) as geometric completion — structural analysis",
+            "36": "Kashmir Shaivism's 36 tattvas — geometric extension of Samkhya's 24",
+            "72": "72 melakartas and 72% water — structural coincidence or deep pattern?",
+            "84": "84 asanas and 84 siddhas — why this specific number appears",
+            "108": "108 sacred repetitions — geometric basis in projective structures",
+            "112": "Vijñāna Bhairava's 112 dharanas and the 112 chakras — explore structural reasons",
+        }
+
         if target_nums:
-            return f"Exploring mathematical structure behind {', '.join(target_nums)} using Fano plane geometry and Sanskrit grammar connections"
-        return "Open exploration of Fano plane, Sanskrit grammar, and Indian music theory connections"
+            # Check if we have a specific seed question for this number
+            for num in target_nums:
+                if num in number_topics:
+                    return number_topics[num]
+            # Default for other numbers
+            return f"Exploring mathematical structure behind {', '.join(target_nums)} across Fano geometry, Sanskrit grammar, music theory, and yogic cosmology"
+
+        # Open exploration topics (rotate through these)
+        open_topics = [
+            "Open exploration of Fano plane, Sanskrit grammar, music theory, and tantric cosmology connections",
+            "How do the incidence structures of projective geometry manifest in yogic/tantric enumeration systems?",
+            "Explore the relationship between Panini's grammatical structures and the tattva hierarchies",
+            "The geometry of consciousness: connecting Fano structures to dharana techniques",
+        ]
+        return random.choice(open_topics)
     
     async def _do_exploration(self, thread: ExplorationThread, model_name: str, model):
         """Perform an exploration step."""
@@ -453,13 +480,21 @@ class Orchestrator:
         prompt_parts = [
             f"{date_prefix} You are exploring deep mathematical connections between:",
             "- Fano plane incidence geometry (7 points, 7 lines, 3 points per line)",
-            "- Sanskrit grammar (particularly Panini's system)",
-            "- Indian classical music theory (swaras, shrutis, ragas)",
+            "- Sanskrit grammar (particularly Panini's system, 14 Maheshvara Sutras)",
+            "- Indian classical music theory (swaras, shrutis, ragas, 72 melakartas)",
+            "- Yogic/Tantric cosmology and practice systems:",
+            "  • Tantric texts (Vijñāna Bhairava's 112 dharanas, Tantraloka)",
+            "  • Yogic texts (Yoga Sutras, Hatha Yoga Pradipika, 84 asanas)",
+            "  • Samkhya/Vedantic philosophy (24/25 tattvas, 36 tattvas in Kashmir Shaivism)",
+            "  • Puranic cosmology (7 lokas, 14 lokas, yuga cycles)",
+            "",
+            "KEY NUMBERS TO DECODE:",
+            "7, 14, 22, 24, 36, 72, 84, 108, 112",
             "",
             "Your goal is to find mathematical structures that:",
             "1. Feel NATURAL and INEVITABLE (not forced)",
             "2. Are ELEGANT and SYMMETRIC",
-            "3. DECODE the specific numbers in the teachings below",
+            "3. DECODE WHY these specific numbers appear across traditions",
             "",
             "Follow your mathematical curiosity. Let the structure reveal itself.",
             "If something feels forced, abandon it. If something feels inevitable,",
