@@ -187,7 +187,10 @@ async def _deep_review_gemini(gemini_browser, prompt: str) -> ReviewResponse:
     logger.info("[round2] Sending to Gemini (Deep Think mode)")
 
     try:
-        # Enable Deep Think mode
+        # Start fresh chat first to ensure clean state
+        await gemini_browser.start_new_chat()
+
+        # Enable Deep Think mode (this will handle confirmation and setup new chat)
         await gemini_browser.enable_deep_think()
 
         # Send the prompt and get response
@@ -219,6 +222,9 @@ async def _deep_review_chatgpt(chatgpt_browser, prompt: str) -> ReviewResponse:
     logger.info("[round2] Sending to ChatGPT (Pro mode)")
 
     try:
+        # Start fresh chat first to ensure clean state
+        await chatgpt_browser.start_new_chat()
+
         # Try to enable Pro mode if available
         try:
             await chatgpt_browser.enable_pro_mode()

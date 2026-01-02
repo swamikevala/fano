@@ -324,8 +324,12 @@ async def _send_to_llm(
 ) -> str:
     """Send a prompt to the specified LLM and get response."""
     if llm == "gemini" and gemini_browser:
+        # Start fresh chat to ensure clean state
+        await gemini_browser.start_new_chat()
         return await gemini_browser.send_message(prompt)
     elif llm == "chatgpt" and chatgpt_browser:
+        # Start fresh chat to ensure clean state
+        await chatgpt_browser.start_new_chat()
         return await chatgpt_browser.send_message(prompt)
     elif llm == "claude" and claude_reviewer:
         return await claude_reviewer.send_message(prompt, extended_thinking=False)

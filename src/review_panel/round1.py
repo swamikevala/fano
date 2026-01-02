@@ -131,6 +131,9 @@ async def _review_with_gemini(gemini_browser, prompt: str) -> ReviewResponse:
     logger.info("[round1] Sending to Gemini (standard mode)")
 
     try:
+        # Start fresh chat to reset any Deep Think state and clear old content
+        await gemini_browser.start_new_chat()
+
         # Send the prompt and get response
         response_text = await gemini_browser.send_message(prompt)
 
@@ -158,6 +161,9 @@ async def _review_with_chatgpt(chatgpt_browser, prompt: str) -> ReviewResponse:
     logger.info("[round1] Sending to ChatGPT (standard mode)")
 
     try:
+        # Start fresh chat to clear old content
+        await chatgpt_browser.start_new_chat()
+
         # Send the prompt and get response
         response_text = await chatgpt_browser.send_message(prompt)
 
