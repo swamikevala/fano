@@ -761,6 +761,9 @@
                                         {% if resp.reasoning %}
                                         <p><strong>Reasoning:</strong> {{ resp.reasoning }}</p>
                                         {% endif %}
+                                        {% if not resp.strongest_argument and not resp.response_to_argument and not resp.reasoning %}
+                                        <p style="color: var(--text-dim); font-style: italic;">(Deliberation details not captured for this review)</p>
+                                        {% endif %}
                                         {% else %}
                                         {# Round 1 & 2: Standard fields #}
                                         <p><strong>Reasoning:</strong> {{ resp.reasoning }}</p>
