@@ -13,6 +13,7 @@ browser_data/
 
 # Logs
 logs/*.log
+data/chat_logs/
 
 # OS
 .DS_Store
