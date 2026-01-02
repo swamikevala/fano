@@ -409,7 +409,7 @@ class GeminiInterface(BaseLLMInterface):
     async def _wait_for_response(self, timeout: int = None) -> str:
         """Wait for Gemini to finish responding and extract text."""
         if timeout is None:
-            timeout = self.config.get("response_timeout", 600)  # Deep Think can be slow
+            timeout = self.config.get("response_timeout", 3600)  # Deep Think can take very long
 
         mode_str = "Deep Think" if self.deep_think_enabled else "standard"
         logger.info(f"[gemini] Waiting for response in {mode_str} mode (timeout: {timeout}s)...")
@@ -418,8 +418,9 @@ class GeminiInterface(BaseLLMInterface):
         last_response = ""
         stable_count = 0
         last_log_time = start_time
+        response_started = False
 
-        # Selectors for model responses
+        # Selectors for model responses (the final answer, not thinking)
         response_selectors = [
             "message-content.model-response-text",
             "div.model-response-text",
@@ -427,63 +428,112 @@ class GeminiInterface(BaseLLMInterface):
             ".response-container .markdown",
         ]
 
-        # Extended loading selectors for Deep Think mode
-        loading_selectors = [
+        # Selectors that indicate Gemini is still thinking/processing
+        # These must ALL be absent for response to be considered complete in Deep Think
+        still_processing_selectors = [
+            # Generic loading
             ".loading",
-            ".thinking",
             "[aria-busy='true']",
             "mat-spinner",
-            # Deep Think specific selectors
+            # Deep Think specific - look for animated/active thinking indicators
             "[data-thinking='true']",
-            ".deep-think-indicator",
-            "div[class*='thinking']",
-            "div[class*='loading']",
+            ".thinking-indicator",
+            "div[class*='thinking'][class*='active']",
+            "div[class*='thinking'][class*='progress']",
+            # Animated elements that indicate processing
+            ".animate-pulse",
+            ".animate-spin",
+            "[class*='loading']",
+            "[class*='spinner']",
+            # Stop/cancel button indicates still processing
+            "button[aria-label*='Stop']",
+            "button[aria-label*='Cancel']",
+            "button:has-text('Stop')",
         ]
 
+        # In Deep Think mode, wait longer before checking stability
+        # because thinking output stabilizes before the actual response
+        initial_wait = 30 if self.deep_think_enabled else 5
+
+        logger.info(f"[gemini] Initial wait: {initial_wait}s before stability checks")
+        await asyncio.sleep(initial_wait)
+
         while (datetime.now() - start_time).seconds < timeout:
-            # Log progress every 30 seconds
             elapsed = (datetime.now() - start_time).seconds
+
+            # Log progress every 30 seconds
             if (datetime.now() - last_log_time).seconds >= 30:
-                logger.info(f"[gemini] Still waiting... ({elapsed}s elapsed, stable_count={stable_count})")
+                logger.info(f"[gemini] Still waiting... ({elapsed}s elapsed, stable_count={stable_count}, response_started={response_started})")
                 last_log_time = datetime.now()
 
+            # First, check if Gemini is still actively processing
+            is_still_processing = False
+            for selector in still_processing_selectors:
+                try:
+                    elem = await self.page.query_selector(selector)
+                    if elem:
+                        is_visible = await elem.is_visible()
+                        if is_visible:
+                            is_still_processing = True
+                            if elapsed > 60:  # Only log after 1 minute to reduce noise
+                                logger.debug(f"[gemini] Still processing (indicator: {selector})")
+                            break
+                except Exception:
+                    continue
+
+            if is_still_processing:
+                # Reset stability if still processing
+                stable_count = 0
+                await asyncio.sleep(3)
+                continue
+
+            # Now try to get the response content
+            current_response = ""
             for selector in response_selectors:
-                messages = await self.page.query_selector_all(selector)
-                if messages:
-                    last_msg = messages[-1]
-                    current_response = await last_msg.inner_text()
+                try:
+                    messages = await self.page.query_selector_all(selector)
+                    if messages:
+                        last_msg = messages[-1]
+                        current_response = await last_msg.inner_text()
+                        if current_response and len(current_response) > 10:
+                            response_started = True
+                            break
+                except Exception:
+                    continue
 
-                    if current_response == last_response and current_response:
-                        stable_count += 1
-                        # For Deep Think, require more stability checks (10 instead of 5)
-                        required_stable = 10 if self.deep_think_enabled else 5
-                        if stable_count >= required_stable:
-                            # Check for loading indicator
-                            is_loading = False
-                            for ls in loading_selectors:
-                                try:
-                                    loading = await self.page.query_selector(ls)
-                                    if loading:
-                                        is_visible = await loading.is_visible()
-                                        if is_visible:
-                                            is_loading = True
-                                            logger.debug(f"[gemini] Loading indicator found: {ls}")
-                                            break
-                                except Exception:
-                                    continue
+            if current_response:
+                if current_response == last_response:
+                    stable_count += 1
+                    # For Deep Think, require much more stability (20 checks @ 3s = 60s stable)
+                    # This ensures we don't capture thinking content as final response
+                    required_stable = 20 if self.deep_think_enabled else 5
 
-                            if not is_loading:
-                                elapsed = (datetime.now() - start_time).seconds
-                                logger.info(f"[gemini] Response complete ({elapsed}s, {len(current_response)} chars)")
-                                return current_response.strip()
-                    else:
-                        if current_response != last_response:
-                            logger.debug(f"[gemini] Response changed, resetting stable count")
-                        stable_count = 0
-                        last_response = current_response
-                    break
+                    if stable_count >= required_stable:
+                        # Double-check no processing indicators
+                        final_check_processing = False
+                        for selector in still_processing_selectors[:5]:  # Quick check of main ones
+                            try:
+                                elem = await self.page.query_selector(selector)
+                                if elem and await elem.is_visible():
+                                    final_check_processing = True
+                                    break
+                            except Exception:
+                                continue
 
-            await asyncio.sleep(2)  # Longer interval for Deep Think
+                        if not final_check_processing:
+                            elapsed = (datetime.now() - start_time).seconds
+                            logger.info(f"[gemini] Response complete ({elapsed}s, {len(current_response)} chars)")
+                            return current_response.strip()
+                        else:
+                            logger.info(f"[gemini] Stable but still processing, continuing to wait...")
+                            stable_count = required_stable // 2  # Partial reset
+                else:
+                    if last_response and current_response != last_response:
+                        logger.debug(f"[gemini] Response changed ({len(last_response)} -> {len(current_response)} chars)")
+                    stable_count = 0
+                    last_response = current_response
+
+            await asyncio.sleep(3)  # Check every 3 seconds
 
         if last_response:
             elapsed = (datetime.now() - start_time).seconds

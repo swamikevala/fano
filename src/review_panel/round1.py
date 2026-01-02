@@ -158,21 +158,21 @@ async def _review_with_gemini(gemini_browser, prompt: str) -> ReviewResponse:
 
 async def _review_with_chatgpt(chatgpt_browser, prompt: str) -> ReviewResponse:
     """Get review from ChatGPT using browser automation."""
-    logger.info("[round1] Sending to ChatGPT (standard mode)")
+    logger.info("[round1] Sending to ChatGPT (Thinking mode)")
 
     try:
         # Start fresh chat to clear old content
         await chatgpt_browser.start_new_chat()
 
-        # Send the prompt and get response
-        response_text = await chatgpt_browser.send_message(prompt)
+        # Send the prompt with Thinking mode enabled (not Pro - save Pro for Round 2)
+        response_text = await chatgpt_browser.send_message(prompt, use_thinking_mode=True)
 
         # Parse the response
         parsed = parse_round1_response(response_text)
 
         return ReviewResponse(
             llm="chatgpt",
-            mode="standard",
+            mode="thinking",  # Uses GPT-5.2 Thinking mode
             rating=parsed["rating"],
             mathematical_verification=parsed["mathematical_verification"],
             structural_analysis=parsed["structural_analysis"],

@@ -25,7 +25,9 @@ class ChatGPTInterface(BaseLLMInterface):
     def __init__(self):
         super().__init__()
         self.pro_mode_enabled = False
+        self.thinking_mode_enabled = False
         self.last_deep_mode_used = False
+        self._current_mode = "default"  # "default", "thinking", "pro"
 
     async def connect(self):
         """Connect to ChatGPT."""
@@ -167,13 +169,91 @@ class ChatGPTInterface(BaseLLMInterface):
             print(f"[chatgpt] Could not enable Pro mode: {e}")
             return False
 
-    async def send_message(self, message: str, use_pro_mode: bool = False) -> str:
+    async def enable_thinking_mode(self) -> bool:
+        """
+        Enable GPT-5.2 Thinking mode if available.
+        This is the preferred mode for standard queries (not Pro).
+        Returns True if successfully enabled.
+        """
+        if self._current_mode == "thinking":
+            print(f"[chatgpt] Already in Thinking mode")
+            return True
+
+        try:
+            print(f"[chatgpt] Enabling Thinking mode...")
+
+            # Find the model switcher button
+            model_btn = await self.page.query_selector(
+                "[data-testid='model-switcher-dropdown-button']"
+            )
+
+            if model_btn:
+                is_visible = await model_btn.is_visible()
+                if is_visible:
+                    # Check current mode
+                    text = await model_btn.inner_text()
+                    text_lower = text.lower()
+
+                    # Check if already on Thinking mode
+                    if "thinking" in text_lower or "5.2" in text_lower:
+                        print(f"[chatgpt] Already on Thinking mode: {text}")
+                        self.thinking_mode_enabled = True
+                        self._current_mode = "thinking"
+                        return True
+
+                    # Click to open dropdown
+                    print(f"[chatgpt] Opening model selector (current: {text})...")
+                    await model_btn.click()
+                    await asyncio.sleep(0.5)
+
+                    # Look for Thinking/5.2 option in dropdown
+                    thinking_options = [
+                        "[role='menuitem']:has-text('Thinking')",
+                        "[role='menuitem']:has-text('5.2')",
+                        "[role='option']:has-text('Thinking')",
+                        "[role='option']:has-text('5.2')",
+                        "div:has-text('Thinking'):not(:has(div))",
+                        "div:has-text('5.2'):not(:has(div))",
+                    ]
+
+                    for selector in thinking_options:
+                        try:
+                            option = await self.page.query_selector(selector)
+                            if option:
+                                opt_visible = await option.is_visible()
+                                if opt_visible:
+                                    opt_text = await option.inner_text()
+                                    # Make sure it's not Pro or other variants
+                                    if "pro" not in opt_text.lower():
+                                        print(f"[chatgpt] Selecting Thinking option: {opt_text[:30]}")
+                                        await option.click()
+                                        await asyncio.sleep(1)
+                                        self.thinking_mode_enabled = True
+                                        self._current_mode = "thinking"
+                                        return True
+                        except Exception:
+                            continue
+
+                    # Close dropdown
+                    await self.page.keyboard.press("Escape")
+                    print(f"[chatgpt] Thinking option not found in dropdown")
+
+            # If we can't find the selector, continue without error
+            print(f"[chatgpt] Model selector not found, using default mode")
+            return False
+
+        except Exception as e:
+            print(f"[chatgpt] Could not enable Thinking mode: {e}")
+            return False
+
+    async def send_message(self, message: str, use_pro_mode: bool = False, use_thinking_mode: bool = False) -> str:
         """
         Send a message to ChatGPT and wait for response.
 
         Args:
             message: The message to send
-            use_pro_mode: Whether to use Pro/GPT-4 mode (default False, controlled by orchestrator)
+            use_pro_mode: Whether to use Pro mode (for Round 2 deep analysis)
+            use_thinking_mode: Whether to use Thinking mode (for Round 1 standard)
 
         Returns the response text, or raises exception on error.
         Sets self.last_deep_mode_used to indicate if pro mode was used.
@@ -184,18 +264,24 @@ class ChatGPTInterface(BaseLLMInterface):
         # Track whether pro mode was used for this message
         self.last_deep_mode_used = False
 
-        # Try to enable Pro mode if requested
+        # Mode selection: Pro takes precedence over Thinking
         if use_pro_mode:
-            if not self.pro_mode_enabled:
+            if self._current_mode != "pro":
                 success = await self.enable_pro_mode()
                 if success:
                     self.last_deep_mode_used = True
+                    self._current_mode = "pro"
                     print(f"[chatgpt] Pro mode ENABLED for this message")
-            # If already enabled from previous message, it's still active
-            if self.pro_mode_enabled:
+            else:
                 self.last_deep_mode_used = True
+        elif use_thinking_mode:
+            if self._current_mode != "thinking":
+                success = await self.enable_thinking_mode()
+                if success:
+                    self._current_mode = "thinking"
+                    print(f"[chatgpt] Thinking mode ENABLED for this message")
 
-        mode_str = " [PRO]" if self.last_deep_mode_used else ""
+        mode_str = f" [{self._current_mode.upper()}]" if self._current_mode != "default" else ""
         print(f"[chatgpt]{mode_str} Sending message ({len(message)} chars)...")
         
         try:

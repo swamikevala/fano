@@ -330,7 +330,8 @@ async def _send_to_llm(
     elif llm == "chatgpt" and chatgpt_browser:
         # Start fresh chat to ensure clean state
         await chatgpt_browser.start_new_chat()
-        return await chatgpt_browser.send_message(prompt)
+        # Use Thinking mode for deliberation (Pro is only for Round 2 deep analysis)
+        return await chatgpt_browser.send_message(prompt, use_thinking_mode=True)
     elif llm == "claude" and claude_reviewer:
         return await claude_reviewer.send_message(prompt, extended_thinking=False)
     else:
