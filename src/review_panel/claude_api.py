@@ -58,6 +58,34 @@ class ClaudeReviewer:
                 "anthropic package not installed. Run: pip install anthropic"
             )
 
+    async def _stream_extended_thinking(self, prompt: str) -> str:
+        """
+        Stream an extended thinking request.
+
+        Streaming is required for operations that may take longer than 10 minutes.
+        """
+        def _do_stream():
+            text_content = ""
+            with self.client.messages.stream(
+                model=self.model,
+                max_tokens=16000,
+                thinking={
+                    "type": "enabled",
+                    "budget_tokens": 10000,
+                },
+                messages=[{"role": "user", "content": prompt}],
+            ) as stream:
+                for event in stream:
+                    # Collect text content from content_block_delta events
+                    if hasattr(event, "type"):
+                        if event.type == "content_block_delta":
+                            delta = event.delta
+                            if hasattr(delta, "text"):
+                                text_content += delta.text
+            return text_content
+
+        return await asyncio.to_thread(_do_stream)
+
     async def send_message(
         self,
         prompt: str,
@@ -81,19 +109,10 @@ class ClaudeReviewer:
 
         try:
             if extended_thinking:
-                # Use extended thinking with budget
-                response = await asyncio.to_thread(
-                    self.client.messages.create,
-                    model=self.model,
-                    max_tokens=16000,
-                    thinking={
-                        "type": "enabled",
-                        "budget_tokens": 10000,
-                    },
-                    messages=[{"role": "user", "content": prompt}],
-                )
+                # Use streaming for extended thinking (required for long operations)
+                text_content = await self._stream_extended_thinking(prompt)
             else:
-                # Standard message
+                # Standard message (non-streaming)
                 response = await asyncio.to_thread(
                     self.client.messages.create,
                     model=self.model,
@@ -101,11 +120,11 @@ class ClaudeReviewer:
                     messages=[{"role": "user", "content": prompt}],
                 )
 
-            # Extract text from response
-            text_content = ""
-            for block in response.content:
-                if hasattr(block, "text"):
-                    text_content += block.text
+                # Extract text from response
+                text_content = ""
+                for block in response.content:
+                    if hasattr(block, "text"):
+                        text_content += block.text
 
             logger.info(f"[claude] Got response ({len(text_content)} chars)")
             return text_content
