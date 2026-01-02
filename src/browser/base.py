@@ -146,6 +146,10 @@ async def get_browser_context(model: str, playwright_instance=None):
     if playwright_instance is None:
         playwright_instance = await async_playwright().start()
     
+    # Get viewport size from config (with smaller defaults for Windows)
+    viewport_width = CONFIG["browser"].get("viewport_width", 1280)
+    viewport_height = CONFIG["browser"].get("viewport_height", 720)
+
     browser = await playwright_instance.chromium.launch_persistent_context(
         user_data_dir=str(storage_dir),
         headless=CONFIG["browser"].get("headless", False),
@@ -153,8 +157,9 @@ async def get_browser_context(model: str, playwright_instance=None):
         args=[
             "--disable-blink-features=AutomationControlled",
             "--no-sandbox",
+            "--force-device-scale-factor=1",  # Fix Windows DPI scaling issues
         ],
-        viewport={"width": 1280, "height": 800},
+        viewport={"width": viewport_width, "height": viewport_height},
     )
     
     return browser, playwright_instance

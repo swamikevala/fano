@@ -10,6 +10,9 @@ browser:
   user_data_dir: "./browser_data"
   # Slow down operations for stability (milliseconds)
   slow_mo: 100
+  # Viewport size (smaller to avoid window cutoff on Windows)
+  viewport_width: 1280
+  viewport_height: 720
 
 # Model endpoints
 models:
