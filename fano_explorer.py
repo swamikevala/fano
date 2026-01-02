@@ -12,7 +12,6 @@ Usage:
 
 import sys
 import os
-import signal
 import asyncio
 import io
 from pathlib import Path
@@ -72,25 +71,22 @@ def cmd_auth():
 def cmd_start():
     """Start the exploration loop."""
     from orchestrator import Orchestrator
-    
+
     console.print("\n[bold]Starting exploration loop...[/bold]")
     console.print("Press Ctrl+C to stop gracefully.\n")
-    
+
     orchestrator = Orchestrator()
-    
-    # Handle graceful shutdown
-    def shutdown(sig, frame):
-        console.print("\n[yellow]Shutting down gracefully...[/yellow]")
-        orchestrator.stop()
-        sys.exit(0)
-    
-    signal.signal(signal.SIGINT, shutdown)
-    signal.signal(signal.SIGTERM, shutdown)
-    
+
     try:
         asyncio.run(orchestrator.run())
     except KeyboardInterrupt:
-        console.print("\n[yellow]Stopped.[/yellow]")
+        console.print("\n[yellow]Stopping...[/yellow]")
+        # Run cleanup in a new event loop since the previous one was interrupted
+        try:
+            asyncio.run(orchestrator.cleanup())
+        except Exception:
+            pass
+        console.print("[yellow]Stopped.[/yellow]")
 
 
 def cmd_review():

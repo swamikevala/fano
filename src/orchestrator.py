@@ -86,6 +86,11 @@ class Orchestrator:
         """Signal the orchestrator to stop."""
         self.running = False
         logger.info("Stop signal received")
+
+    async def cleanup(self):
+        """Clean up resources (called after interrupt)."""
+        logger.info("Cleaning up...")
+        await self._disconnect_models()
     
     async def _connect_models(self):
         """Connect to LLM browser interfaces."""
