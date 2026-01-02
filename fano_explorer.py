@@ -11,9 +11,22 @@ Usage:
 """
 
 import sys
+import os
 import signal
 import asyncio
+import io
 from pathlib import Path
+
+# Force UTF-8 encoding on Windows
+if sys.platform == "win32":
+    os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+    # Reconfigure stdout/stderr to use UTF-8
+    if hasattr(sys.stdout, "reconfigure"):
+        try:
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+            sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass  # Some environments don't support reconfigure
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent / "src"))
@@ -21,7 +34,7 @@ sys.path.insert(0, str(Path(__file__).parent / "src"))
 from rich.console import Console
 from rich.panel import Panel
 
-console = Console()
+console = Console(force_terminal=True, legacy_windows=False)
 
 
 def print_banner():
@@ -94,8 +107,9 @@ def cmd_status():
     from storage.db import Database
     from models.thread import ExplorationThread
     from models.chunk import Chunk
-    
-    db = Database()
+
+    data_dir = Path(__file__).parent / "data"
+    db = Database(data_dir / "fano_explorer.db")
     
     # Active threads
     threads = db.get_active_threads()
