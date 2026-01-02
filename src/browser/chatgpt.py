@@ -81,77 +81,61 @@ class ChatGPTInterface(BaseLLMInterface):
         Returns True if successfully enabled.
         """
         try:
-            print(f"[chatgpt] Attempting to enable Pro mode...")
+            print(f"[chatgpt] Checking Pro mode status...")
 
-            # Step 1: Find and click the model selector dropdown
-            model_selector_triggers = [
-                "[data-testid='model-selector']",
-                "button[aria-haspopup='menu']",  # Dropdown triggers
-                "button[aria-label*='Model']",
-                "button[aria-label*='ChatGPT']",
-                "div[class*='ModelSelector']",
-                "button:has-text('GPT')",  # Any button with GPT text
-            ]
+            # Find the model switcher button (data-testid="model-switcher-dropdown-button")
+            model_btn = await self.page.query_selector(
+                "[data-testid='model-switcher-dropdown-button']"
+            )
 
-            dropdown_opened = False
-            for selector in model_selector_triggers:
-                try:
-                    btn = await self.page.query_selector(selector)
-                    if btn:
-                        is_visible = await btn.is_visible()
-                        if is_visible:
-                            text = await btn.inner_text()
-                            print(f"[chatgpt] Found model selector: '{text[:30]}...'")
+            if model_btn:
+                is_visible = await model_btn.is_visible()
+                if is_visible:
+                    # Check aria-label or text for "Pro"
+                    aria_label = await model_btn.get_attribute("aria-label") or ""
+                    text = await model_btn.inner_text()
+                    print(f"[chatgpt] Model selector: '{text}' (aria: {aria_label[:50]})")
 
-                            # Check if already on a Pro model (o1, GPT-4, etc.)
-                            if any(m in text.lower() for m in ["o1", "gpt-4", "pro", "plus"]):
-                                print(f"[chatgpt] Already on Pro model: {text[:30]}")
-                                self.pro_mode_enabled = True
-                                return True
+                    # Check if already on Pro mode
+                    if "pro" in aria_label.lower() or "pro" in text.lower():
+                        print(f"[chatgpt] Already on Pro mode")
+                        self.pro_mode_enabled = True
+                        return True
 
-                            # Click to open dropdown
-                            await btn.click()
-                            await asyncio.sleep(0.5)
-                            dropdown_opened = True
-                            break
-                except Exception:
-                    continue
+                    # Not on Pro - click to open dropdown and select Pro
+                    print(f"[chatgpt] Opening model selector to switch to Pro...")
+                    await model_btn.click()
+                    await asyncio.sleep(0.5)
 
-            if not dropdown_opened:
-                print(f"[chatgpt] Could not find model selector dropdown")
-                # Assume Pro is default if we can't find selector
-                self.pro_mode_enabled = True
-                return True
+                    # Look for Pro option in dropdown
+                    pro_options = [
+                        "[role='menuitem']:has-text('Pro')",
+                        "[role='option']:has-text('Pro')",
+                        "div:has-text('Pro'):not(:has(div))",  # Leaf element with Pro
+                    ]
 
-            # Step 2: Look for Pro model options in the dropdown
-            pro_model_options = [
-                "[role='menuitem']:has-text('o1')",
-                "[role='menuitem']:has-text('GPT-4')",
-                "[role='option']:has-text('o1')",
-                "[role='option']:has-text('GPT-4')",
-                "div[data-testid*='model']:has-text('o1')",
-                "div[data-testid*='model']:has-text('GPT-4')",
-            ]
+                    for selector in pro_options:
+                        try:
+                            option = await self.page.query_selector(selector)
+                            if option:
+                                opt_visible = await option.is_visible()
+                                if opt_visible:
+                                    opt_text = await option.inner_text()
+                                    print(f"[chatgpt] Selecting Pro option: {opt_text[:30]}")
+                                    await option.click()
+                                    await asyncio.sleep(1)
+                                    self.pro_mode_enabled = True
+                                    return True
+                        except Exception:
+                            continue
 
-            for selector in pro_model_options:
-                try:
-                    option = await self.page.query_selector(selector)
-                    if option:
-                        is_visible = await option.is_visible()
-                        if is_visible:
-                            text = await option.inner_text()
-                            print(f"[chatgpt] Selecting Pro model: {text[:30]}")
-                            await option.click()
-                            await asyncio.sleep(1)
-                            self.pro_mode_enabled = True
-                            return True
-                except Exception:
-                    continue
+                    # Close dropdown
+                    await self.page.keyboard.press("Escape")
+                    print(f"[chatgpt] Pro option not found in dropdown")
 
-            # Close dropdown if nothing found
-            await self.page.keyboard.press("Escape")
-            print(f"[chatgpt] No Pro model options found in dropdown")
-            self.pro_mode_enabled = True  # Assume current model is fine
+            # Fallback: assume Pro if we can't find selector (might be default)
+            print(f"[chatgpt] Model selector not found, assuming Pro is active")
+            self.pro_mode_enabled = True
             return True
 
         except Exception as e:
