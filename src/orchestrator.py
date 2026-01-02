@@ -801,6 +801,7 @@ CONTENT:
 
             # Run automated review if enabled
             if self.reviewer and CONFIG.get("review_panel", {}).get("enabled", False):
+                blessed_summary = self._get_blessed_summary()
                 await self._review_insights(insights, blessed_summary)
 
             # Mark thread as extracted
