@@ -20,9 +20,13 @@ from pathlib import Path
 # Load environment variables from .env file
 try:
     from dotenv import load_dotenv
-    load_dotenv(Path(__file__).parent / ".env")
+    env_path = Path(__file__).parent / ".env"
+    if env_path.exists():
+        load_dotenv(env_path)
 except ImportError:
     pass  # dotenv not installed, rely on system env vars
+except Exception as e:
+    print(f"Warning: Could not load .env: {e}")
 
 # Force UTF-8 encoding on Windows
 if sys.platform == "win32":
