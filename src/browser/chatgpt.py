@@ -95,6 +95,11 @@ class ChatGPTInterface(BaseLLMInterface):
             await self.page.goto("https://chatgpt.com/")
             await asyncio.sleep(2)
 
+            # Reset mode tracking - browser may have different default
+            self._current_mode = "default"
+            self.pro_mode_enabled = False
+            self.thinking_mode_enabled = False
+
             # Start a new logging session
             session_id = self.chat_logger.start_session()
             print(f"[chatgpt] Started new chat (session: {session_id})")
@@ -171,16 +176,12 @@ class ChatGPTInterface(BaseLLMInterface):
 
     async def enable_thinking_mode(self) -> bool:
         """
-        Enable GPT-5.2 Thinking mode if available.
+        Enable standard (non-Pro) mode - GPT-4o or similar.
         This is the preferred mode for standard queries (not Pro).
         Returns True if successfully enabled.
         """
-        if self._current_mode == "thinking":
-            print(f"[chatgpt] Already in Thinking mode")
-            return True
-
         try:
-            print(f"[chatgpt] Enabling Thinking mode...")
+            print(f"[chatgpt] Switching to standard (non-Pro) mode...")
 
             # Find the model switcher button
             model_btn = await self.page.query_selector(
@@ -194,9 +195,9 @@ class ChatGPTInterface(BaseLLMInterface):
                     text = await model_btn.inner_text()
                     text_lower = text.lower()
 
-                    # Check if already on Thinking mode
-                    if "thinking" in text_lower or "5.2" in text_lower:
-                        print(f"[chatgpt] Already on Thinking mode: {text}")
+                    # Already on a non-Pro mode?
+                    if "pro" not in text_lower and ("4o" in text_lower or "gpt" in text_lower):
+                        print(f"[chatgpt] Already on standard mode: {text}")
                         self.thinking_mode_enabled = True
                         self._current_mode = "thinking"
                         return True
@@ -206,44 +207,76 @@ class ChatGPTInterface(BaseLLMInterface):
                     await model_btn.click()
                     await asyncio.sleep(0.5)
 
-                    # Look for Thinking/5.2 option in dropdown
-                    thinking_options = [
-                        "[role='menuitem']:has-text('Thinking')",
-                        "[role='menuitem']:has-text('5.2')",
-                        "[role='option']:has-text('Thinking')",
-                        "[role='option']:has-text('5.2')",
-                        "div:has-text('Thinking'):not(:has(div))",
-                        "div:has-text('5.2'):not(:has(div))",
-                    ]
+                    # Get all menu items and log them for debugging
+                    menu_items = await self.page.query_selector_all("[role='menuitem'], [role='option'], [data-testid*='model']")
+                    print(f"[chatgpt] Found {len(menu_items)} menu items")
 
-                    for selector in thinking_options:
+                    # Log all visible options for debugging
+                    visible_options = []
+                    for item in menu_items:
                         try:
-                            option = await self.page.query_selector(selector)
-                            if option:
-                                opt_visible = await option.is_visible()
-                                if opt_visible:
-                                    opt_text = await option.inner_text()
-                                    # Make sure it's not Pro or other variants
-                                    if "pro" not in opt_text.lower():
-                                        print(f"[chatgpt] Selecting Thinking option: {opt_text[:30]}")
-                                        await option.click()
-                                        await asyncio.sleep(1)
-                                        self.thinking_mode_enabled = True
-                                        self._current_mode = "thinking"
-                                        return True
+                            if await item.is_visible():
+                                item_text = await item.inner_text()
+                                visible_options.append(item_text[:50])
+                        except:
+                            pass
+                    print(f"[chatgpt] Available options: {visible_options}")
+
+                    # Look for Thinking mode first (5.2), then other standard options
+                    standard_patterns = ["5.2", "thinking", "4o", "gpt-4"]
+
+                    for item in menu_items:
+                        try:
+                            item_visible = await item.is_visible()
+                            if not item_visible:
+                                continue
+                            item_text = await item.inner_text()
+                            item_lower = item_text.lower()
+
+                            # Skip Pro mode
+                            if "pro" in item_lower:
+                                continue
+
+                            # Look for preferred model (5.2 Thinking first)
+                            for pattern in standard_patterns:
+                                if pattern in item_lower:
+                                    print(f"[chatgpt] Selecting: {item_text[:40]}")
+                                    await item.click()
+                                    await asyncio.sleep(1)
+                                    self.thinking_mode_enabled = True
+                                    self._current_mode = "thinking"
+                                    return True
+                        except Exception as e:
+                            print(f"[chatgpt] Error checking menu item: {e}")
+                            continue
+
+                    # If no standard pattern found, just pick first non-Pro option
+                    for item in menu_items:
+                        try:
+                            item_visible = await item.is_visible()
+                            if not item_visible:
+                                continue
+                            item_text = await item.inner_text()
+                            if "pro" not in item_text.lower():
+                                print(f"[chatgpt] Selecting first non-Pro: {item_text[:40]}")
+                                await item.click()
+                                await asyncio.sleep(1)
+                                self.thinking_mode_enabled = True
+                                self._current_mode = "thinking"
+                                return True
                         except Exception:
                             continue
 
                     # Close dropdown
                     await self.page.keyboard.press("Escape")
-                    print(f"[chatgpt] Thinking option not found in dropdown")
+                    print(f"[chatgpt] No suitable option found in dropdown")
 
             # If we can't find the selector, continue without error
             print(f"[chatgpt] Model selector not found, using default mode")
             return False
 
         except Exception as e:
-            print(f"[chatgpt] Could not enable Thinking mode: {e}")
+            print(f"[chatgpt] Could not switch mode: {e}")
             return False
 
     async def send_message(self, message: str, use_pro_mode: bool = False, use_thinking_mode: bool = False) -> str:

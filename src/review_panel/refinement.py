@@ -181,7 +181,7 @@ async def run_post_refinement_review(
                 raw_response = await model.send_message(prompt, extended_thinking=False)
             elif llm_name == "chatgpt":
                 await model.start_new_chat()
-                raw_response = await model.send_message(prompt, use_pro_mode=False)
+                raw_response = await model.send_message(prompt, use_pro_mode=False, use_thinking_mode=True)
             else:  # gemini
                 await model.start_new_chat()
                 raw_response = await model.send_message(prompt, use_deep_think=False)

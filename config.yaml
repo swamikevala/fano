@@ -63,6 +63,42 @@ deep_modes:
   chatgpt_pro:
     daily_limit: 100
 
+# Exploration seed prompt
+exploration:
+  # Introduction describing what we're exploring
+  intro: |
+    You are exploring deep mathematical connections between:
+    - Fano plane incidence geometry (7 points, 7 lines, 3 points per line) and its related mathematical structures/geometries
+    - The Yogic energy system of chakras and nadis and the 5 elements
+    - Sanskrit grammar (particularly Panini's system, 14 Maheshvara Sutras)
+    - Indian classical music theory (12 swaras, 22 shrutis, ragas, 72 melakartas)
+    - Yogic/Tantric cosmology and practice systems:
+      • Tantric texts (Vijñāna Bhairava's 112 dharanas, Tantraloka)
+      • Yogic texts (Yoga Sutras, Hatha Yoga Pradipika, 84 asanas)
+      • Samkhya/Vedantic philosophy (24/25 tattvas, 36 tattvas in Kashmir Shaivism)
+      • Puranic cosmology (7 lokas, 14 lokas, yuga cycles)
+    - Modern physics: String theory, Quantum mechanics, Alternate explanation of Gravity
+
+  # Key numbers to decode
+  key_numbers: "3, 5, 7, 14, 16, 21, 22, 24, 36, 72, 84, 108, 112, 114"
+
+  # Goals for the exploration
+  goals: |
+    Your goal is to find mathematical structures that:
+    1. Feel NATURAL and INEVITABLE (not forced)
+    2. Are ELEGANT, INTERESTING, and BEAUTIFUL
+    3. DECODE WHY these specific numbers appear across traditions
+
+  # Guidance for exploration style
+  guidance: |
+    Follow your mathematical curiosity. Let the structure reveal itself.
+    If something feels forced, abandon it. If something feels inevitable,
+    pursue it—even if it seems unrelated to anything practical.
+
+    The criterion for a good direction is: does this feel DISCOVERED
+    rather than INVENTED? Does it explain WHY the numbers are what they are,
+    not just THAT they match?
+
 # Orchestration settings
 orchestration:
   # Seconds between exploration cycles

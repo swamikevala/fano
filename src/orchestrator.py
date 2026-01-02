@@ -17,6 +17,10 @@ import yaml
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 from browser import (
     ChatGPTInterface,
@@ -406,8 +410,13 @@ class Orchestrator:
             await model.start_new_chat()
 
             # Pass deep mode flag to send_message
+            # ChatGPT: use Pro mode for deep, Thinking mode for standard
             if model_name == "chatgpt":
-                response = await model.send_message(prompt, use_pro_mode=use_deep)
+                response = await model.send_message(
+                    prompt,
+                    use_pro_mode=use_deep,
+                    use_thinking_mode=not use_deep
+                )
             else:
                 response = await model.send_message(prompt, use_deep_think=use_deep)
 
@@ -464,8 +473,13 @@ class Orchestrator:
             await critique_model.start_new_chat()
 
             # Pass deep mode flag to send_message
+            # ChatGPT: use Pro mode for deep, Thinking mode for standard
             if critique_model_name == "chatgpt":
-                response = await critique_model.send_message(prompt, use_pro_mode=use_deep)
+                response = await critique_model.send_message(
+                    prompt,
+                    use_pro_mode=use_deep,
+                    use_thinking_mode=not use_deep
+                )
             else:
                 response = await critique_model.send_message(prompt, use_deep_think=use_deep)
 
@@ -506,32 +520,22 @@ class Orchestrator:
         context = self.axioms.get_context_for_exploration()
         date_prefix = datetime.now().strftime("[FANO %m-%d]")
 
+        # Load seed prompt from config
+        exploration_config = CONFIG.get("exploration", {})
+        intro = exploration_config.get("intro", "You are exploring mathematical connections.")
+        key_numbers = exploration_config.get("key_numbers", "")
+        goals = exploration_config.get("goals", "")
+        guidance = exploration_config.get("guidance", "")
+
         prompt_parts = [
-            f"{date_prefix} You are exploring deep mathematical connections between:",
-            "- Fano plane incidence geometry (7 points, 7 lines, 3 points per line)",
-            "- Sanskrit grammar (particularly Panini's system, 14 Maheshvara Sutras)",
-            "- Indian classical music theory (swaras, shrutis, ragas, 72 melakartas)",
-            "- Yogic/Tantric cosmology and practice systems:",
-            "  • Tantric texts (Vijñāna Bhairava's 112 dharanas, Tantraloka)",
-            "  • Yogic texts (Yoga Sutras, Hatha Yoga Pradipika, 84 asanas)",
-            "  • Samkhya/Vedantic philosophy (24/25 tattvas, 36 tattvas in Kashmir Shaivism)",
-            "  • Puranic cosmology (7 lokas, 14 lokas, yuga cycles)",
+            f"{date_prefix} {intro.strip()}",
             "",
             "KEY NUMBERS TO DECODE:",
-            "7, 14, 22, 24, 36, 72, 84, 108, 112",
+            key_numbers,
             "",
-            "Your goal is to find mathematical structures that:",
-            "1. Feel NATURAL and INEVITABLE (not forced)",
-            "2. Are ELEGANT and SYMMETRIC",
-            "3. DECODE WHY these specific numbers appear across traditions",
+            goals.strip(),
             "",
-            "Follow your mathematical curiosity. Let the structure reveal itself.",
-            "If something feels forced, abandon it. If something feels inevitable,",
-            "pursue it—even if it seems unrelated to anything practical.",
-            "",
-            "The criterion for a good direction is: does this feel DISCOVERED",
-            "rather than INVENTED? Does it explain WHY the numbers are what they are,",
-            "not just THAT they match?",
+            guidance.strip(),
             "",
             context,
             "",
@@ -686,8 +690,13 @@ Structure your response as:
             await model.start_new_chat()
 
             # Pass deep mode flag to send_message
+            # ChatGPT: use Pro mode for deep, Thinking mode for standard
             if model_name == "chatgpt":
-                response = await model.send_message(synthesis_prompt, use_pro_mode=use_deep)
+                response = await model.send_message(
+                    synthesis_prompt,
+                    use_pro_mode=use_deep,
+                    use_thinking_mode=not use_deep
+                )
             else:
                 response = await model.send_message(synthesis_prompt, use_deep_think=use_deep)
 

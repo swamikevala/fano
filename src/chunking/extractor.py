@@ -102,7 +102,7 @@ class AtomicExtractor:
                 logger.info(f"[extractor] Claude unavailable, using {fallback_model_name} as fallback")
                 extraction_model = fallback_model_name
                 if fallback_model_name == "chatgpt":
-                    response = await fallback_model.send_message(prompt, use_pro_mode=False)
+                    response = await fallback_model.send_message(prompt, use_pro_mode=False, use_thinking_mode=True)
                 else:
                     response = await fallback_model.send_message(prompt, use_deep_think=False)
             else:
