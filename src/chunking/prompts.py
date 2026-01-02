@@ -69,6 +69,37 @@ DO FILTER OUT:
 - Vague observations with no specific structural claim
 - Ideas already in the blessed axioms below
 
+=== SCORING SYSTEM ===
+Rate each insight on these 4 dimensions (1-10 scale):
+
+1. IMPACT (1-10): If this were true, how much would it change our understanding?
+   - 10 = Revolutionary reframing of reality
+   - 7 = Major new connection between fields
+   - 4 = Interesting but incremental
+   - 1 = Trivial observation
+
+2. INTUITION (1-10): How much do you feel "in your bones" this is true?
+   - 10 = Feels absolutely inevitable, like discovering a law of nature
+   - 7 = Strong intuitive pull, would be surprised if wrong
+   - 4 = Plausible but could go either way
+   - 1 = Feels forced or arbitrary
+
+3. SURPRISE (1-10): How unexpected is this cross-domain correspondence?
+   - 10 = Connects domains no one would think to relate
+   - 7 = Non-obvious connection between distant fields
+   - 4 = Somewhat expected given the domains
+   - 1 = Obvious or already well-known
+
+4. SADHGURU_ALIGNMENT (1-10): Does this align with yogic/mystical understanding?
+   - 10 = Directly validates or illuminates traditional teachings
+   - 7 = Consistent with yogic worldview
+   - 4 = Neutral - neither supports nor contradicts
+   - 1 = Contradicts traditional understanding
+   - (Use N/A if no relevant yogic context)
+
+TOTAL SCORE = IMPACT + INTUITION + SURPRISE + SADHGURU_ALIGNMENT (max 40)
+Prioritize insights with TOTAL ≥ 25
+
 BLESSED AXIOMS (already established):
 {blessed_chunks_summary if blessed_chunks_summary else "(none yet)"}
 
@@ -81,10 +112,10 @@ Extract up to {max_insights} insights. Format EXACTLY as:
 ===
 INSIGHT: [the aphorism - 1-3 sentences, specific structural claim]
 DOMAINS: [which domains this bridges, e.g. "fano, chakras" or "group-theory, music"]
-NOVELTY: [high/medium/low - how unexpected is this connection?]
-INTUITION: [one sentence on why this feels true or meaningful]
+SCORES: impact=X, intuition=X, surprise=X, sadhguru=X (or N/A), total=XX
+INTUITION_NOTE: [one sentence on why this feels true or meaningful]
 ===
-(continue for each insight worth extracting)
+(continue for each insight worth extracting, highest scores first)
 
 If nothing interesting found:
 ===
@@ -112,6 +143,12 @@ def build_consolidation_prompt(
     return f"""You are consolidating insight proposals from three LLMs exploring mathematical
 connections across domains. Your job is to create the FINAL list of aphorisms.
 
+Each LLM has scored their proposals on:
+- IMPACT: How much would this change our understanding if true?
+- INTUITION: How much does it "feel" true in your bones?
+- SURPRISE: How unexpected is this cross-domain correspondence?
+- SADHGURU_ALIGNMENT: Does this align with yogic/mystical teachings?
+
 GEMINI'S PROPOSALS:
 {gemini_proposals}
 
@@ -125,28 +162,29 @@ ALREADY BLESSED (do not duplicate):
 {blessed_chunks_summary if blessed_chunks_summary else "(none yet)"}
 
 YOUR TASK:
-1. MERGE similar proposals - keep the clearest/most precise articulation
+1. MERGE similar proposals - keep the clearest articulation, AVERAGE the scores
 2. PRESERVE all distinct cross-domain bridges (even if only one LLM proposed it)
 3. REMOVE true duplicates (same core idea, just reworded)
 4. REMOVE ideas that duplicate blessed axioms
-5. PRIORITIZE novel cross-domain connections over pure-math insights
+5. PRIORITIZE by TOTAL SCORE - higher scores = more interesting
 
-IMPORTANT:
-- If two LLMs proposed similar ideas, this suggests it's worth keeping
-- If only one LLM proposed something unusual, it might be the most interesting
+SCORING GUIDANCE:
+- High-scoring insights (25+) should almost always be kept
+- If multiple LLMs proposed similar ideas, BOOST the score (+5)
+- If only one LLM proposed something unusual with high surprise, KEEP IT
 - Err on the side of KEEPING rather than discarding
-- The review panel will filter later - your job is to not lose good ideas
 
-OUTPUT FORMAT - extract up to {max_final} consolidated insights:
+OUTPUT FORMAT - extract up to {max_final} consolidated insights (highest scores first):
 
 ===
 INSIGHT: [final articulation - 1-3 sentences]
+SCORES: impact=X, intuition=X, surprise=X, sadhguru=X (or N/A), total=XX
 CONFIDENCE: [high/medium/low]
 TAGS: [comma-separated domain tags]
 PROPOSED_BY: [gemini/chatgpt/claude or "multiple"]
 DEPENDS_ON: [blessed axiom IDs if any, or "none"]
 ===
-(continue for each distinct insight)
+(continue for each distinct insight, ordered by total score)
 """
 
 
@@ -154,8 +192,10 @@ def parse_panel_extraction_response(response: str) -> list[dict]:
     """
     Parse a panel extraction response (from individual LLM).
 
-    Returns list of proposed insights with domains, novelty, intuition.
+    Returns list of proposed insights with domains, scores, and intuition notes.
     """
+    import re
+
     insights = []
 
     if "NO_INSIGHTS:" in response:
@@ -181,17 +221,60 @@ def parse_panel_extraction_response(response: str) -> list[dict]:
             elif line.startswith("DOMAINS:"):
                 domains_str = line[8:].strip()
                 insight_data["domains"] = [d.strip() for d in domains_str.split(",") if d.strip()]
+            elif line.startswith("SCORES:"):
+                # Parse scores: impact=X, intuition=X, surprise=X, sadhguru=X, total=XX
+                scores_str = line[7:].strip()
+                scores = {"impact": 5, "intuition": 5, "surprise": 5, "sadhguru": None, "total": 15}
+
+                # Extract individual scores
+                impact_match = re.search(r'impact\s*=\s*(\d+)', scores_str, re.IGNORECASE)
+                if impact_match:
+                    scores["impact"] = int(impact_match.group(1))
+
+                intuition_match = re.search(r'intuition\s*=\s*(\d+)', scores_str, re.IGNORECASE)
+                if intuition_match:
+                    scores["intuition"] = int(intuition_match.group(1))
+
+                surprise_match = re.search(r'surprise\s*=\s*(\d+)', scores_str, re.IGNORECASE)
+                if surprise_match:
+                    scores["surprise"] = int(surprise_match.group(1))
+
+                sadhguru_match = re.search(r'sadhguru\s*=\s*(\d+|N/?A)', scores_str, re.IGNORECASE)
+                if sadhguru_match:
+                    val = sadhguru_match.group(1)
+                    scores["sadhguru"] = None if val.upper() in ["N/A", "NA"] else int(val)
+
+                total_match = re.search(r'total\s*=\s*(\d+)', scores_str, re.IGNORECASE)
+                if total_match:
+                    scores["total"] = int(total_match.group(1))
+                else:
+                    # Calculate total if not provided
+                    scores["total"] = (
+                        scores["impact"] + scores["intuition"] + scores["surprise"] +
+                        (scores["sadhguru"] if scores["sadhguru"] is not None else 0)
+                    )
+
+                insight_data["scores"] = scores
+
+            elif line.startswith("INTUITION_NOTE:"):
+                insight_data["intuition_note"] = line[15:].strip()
             elif line.startswith("NOVELTY:"):
+                # Legacy format support
                 insight_data["novelty"] = line[8:].strip().lower()
-            elif line.startswith("INTUITION:"):
-                insight_data["intuition"] = line[10:].strip()
+            elif line.startswith("INTUITION:") and "intuition_note" not in insight_data:
+                # Legacy format support
+                insight_data["intuition_note"] = line[10:].strip()
 
         if insight_data.get("insight"):
             # Set defaults
             insight_data.setdefault("domains", [])
+            insight_data.setdefault("scores", {"impact": 5, "intuition": 5, "surprise": 5, "sadhguru": None, "total": 15})
+            insight_data.setdefault("intuition_note", "")
             insight_data.setdefault("novelty", "medium")
-            insight_data.setdefault("intuition", "")
             insights.append(insight_data)
+
+    # Sort by total score descending
+    insights.sort(key=lambda x: x.get("scores", {}).get("total", 0), reverse=True)
 
     return insights
 
@@ -200,6 +283,8 @@ def parse_consolidation_response(response: str) -> list[dict]:
     """
     Parse the consolidation response into final insights.
     """
+    import re
+
     insights = []
 
     blocks = response.split("===")
@@ -219,6 +304,39 @@ def parse_consolidation_response(response: str) -> list[dict]:
 
             if line.startswith("INSIGHT:"):
                 insight_data["insight"] = line[8:].strip()
+            elif line.startswith("SCORES:"):
+                # Parse scores
+                scores_str = line[7:].strip()
+                scores = {"impact": 5, "intuition": 5, "surprise": 5, "sadhguru": None, "total": 15}
+
+                impact_match = re.search(r'impact\s*=\s*(\d+)', scores_str, re.IGNORECASE)
+                if impact_match:
+                    scores["impact"] = int(impact_match.group(1))
+
+                intuition_match = re.search(r'intuition\s*=\s*(\d+)', scores_str, re.IGNORECASE)
+                if intuition_match:
+                    scores["intuition"] = int(intuition_match.group(1))
+
+                surprise_match = re.search(r'surprise\s*=\s*(\d+)', scores_str, re.IGNORECASE)
+                if surprise_match:
+                    scores["surprise"] = int(surprise_match.group(1))
+
+                sadhguru_match = re.search(r'sadhguru\s*=\s*(\d+|N/?A)', scores_str, re.IGNORECASE)
+                if sadhguru_match:
+                    val = sadhguru_match.group(1)
+                    scores["sadhguru"] = None if val.upper() in ["N/A", "NA"] else int(val)
+
+                total_match = re.search(r'total\s*=\s*(\d+)', scores_str, re.IGNORECASE)
+                if total_match:
+                    scores["total"] = int(total_match.group(1))
+                else:
+                    scores["total"] = (
+                        scores["impact"] + scores["intuition"] + scores["surprise"] +
+                        (scores["sadhguru"] if scores["sadhguru"] is not None else 0)
+                    )
+
+                insight_data["scores"] = scores
+
             elif line.startswith("CONFIDENCE:"):
                 insight_data["confidence"] = line[11:].strip().lower()
             elif line.startswith("TAGS:"):
@@ -235,10 +353,14 @@ def parse_consolidation_response(response: str) -> list[dict]:
 
         if insight_data.get("insight"):
             insight_data.setdefault("confidence", "medium")
+            insight_data.setdefault("scores", {"impact": 5, "intuition": 5, "surprise": 5, "sadhguru": None, "total": 15})
             insight_data.setdefault("tags", [])
             insight_data.setdefault("proposed_by", "unknown")
             insight_data.setdefault("depends_on", [])
             insights.append(insight_data)
+
+    # Sort by total score descending
+    insights.sort(key=lambda x: x.get("scores", {}).get("total", 0), reverse=True)
 
     return insights
 
