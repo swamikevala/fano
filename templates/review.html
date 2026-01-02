@@ -747,12 +747,35 @@
                                         {% endif %}
                                     </div>
                                     <div class="reviewer-content">
+                                        {% if round.round_number == 3 %}
+                                        {# Round 3: Deliberation-specific fields #}
+                                        {% if resp.strongest_argument %}
+                                        <p><strong>Strongest Argument:</strong> {{ resp.strongest_argument }}</p>
+                                        {% endif %}
+                                        {% if resp.response_to_argument %}
+                                        <p><strong>Response to Argument:</strong> {{ resp.response_to_argument }}</p>
+                                        {% endif %}
+                                        {% if resp.final_stance %}
+                                        <p><strong>Final Stance:</strong> <span class="tag {% if resp.final_stance == 'concede' %}confidence-medium{% else %}confidence-high{% endif %}">{{ resp.final_stance }}</span></p>
+                                        {% endif %}
+                                        {% if resp.reasoning %}
+                                        <p><strong>Reasoning:</strong> {{ resp.reasoning }}</p>
+                                        {% endif %}
+                                        {% else %}
+                                        {# Round 1 & 2: Standard fields #}
                                         <p><strong>Reasoning:</strong> {{ resp.reasoning }}</p>
                                         {% if resp.naturalness_assessment %}
                                         <p><strong>Naturalness:</strong> {{ resp.naturalness_assessment }}</p>
                                         {% endif %}
                                         {% if resp.structural_analysis %}
                                         <p><strong>Structure:</strong> {{ resp.structural_analysis }}</p>
+                                        {% endif %}
+                                        {% if resp.mathematical_verification %}
+                                        <p><strong>Math Verification:</strong> {{ resp.mathematical_verification }}</p>
+                                        {% endif %}
+                                        {% endif %}
+                                        {% if resp.new_information %}
+                                        <p><strong>New Information:</strong> {{ resp.new_information }}</p>
                                         {% endif %}
                                     </div>
                                 </div>
