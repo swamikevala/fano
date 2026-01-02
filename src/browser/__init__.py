@@ -9,6 +9,12 @@ from .base import (
 )
 from .chatgpt import ChatGPTInterface
 from .gemini import GeminiInterface
+from .model_selector import (
+    deep_mode_tracker,
+    get_deep_mode_status,
+    select_model,
+    should_use_deep_mode,
+)
 
 __all__ = [
     "BaseLLMInterface",
@@ -16,6 +22,10 @@ __all__ = [
     "ChatLogger",
     "GeminiInterface",
     "authenticate_all",
+    "deep_mode_tracker",
+    "get_deep_mode_status",
     "get_rate_limit_status",
     "rate_tracker",
+    "select_model",
+    "should_use_deep_mode",
 ]

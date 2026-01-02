@@ -13,6 +13,7 @@ from datetime import datetime
 from typing import Optional
 
 from .base import BaseLLMInterface, rate_tracker
+from .model_selector import deep_mode_tracker
 
 
 class GeminiInterface(BaseLLMInterface):
@@ -23,6 +24,7 @@ class GeminiInterface(BaseLLMInterface):
     def __init__(self):
         super().__init__()
         self.deep_think_enabled = False
+        self.last_deep_mode_used = False
     
     async def connect(self):
         """Connect to Gemini."""
@@ -133,24 +135,37 @@ class GeminiInterface(BaseLLMInterface):
         except Exception as e:
             print(f"[gemini] Could not start new chat: {e}")
     
-    async def send_message(self, message: str, use_deep_think: bool = True) -> str:
+    async def send_message(self, message: str, use_deep_think: bool = False) -> str:
         """
         Send a message to Gemini and wait for response.
-        
+
         Args:
             message: The message to send
-            use_deep_think: Whether to try enabling Deep Think mode
-            
+            use_deep_think: Whether to use Deep Think mode (default False, controlled by orchestrator)
+
         Returns the response text.
+        Sets self.last_deep_mode_used to indicate if deep mode was actually used.
         """
         if not rate_tracker.is_available(self.model_name):
             raise RateLimitError("Gemini is rate-limited")
-        
+
+        # Track whether deep mode was used for this message
+        self.last_deep_mode_used = False
+
         # Try to enable Deep Think if requested
-        if use_deep_think and not self.deep_think_enabled:
-            await self.enable_deep_think()
-        
-        print(f"[gemini] Sending message ({len(message)} chars)...")
+        if use_deep_think:
+            if not self.deep_think_enabled:
+                success = await self.enable_deep_think()
+                if success:
+                    self.last_deep_mode_used = True
+                    deep_mode_tracker.record_usage("gemini_deep_think")
+                    print(f"[gemini] Deep Think ENABLED for this message")
+            else:
+                self.last_deep_mode_used = True
+                deep_mode_tracker.record_usage("gemini_deep_think")
+
+        mode_str = " [DEEP THINK]" if self.last_deep_mode_used else ""
+        print(f"[gemini]{mode_str} Sending message ({len(message)} chars)...")
         
         try:
             # Find the input area

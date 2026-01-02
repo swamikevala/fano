@@ -40,7 +40,8 @@ class Exchange:
     model: str  # chatgpt, gemini, claude
     prompt: str
     response: str
-    
+    deep_mode_used: bool = False  # Whether Deep Think or Pro mode was used
+
     def to_dict(self) -> dict:
         return {
             "id": self.id,
@@ -49,8 +50,9 @@ class Exchange:
             "model": self.model,
             "prompt": self.prompt,
             "response": self.response,
+            "deep_mode_used": self.deep_mode_used,
         }
-    
+
     @classmethod
     def from_dict(cls, data: dict) -> "Exchange":
         return cls(
@@ -60,6 +62,7 @@ class Exchange:
             model=data["model"],
             prompt=data["prompt"],
             response=data["response"],
+            deep_mode_used=data.get("deep_mode_used", False),
         )
 
 
@@ -103,7 +106,14 @@ class ExplorationThread:
         last = self.exchanges[-1]
         return last.role == ExchangeRole.EXPLORER
     
-    def add_exchange(self, role: ExchangeRole, model: str, prompt: str, response: str):
+    def add_exchange(
+        self,
+        role: ExchangeRole,
+        model: str,
+        prompt: str,
+        response: str,
+        deep_mode_used: bool = False,
+    ):
         """Add an exchange to the thread."""
         exchange = Exchange(
             id=str(uuid.uuid4())[:8],
@@ -112,6 +122,7 @@ class ExplorationThread:
             model=model,
             prompt=prompt,
             response=response,
+            deep_mode_used=deep_mode_used,
         )
         self.exchanges.append(exchange)
         self.updated_at = datetime.now()

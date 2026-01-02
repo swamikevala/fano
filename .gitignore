@@ -14,6 +14,7 @@ browser_data/
 # Logs
 logs/*.log
 data/chat_logs/
+data/deep_mode_state.json
 
 # OS
 .DS_Store

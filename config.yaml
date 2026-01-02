@@ -43,6 +43,26 @@ models:
         - "quota"
     response_timeout: 600  # Deep Think can be slow
 
+# Model selection weights (higher = more likely to be chosen)
+# Gemini tends to explore creatively, ChatGPT tends to critique rigorously
+model_weights:
+  exploration:
+    gemini: 60
+    chatgpt: 40
+  critique:
+    gemini: 30
+    chatgpt: 70
+  synthesis:
+    gemini: 50
+    chatgpt: 50
+
+# Deep/Pro mode daily limits (preserved for synthesis and breakthroughs)
+deep_modes:
+  gemini_deep_think:
+    daily_limit: 20
+  chatgpt_pro:
+    daily_limit: 100
+
 # Orchestration settings
 orchestration:
   # Seconds between exploration cycles

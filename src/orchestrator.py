@@ -18,7 +18,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from browser import ChatGPTInterface, GeminiInterface, rate_tracker
+from browser import (
+    ChatGPTInterface,
+    GeminiInterface,
+    rate_tracker,
+    select_model,
+    should_use_deep_mode,
+    get_deep_mode_status,
+)
 from models import (
     ExplorationThread, ThreadStatus, ExchangeRole,
     Chunk, ChunkStatus, ChunkFeedback,
@@ -121,28 +128,37 @@ class Orchestrator:
     
     async def _exploration_cycle(self):
         """Single cycle of the exploration loop."""
-        
-        # Check if any model is available
-        model_info = self._get_available_model()
-        if not model_info:
+
+        # Build available models dict
+        available_models = {}
+        if self.chatgpt and rate_tracker.is_available("chatgpt"):
+            available_models["chatgpt"] = self.chatgpt
+        if self.gemini and rate_tracker.is_available("gemini"):
+            available_models["gemini"] = self.gemini
+
+        if not available_models:
             logger.info("All models rate-limited, waiting...")
             await asyncio.sleep(self.config["backoff_base"])
             return
-        
-        model_name, model = model_info
-        
+
         # Get or create a thread to work on
         thread = self._select_thread()
-        
+
         if thread is None:
             # Spawn a new thread
             thread = self._spawn_new_thread()
             logger.info(f"Spawned new thread: {thread.topic[:60]}...")
-        
-        # Perform work on the thread
+
+        # Perform work on the thread using weighted model selection
         if thread.needs_exploration:
-            await self._do_exploration(thread, model_name, model)
+            model_name = select_model("exploration", available_models)
+            if model_name:
+                model = available_models[model_name]
+                await self._do_exploration(thread, model_name, model)
         elif thread.needs_critique:
+            # _do_critique handles its own model selection with critique weights
+            model_name = list(available_models.keys())[0]
+            model = available_models[model_name]
             await self._do_critique(thread, model_name, model)
         
         # Check if thread is ready for synthesis
@@ -220,55 +236,85 @@ class Orchestrator:
     async def _do_exploration(self, thread: ExplorationThread, model_name: str, model):
         """Perform an exploration step."""
         prompt = self._build_exploration_prompt(thread)
-        
-        logger.info(f"Exploring [{thread.id}] with {model_name}")
-        
+
+        # Determine if we should use deep mode
+        use_deep = should_use_deep_mode(model_name, thread, "exploration")
+
+        mode_str = " [DEEP]" if use_deep else ""
+        logger.info(f"Exploring [{thread.id}] with {model_name}{mode_str}")
+
         try:
+            await model.start_new_chat()
+
+            # Pass deep mode flag to send_message
             if model_name == "chatgpt":
-                await model.start_new_chat()
+                response = await model.send_message(prompt, use_pro_mode=use_deep)
             else:
-                await model.start_new_chat()
-            
-            response = await model.send_message(prompt)
-            
+                response = await model.send_message(prompt, use_deep_think=use_deep)
+
+            # Check if deep mode was actually used
+            deep_mode_used = getattr(model, 'last_deep_mode_used', False)
+
             thread.add_exchange(
                 role=ExchangeRole.EXPLORER,
                 model=model_name,
                 prompt=prompt,
                 response=response,
+                deep_mode_used=deep_mode_used,
             )
-            
-            logger.info(f"Exploration complete, {len(response)} chars")
-            
+
+            logger.info(f"Exploration complete, {len(response)} chars" + (" [DEEP]" if deep_mode_used else ""))
+
         except Exception as e:
             logger.error(f"Exploration failed: {e}")
     
     async def _do_critique(self, thread: ExplorationThread, model_name: str, model):
         """Perform a critique step."""
         prompt = self._build_critique_prompt(thread)
-        
-        # Try to use a different model for critique
-        other_model = self._get_other_model(model_name)
-        if other_model:
-            critique_model_name, critique_model = other_model
+
+        # Use weighted selection for critique (prefers ChatGPT)
+        available_models = {}
+        if self.chatgpt:
+            available_models["chatgpt"] = self.chatgpt
+        if self.gemini:
+            available_models["gemini"] = self.gemini
+
+        selected = select_model("critique", available_models)
+        if selected:
+            critique_model_name = selected
+            critique_model = available_models[selected]
         else:
+            # Fallback to original model
             critique_model_name, critique_model = model_name, model
-        
-        logger.info(f"Critiquing [{thread.id}] with {critique_model_name}")
-        
+
+        # Determine if we should use deep mode
+        use_deep = should_use_deep_mode(critique_model_name, thread, "critique")
+
+        mode_str = " [DEEP]" if use_deep else ""
+        logger.info(f"Critiquing [{thread.id}] with {critique_model_name}{mode_str}")
+
         try:
             await critique_model.start_new_chat()
-            response = await critique_model.send_message(prompt)
-            
+
+            # Pass deep mode flag to send_message
+            if critique_model_name == "chatgpt":
+                response = await critique_model.send_message(prompt, use_pro_mode=use_deep)
+            else:
+                response = await critique_model.send_message(prompt, use_deep_think=use_deep)
+
+            # Check if deep mode was actually used
+            deep_mode_used = getattr(critique_model, 'last_deep_mode_used', False)
+
             thread.add_exchange(
                 role=ExchangeRole.CRITIC,
                 model=critique_model_name,
                 prompt=prompt,
                 response=response,
+                deep_mode_used=deep_mode_used,
             )
-            
-            logger.info(f"Critique complete, {len(response)} chars")
-            
+
+            logger.info(f"Critique complete, {len(response)} chars" + (" [DEEP]" if deep_mode_used else ""))
+
         except Exception as e:
             logger.error(f"Critique failed: {e}")
     
@@ -396,22 +442,42 @@ Push toward depth, not toward any particular application."""
     
     async def _synthesize_chunk(self, thread: ExplorationThread):
         """Synthesize a thread into a reviewable chunk."""
-        logger.info(f"Synthesizing chunk from thread [{thread.id}]")
-        
-        # Get a model for synthesis
-        model_info = self._get_available_model()
-        if not model_info:
+        # Use weighted selection for synthesis (balanced)
+        available_models = {}
+        if self.chatgpt:
+            available_models["chatgpt"] = self.chatgpt
+        if self.gemini:
+            available_models["gemini"] = self.gemini
+
+        model_name = select_model("synthesis", available_models)
+        if not model_name:
             logger.warning("No model available for synthesis")
             return
-        
-        model_name, model = model_info
-        
+
+        model = available_models[model_name]
+
+        # Always use deep mode for synthesis
+        use_deep = should_use_deep_mode(model_name, thread, "synthesis")
+
+        mode_str = " [DEEP]" if use_deep else ""
+        logger.info(f"Synthesizing chunk from thread [{thread.id}] with {model_name}{mode_str}")
+
         # Build synthesis prompt
         synthesis_prompt = self._build_synthesis_prompt(thread)
-        
+
         try:
             await model.start_new_chat()
-            response = await model.send_message(synthesis_prompt)
+
+            # Pass deep mode flag to send_message
+            if model_name == "chatgpt":
+                response = await model.send_message(synthesis_prompt, use_pro_mode=use_deep)
+            else:
+                response = await model.send_message(synthesis_prompt, use_deep_think=use_deep)
+
+            # Check if deep mode was actually used
+            deep_mode_used = getattr(model, 'last_deep_mode_used', False)
+            if use_deep and not deep_mode_used:
+                logger.warning(f"Deep mode requested but not available (limit may be reached)")
             
             # Parse the synthesis response
             title, summary, content = self._parse_synthesis(response, thread)

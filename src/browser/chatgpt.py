@@ -14,13 +14,19 @@ from datetime import datetime
 from typing import Optional
 
 from .base import BaseLLMInterface, rate_tracker
+from .model_selector import deep_mode_tracker
 
 
 class ChatGPTInterface(BaseLLMInterface):
     """Interface for ChatGPT web UI automation."""
-    
+
     model_name = "chatgpt"
-    
+
+    def __init__(self):
+        super().__init__()
+        self.pro_mode_enabled = False
+        self.last_deep_mode_used = False
+
     async def connect(self):
         """Connect to ChatGPT."""
         await super().connect()
@@ -69,16 +75,74 @@ class ChatGPTInterface(BaseLLMInterface):
         except Exception as e:
             print(f"[chatgpt] Could not start new chat: {e}")
     
-    async def send_message(self, message: str) -> str:
+    async def enable_pro_mode(self) -> bool:
+        """
+        Try to enable Pro/Plus mode if available.
+        Returns True if successfully enabled.
+        """
+        try:
+            print(f"[chatgpt] Attempting to enable Pro mode...")
+
+            # Look for model selector or Pro mode toggle
+            # ChatGPT UI changes frequently - these are best-effort selectors
+            pro_selectors = [
+                "button[aria-label*='GPT-4']",
+                "button[aria-label*='Pro']",
+                "[data-testid='model-selector'] button",
+                "button:has-text('GPT-4')",
+                "div[role='combobox']",  # Model dropdown
+            ]
+
+            for selector in pro_selectors:
+                btn = await self.page.query_selector(selector)
+                if btn:
+                    is_visible = await btn.is_visible()
+                    if is_visible:
+                        # Check if already in Pro mode
+                        text = await btn.inner_text()
+                        if "4" in text or "Pro" in text or "Plus" in text:
+                            print(f"[chatgpt] Pro mode appears to be available")
+                            self.pro_mode_enabled = True
+                            return True
+
+            print(f"[chatgpt] Pro mode toggle not found (may already be default)")
+            return False
+
+        except Exception as e:
+            print(f"[chatgpt] Could not enable Pro mode: {e}")
+            return False
+
+    async def send_message(self, message: str, use_pro_mode: bool = False) -> str:
         """
         Send a message to ChatGPT and wait for response.
-        
+
+        Args:
+            message: The message to send
+            use_pro_mode: Whether to use Pro/GPT-4 mode (default False, controlled by orchestrator)
+
         Returns the response text, or raises exception on error.
+        Sets self.last_deep_mode_used to indicate if pro mode was used.
         """
         if not rate_tracker.is_available(self.model_name):
             raise RateLimitError("ChatGPT is rate-limited")
-        
-        print(f"[chatgpt] Sending message ({len(message)} chars)...")
+
+        # Track whether pro mode was used for this message
+        self.last_deep_mode_used = False
+
+        # Try to enable Pro mode if requested
+        if use_pro_mode:
+            if not self.pro_mode_enabled:
+                success = await self.enable_pro_mode()
+                if success:
+                    self.last_deep_mode_used = True
+                    deep_mode_tracker.record_usage("chatgpt_pro")
+                    print(f"[chatgpt] Pro mode ENABLED for this message")
+            else:
+                self.last_deep_mode_used = True
+                deep_mode_tracker.record_usage("chatgpt_pro")
+
+        mode_str = " [PRO]" if self.last_deep_mode_used else ""
+        print(f"[chatgpt]{mode_str} Sending message ({len(message)} chars)...")
         
         try:
             # Find the input element
