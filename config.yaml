@@ -1,0 +1,89 @@
+# Fano Explorer Configuration
+
+# Browser settings
+browser:
+  # Path to Chrome executable (leave empty for auto-detect)
+  chrome_path: ""
+  # Whether to run headless (invisible) - set to false for debugging
+  headless: false
+  # Directory to store browser sessions
+  user_data_dir: "./browser_data"
+  # Slow down operations for stability (milliseconds)
+  slow_mo: 100
+
+# Model endpoints
+models:
+  chatgpt:
+    url: "https://chat.openai.com"
+    # Selectors for detecting states (CSS selectors)
+    selectors:
+      input: "textarea[data-id='root']"
+      send: "button[data-testid='send-button']"
+      response: "div[data-message-author-role='assistant']"
+      rate_limit_patterns:
+        - "You've reached the limit"
+        - "Usage cap reached"
+        - "try again later"
+    # How long to wait for response (seconds)
+    response_timeout: 300
+    
+  gemini:
+    url: "https://gemini.google.com"
+    selectors:
+      input: "rich-textarea"
+      send: "button.send-button"
+      response: "message-content"
+      deep_think_toggle: "button[aria-label='Deep Think']"
+      rate_limit_patterns:
+        - "unavailable"
+        - "try again tomorrow"
+        - "quota"
+    response_timeout: 600  # Deep Think can be slow
+
+# Orchestration settings
+orchestration:
+  # Seconds between exploration cycles
+  poll_interval: 30
+  # Seconds to wait when all models rate-limited
+  backoff_base: 300  # 5 minutes
+  backoff_max: 3600  # 1 hour max
+  # How many exchange rounds before considering chunk-ready
+  min_exchanges_for_chunk: 4
+  # Maximum exchanges before forcing synthesis
+  max_exchanges_per_thread: 20
+  # Number of concurrent exploration threads
+  max_active_threads: 3
+
+# Chunk synthesis settings
+synthesis:
+  # Minimum critique rounds before chunk is ready
+  min_critiques: 2
+  # Keywords that suggest profundity (boost chunk-readiness)
+  profundity_signals:
+    - "this explains"
+    - "naturally follows"
+    - "must be"
+    - "inevitable"
+    - "elegant"
+    - "beautiful"
+    - "symmetric"
+  # Keywords that suggest problems (delay chunk-readiness)  
+  doubt_signals:
+    - "but wait"
+    - "doesn't quite"
+    - "forcing"
+    - "arbitrary"
+    - "why would"
+    - "seems ad hoc"
+
+# Review server settings
+review_server:
+  host: "127.0.0.1"
+  port: 8765
+
+# Logging
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  file: "./logs/exploration.log"
+  max_bytes: 10485760  # 10MB
+  backup_count: 5

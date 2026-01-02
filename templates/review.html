@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fano Explorer - Review</title>
+    <style>
+        :root {
+            --bg: #0a0a0f;
+            --card: #12121a;
+            --border: #2a2a3a;
+            --text: #e0e0e0;
+            --text-dim: #888;
+            --profound: #ffd700;
+            --interesting: #6b8afd;
+            --rejected: #ff4757;
+            --accent: #00d9ff;
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            padding: 2rem;
+        }
+        
+        .header {
+            text-align: center;
+            margin-bottom: 3rem;
+        }
+        
+        .header h1 {
+            font-size: 2rem;
+            letter-spacing: 0.3em;
+            color: var(--accent);
+            margin-bottom: 0.5rem;
+        }
+        
+        .header .subtitle {
+            color: var(--text-dim);
+            font-size: 0.9rem;
+        }
+        
+        .stats {
+            display: flex;
+            justify-content: center;
+            gap: 2rem;
+            margin-bottom: 3rem;
+        }
+        
+        .stat {
+            text-align: center;
+        }
+        
+        .stat-value {
+            font-size: 2rem;
+            font-weight: bold;
+        }
+        
+        .stat-label {
+            font-size: 0.8rem;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+        }
+        
+        .stat.profound .stat-value { color: var(--profound); }
+        .stat.interesting .stat-value { color: var(--interesting); }
+        .stat.rejected .stat-value { color: var(--rejected); }
+        .stat.pending .stat-value { color: var(--accent); }
+        
+        .chunks {
+            max-width: 900px;
+            margin: 0 auto;
+        }
+        
+        .chunk {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            margin-bottom: 2rem;
+            overflow: hidden;
+        }
+        
+        .chunk-header {
+            padding: 1.5rem;
+            border-bottom: 1px solid var(--border);
+        }
+        
+        .chunk-title {
+            font-size: 1.3rem;
+            margin-bottom: 0.5rem;
+            color: var(--accent);
+        }
+        
+        .chunk-meta {
+            display: flex;
+            gap: 2rem;
+            color: var(--text-dim);
+            font-size: 0.85rem;
+        }
+        
+        .chunk-summary {
+            padding: 1rem 1.5rem;
+            background: rgba(0, 217, 255, 0.05);
+            border-bottom: 1px solid var(--border);
+            font-style: italic;
+        }
+        
+        .chunk-content {
+            padding: 1.5rem;
+            max-height: 500px;
+            overflow-y: auto;
+            line-height: 1.7;
+        }
+        
+        .chunk-content h1, .chunk-content h2, .chunk-content h3 {
+            color: var(--accent);
+            margin: 1.5rem 0 1rem;
+        }
+        
+        .chunk-content h1:first-child { margin-top: 0; }
+        
+        .chunk-content code {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 0.2em 0.4em;
+            border-radius: 3px;
+            font-size: 0.9em;
+        }
+        
+        .chunk-content pre {
+            background: rgba(0, 0, 0, 0.3);
+            padding: 1rem;
+            border-radius: 4px;
+            overflow-x: auto;
+            margin: 1rem 0;
+        }
+        
+        .chunk-content pre code {
+            background: none;
+            padding: 0;
+        }
+        
+        .chunk-actions {
+            padding: 1.5rem;
+            border-top: 1px solid var(--border);
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+        }
+        
+        .btn {
+            padding: 0.8rem 1.5rem;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 1rem;
+            font-weight: bold;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        }
+        
+        .btn-profound {
+            background: var(--profound);
+            color: #000;
+        }
+        
+        .btn-interesting {
+            background: var(--interesting);
+            color: #fff;
+        }
+        
+        .btn-rejected {
+            background: transparent;
+            border: 2px solid var(--rejected);
+            color: var(--rejected);
+        }
+        
+        .btn-rejected:hover {
+            background: var(--rejected);
+            color: #fff;
+        }
+        
+        .notes-input {
+            flex: 1;
+            padding: 0.8rem;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            color: var(--text);
+            font-family: inherit;
+            font-size: 0.9rem;
+        }
+        
+        .notes-input::placeholder {
+            color: var(--text-dim);
+        }
+        
+        .empty-state {
+            text-align: center;
+            padding: 4rem 2rem;
+            color: var(--text-dim);
+        }
+        
+        .empty-state .icon {
+            font-size: 4rem;
+            margin-bottom: 1rem;
+        }
+        
+        .feedback-toast {
+            position: fixed;
+            bottom: 2rem;
+            right: 2rem;
+            padding: 1rem 2rem;
+            border-radius: 4px;
+            font-weight: bold;
+            animation: slideIn 0.3s ease;
+            z-index: 1000;
+        }
+        
+        .feedback-toast.success {
+            background: var(--profound);
+            color: #000;
+        }
+        
+        @keyframes slideIn {
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+        
+        .profundity-bar {
+            height: 4px;
+            background: var(--border);
+            border-radius: 2px;
+            margin-top: 0.5rem;
+            overflow: hidden;
+        }
+        
+        .profundity-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--interesting), var(--profound));
+            transition: width 0.3s;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>FANO EXPLORER</h1>
+        <p class="subtitle">Mathematical Research Review Interface</p>
+    </div>
+    
+    <div class="stats">
+        <div class="stat pending">
+            <div class="stat-value" id="stat-pending">{{ stats.pending or 0 }}</div>
+            <div class="stat-label">Pending</div>
+        </div>
+        <div class="stat profound">
+            <div class="stat-value" id="stat-profound">{{ stats.profound or 0 }}</div>
+            <div class="stat-label">⚡ Profound</div>
+        </div>
+        <div class="stat interesting">
+            <div class="stat-value" id="stat-interesting">{{ stats.interesting or 0 }}</div>
+            <div class="stat-label">? Interesting</div>
+        </div>
+        <div class="stat rejected">
+            <div class="stat-value" id="stat-rejected">{{ stats.rejected or 0 }}</div>
+            <div class="stat-label">✗ Rejected</div>
+        </div>
+    </div>
+    
+    <div class="chunks">
+        {% if chunks %}
+            {% for chunk in chunks %}
+            <div class="chunk" id="chunk-{{ chunk.id }}">
+                <div class="chunk-header">
+                    <h2 class="chunk-title">{{ chunk.title }}</h2>
+                    <div class="chunk-meta">
+                        <span>ID: {{ chunk.id }}</span>
+                        <span>Thread: {{ chunk.thread_id }}</span>
+                        <span>{{ chunk.created_at.strftime('%Y-%m-%d %H:%M') }}</span>
+                        <span>Critiques: {{ chunk.critique_rounds }}</span>
+                    </div>
+                    <div class="profundity-bar">
+                        <div class="profundity-fill" style="width: {{ (chunk.profundity_score * 100)|int }}%"></div>
+                    </div>
+                </div>
+                
+                <div class="chunk-summary">
+                    {{ chunk.summary }}
+                </div>
+                
+                <div class="chunk-content">
+                    {{ chunk.content | safe }}
+                </div>
+                
+                <div class="chunk-actions">
+                    <button class="btn btn-profound" onclick="submitFeedback('{{ chunk.id }}', 'profound')">
+                        ⚡ Profound
+                    </button>
+                    <button class="btn btn-interesting" onclick="submitFeedback('{{ chunk.id }}', 'interesting')">
+                        ? Interesting
+                    </button>
+                    <button class="btn btn-rejected" onclick="submitFeedback('{{ chunk.id }}', 'rejected')">
+                        ✗ Wrong
+                    </button>
+                    <input type="text" class="notes-input" id="notes-{{ chunk.id }}" 
+                           placeholder="Optional notes...">
+                </div>
+            </div>
+            {% endfor %}
+        {% else %}
+            <div class="empty-state">
+                <div class="icon">✨</div>
+                <h2>No chunks pending review</h2>
+                <p>The exploration is running. Check back soon for new insights.</p>
+            </div>
+        {% endif %}
+    </div>
+    
+    <script>
+        async function submitFeedback(chunkId, feedback) {
+            const notes = document.getElementById(`notes-${chunkId}`).value;
+            
+            try {
+                const response = await fetch('/api/feedback', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        chunk_id: chunkId,
+                        feedback: feedback,
+                        notes: notes
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    // Remove the chunk from the UI
+                    const chunkEl = document.getElementById(`chunk-${chunkId}`);
+                    chunkEl.style.opacity = '0';
+                    chunkEl.style.transform = 'translateX(100%)';
+                    chunkEl.style.transition = 'all 0.3s';
+                    
+                    setTimeout(() => {
+                        chunkEl.remove();
+                        updateStats();
+                        
+                        // Check if no more chunks
+                        if (document.querySelectorAll('.chunk').length === 0) {
+                            location.reload();
+                        }
+                    }, 300);
+                    
+                    showToast(`Marked as ${feedback}`);
+                } else {
+                    alert('Error: ' + data.error);
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                alert('Failed to submit feedback');
+            }
+        }
+        
+        async function updateStats() {
+            try {
+                const response = await fetch('/api/stats');
+                const stats = await response.json();
+                
+                document.getElementById('stat-pending').textContent = stats.pending || 0;
+                document.getElementById('stat-profound').textContent = stats.profound || 0;
+                document.getElementById('stat-interesting').textContent = stats.interesting || 0;
+                document.getElementById('stat-rejected').textContent = stats.rejected || 0;
+            } catch (error) {
+                console.error('Error updating stats:', error);
+            }
+        }
+        
+        function showToast(message) {
+            const toast = document.createElement('div');
+            toast.className = 'feedback-toast success';
+            toast.textContent = message;
+            document.body.appendChild(toast);
+            
+            setTimeout(() => {
+                toast.remove();
+            }, 2000);
+        }
+        
+        // Refresh stats periodically
+        setInterval(updateStats, 30000);
+    </script>
+</body>
+</html>

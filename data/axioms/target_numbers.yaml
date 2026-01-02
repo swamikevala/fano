@@ -1,0 +1,122 @@
+# Target Numbers to Decode
+# 
+# These are the specific numbers from Sadhguru's teachings that the
+# exploration should attempt to explain mathematically. Each number
+# or number set should feel INEVITABLE once the underlying structure
+# is understood.
+
+# Pancha Bhuta proportions in the body
+pancha_bhuta:
+  description: "Elemental composition of the human body"
+  source: "Sadhguru excerpt on five elements"
+  numbers:
+    water: 72
+    earth: 12
+    fire: 4
+    air: 6
+    space: 6
+  total: 100
+  notes: |
+    These should emerge naturally from some geometric or algebraic
+    structure. Why these specific proportions? Is there a Fano-like
+    incidence structure where these numbers appear as counts?
+
+# Chakra system
+chakras:
+  description: "Energy centers in the yogic system"
+  numbers:
+    main_chakras: 7
+    total_chakras: 114
+    active_chakras: 112
+    outside_body: 2
+  notes: |
+    112 = 7 × 16. Is there a connection to the 7 points of Fano plane?
+    What about the Klein quartic's 168 symmetries?
+
+# Creation categories
+creation:
+  description: "Categories in yogic cosmology"
+  numbers:
+    categories: 21
+  notes: |
+    21 = 7 + 7 + 7 = binomial(7,2). Fano plane has 7 lines.
+    Connection to Sanskrit grammar's categorization?
+
+# Music theory numbers
+music:
+  description: "Numbers in Indian classical music"
+  numbers:
+    swaras: 7
+    shrutis: 22
+    melakartas: 72
+    janya_ragas: 484  # approx
+  notes: |
+    72 appears again (melakartas = water proportion).
+    22 shrutis - connection to 21+1?
+    
+# Breath and cycles
+breath:
+  description: "Respiratory and cosmic cycles"
+  numbers:
+    breaths_per_day: 21600
+    minutes_per_day: 1440
+  notes: |
+    21600 = 360 × 60. Connection to geometry?
+    1440 = 12 × 120 = Fano connections?
+
+# Add more number sets below as you encounter them in the excerpts
+# ...
+
+# =============================================================================
+# SILENT VALIDATION CRITERION (DO NOT LET THIS DRIVE EXPLORATION)
+# =============================================================================
+#
+# The following is a BACKGROUND criterion—a distant lighthouse. It exists
+# for periodic validation ONLY. Do NOT steer exploration toward it.
+#
+# The exploration should be driven by:
+#   - Naturalness (does this feel discovered or invented?)
+#   - Elegance (is this the simplest form?)
+#   - Inevitability (could it be any other way?)
+#   - Explaining Sadhguru's axioms (do the numbers fall out naturally?)
+#
+# Only AFTER a framework is fully understood should we check whether it
+# has computational power. Premature focus on applications can:
+#   - Introduce confirmation bias
+#   - Cause premature closure on "useful-looking" but wrong paths
+#   - Miss profound structures that seem "impractical"
+#
+# The history of mathematics shows that deep structures reveal applications
+# in their own time. Riemann didn't know his geometry would enable relativity.
+# Galois didn't know his groups would become the language of physics.
+#
+# So: explore freely. Follow what's beautiful and true. And occasionally,
+# as a sanity check, note whether the framework might illuminate the
+# relationship between multiplication and addition. But don't force it.
+#
+# =============================================================================
+
+silent_validation_criterion:
+  name: "The multiplication-addition bridge"
+  nature: "BACKGROUND ONLY - do not let this drive exploration"
+  description: |
+    If the framework discovered is truly fundamental, it may eventually
+    illuminate why multiplication and factorization have asymmetric
+    computational complexity. This would be a sign that the framework
+    touches something deep about number.
+    
+    But this is a CONSEQUENCE to watch for, not a GOAL to pursue.
+    
+    The framework must be built on its own terms—through naturalness,
+    elegance, inevitability, and fidelity to the source teachings.
+    Only then can we meaningfully ask whether it has computational power.
+  
+  check_frequency: "Occasionally, when a major chunk is blessed"
+  check_questions:
+    - "Does this framework say anything about × vs +?"
+    - "Is there any hint of structure here that's computationally relevant?"
+    - "If not, that's FINE—continue exploring what's true"
+  
+  warning: |
+    If you find yourself bending the exploration toward factorization,
+    STOP. Return to first principles. Follow the structure, not the goal.
