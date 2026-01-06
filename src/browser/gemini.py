@@ -131,63 +131,101 @@ class GeminiInterface(BaseLLMInterface):
         logger.info("[gemini] Enabling Deep Think mode...")
 
         try:
-            # Step 1: Click the "Tools" button to open the tools panel
-            tools_opened = False
-            buttons = await self.page.query_selector_all("button")
-            for btn in buttons:
+            # Step 1: Click the "Tools" button or model selector to open the menu
+            menu_opened = False
+
+            # Search ALL clickable elements, not just buttons
+            all_clickable = await self.page.query_selector_all("button, [role='button'], a, div[tabindex], span[tabindex]")
+            element_texts = []  # Collect for debugging
+
+            # Priority 1: Look for "Tools" (exact match first)
+            for elem in all_clickable:
                 try:
-                    is_visible = await btn.is_visible()
+                    is_visible = await elem.is_visible()
                     if not is_visible:
                         continue
-                    text = (await btn.inner_text() or "").strip().lower()
-                    aria = (await btn.get_attribute("aria-label") or "").lower()
+                    text = (await elem.inner_text() or "").strip()
+                    aria = (await elem.get_attribute("aria-label") or "")
+                    if text or aria:
+                        element_texts.append(f"'{text}' (aria: '{aria}')")
 
-                    if 'tools' in text or 'tools' in aria:
-                        logger.info(f"[gemini] Clicking Tools button: '{text}'")
-                        await btn.click()
+                    if text.lower() == 'tools' or 'tools' in aria.lower():
+                        logger.info(f"[gemini] Clicking Tools: '{text}' (aria: '{aria}')")
+                        await elem.click()
                         await asyncio.sleep(1.0)
-                        tools_opened = True
+                        menu_opened = True
                         break
                 except Exception:
                     continue
 
-            if not tools_opened:
-                logger.warning("[gemini] Tools button not found")
-                return False
-
-            # Step 2: Click Deep Think option
-            deep_think_clicked = False
-            try:
-                deep_think_elem = await self.page.query_selector("text='Deep Think'")
-                if deep_think_elem:
-                    is_visible = await deep_think_elem.is_visible()
-                    if is_visible:
-                        logger.info("[gemini] Clicking Deep Think option")
-                        await deep_think_elem.click()
-                        deep_think_clicked = True
-            except Exception as e:
-                logger.debug(f"[gemini] First Deep Think selector failed: {e}")
-
-            # Fallback: search elements for exact "Deep Think" text
-            if not deep_think_clicked:
-                all_elements = await self.page.query_selector_all("button, span, div, li, [role='menuitem'], [role='option']")
-                for elem in all_elements:
+            # Priority 2: Look for model selectors if Tools not found
+            if not menu_opened:
+                model_patterns = ['ultra', 'pro', 'flash', 'model', 'gemini']
+                for elem in all_clickable:
                     try:
                         is_visible = await elem.is_visible()
                         if not is_visible:
                             continue
-                        text = (await elem.inner_text() or "").strip()
+                        text = (await elem.inner_text() or "").strip().lower()
+                        aria = (await elem.get_attribute("aria-label") or "").lower()
 
-                        if text.lower() == 'deep think':
-                            logger.info("[gemini] Clicking Deep Think option (fallback)")
-                            await elem.click()
-                            deep_think_clicked = True
+                        for pattern in model_patterns:
+                            if pattern in text or pattern in aria:
+                                logger.info(f"[gemini] Clicking model selector: '{text}' (aria: '{aria}')")
+                                await elem.click()
+                                await asyncio.sleep(1.0)
+                                menu_opened = True
+                                break
+                        if menu_opened:
                             break
                     except Exception:
                         continue
 
+            if not menu_opened:
+                logger.warning(f"[gemini] Tools/model selector not found. Visible elements: {element_texts[:15]}")
+                return False
+
+            # Step 2: Click Deep Think option (may be called different things)
+            deep_think_clicked = False
+            deep_think_patterns = ['deep think', 'deep research', 'thinking', 'deep']
+
+            # Wait a moment for menu to fully render
+            await asyncio.sleep(0.5)
+
+            # Search all visible elements for Deep Think options
+            all_elements = await self.page.query_selector_all("button, span, div, li, a, [role='menuitem'], [role='option'], [role='listbox'] *")
+            menu_texts = []  # Collect for debugging
+
+            for elem in all_elements:
+                try:
+                    is_visible = await elem.is_visible()
+                    if not is_visible:
+                        continue
+                    text = (await elem.inner_text() or "").strip()
+                    if text and len(text) < 50:  # Only short texts
+                        menu_texts.append(text)
+
+                    text_lower = text.lower()
+                    for pattern in deep_think_patterns:
+                        if pattern in text_lower:
+                            logger.info(f"[gemini] Clicking Deep Think option: '{text}'")
+                            await elem.click()
+                            deep_think_clicked = True
+                            break
+                    if deep_think_clicked:
+                        break
+                except Exception:
+                    continue
+
             if not deep_think_clicked:
-                logger.warning("[gemini] Deep Think option not found")
+                logger.warning(f"[gemini] Deep Think option not found. Menu items: {menu_texts[:20]}")
+                # Take screenshot for debugging
+                try:
+                    screenshot_path = self.chat_logger.log_dir / "deep_think_menu_debug.png"
+                    await self.page.screenshot(path=str(screenshot_path))
+                    logger.info(f"[gemini] Menu screenshot saved to: {screenshot_path}")
+                except Exception:
+                    pass
                 return False
 
             # Step 3: Handle confirmation dialog ONCE
@@ -203,10 +241,22 @@ class GeminiInterface(BaseLLMInterface):
             logger.info("[gemini] Waiting for new chat to load...")
             await asyncio.sleep(3)  # Increased from 2 to 3 seconds
 
-            # Mark as enabled
-            self.deep_think_enabled = True
-            logger.info("[gemini] Deep Think enabled successfully")
-            return True
+            # Step 5: Verify Deep Think is actually enabled by checking page state
+            verified = await self._verify_deep_think_active()
+            if verified:
+                self.deep_think_enabled = True
+                logger.info("[gemini] Deep Think enabled and VERIFIED")
+                return True
+            else:
+                logger.warning("[gemini] Deep Think clicked but NOT verified as active!")
+                # Try to take a screenshot for debugging
+                try:
+                    screenshot_path = self.chat_logger.log_dir / "deep_think_debug.png"
+                    await self.page.screenshot(path=str(screenshot_path))
+                    logger.info(f"[gemini] Debug screenshot saved to: {screenshot_path}")
+                except Exception:
+                    pass
+                return False
 
         except Exception as e:
             logger.error(f"[gemini] Could not enable Deep Think: {e}")
@@ -260,7 +310,49 @@ class GeminiInterface(BaseLLMInterface):
 
         if dialog_found:
             logger.warning("[gemini] Dialog found but couldn't find confirm button")
-    
+
+    async def _verify_deep_think_active(self) -> bool:
+        """
+        Verify that Deep Think mode is actually active by checking page indicators.
+
+        Returns True if we can confirm Deep Think is active.
+        """
+        try:
+            # Look for indicators that Deep Think is active
+            page_text = await self.page.inner_text("body")
+            page_text_lower = page_text.lower()
+
+            # Check for Deep Think indicators in the page
+            deep_think_indicators = [
+                "deep think",
+                "thinking mode",
+                "deep thinking",
+            ]
+
+            for indicator in deep_think_indicators:
+                if indicator in page_text_lower:
+                    logger.info(f"[gemini] Found Deep Think indicator: '{indicator}'")
+                    return True
+
+            # Also check for model selector showing Deep Think
+            model_selectors = await self.page.query_selector_all("[aria-label*='model'], [data-model], .model-selector, button:has-text('Deep')")
+            for selector in model_selectors:
+                try:
+                    text = await selector.inner_text()
+                    if text and "deep" in text.lower():
+                        logger.info(f"[gemini] Found Deep Think in model selector: '{text}'")
+                        return True
+                except Exception:
+                    continue
+
+            # Log what we see on the page for debugging
+            logger.warning(f"[gemini] Page text sample (first 500 chars): {page_text[:500]}")
+            return False
+
+        except Exception as e:
+            logger.error(f"[gemini] Error verifying Deep Think: {e}")
+            return False
+
     async def start_new_chat(self):
         """Start a new conversation."""
         # CRITICAL: Never navigate away while waiting for a response

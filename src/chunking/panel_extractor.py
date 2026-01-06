@@ -263,6 +263,8 @@ class PanelExtractor:
     async def _extract_from_claude(self, claude_reviewer, prompt: str) -> str:
         """Get extraction proposals from Claude."""
         try:
+            # Small delay to avoid network contention with browser LLMs
+            await asyncio.sleep(2)
             response = await claude_reviewer.send_message(
                 prompt,
                 extended_thinking=False

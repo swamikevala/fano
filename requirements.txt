@@ -1,6 +1,12 @@
 # Browser automation
 playwright>=1.40.0
 
+# Anthropic Claude API
+anthropic>=0.39.0
+
+# Environment variables
+python-dotenv>=1.0.0
+
 # Web server for review UI
 flask>=3.0.0
 

@@ -105,6 +105,7 @@ class Orchestrator:
         """
         self.running = True
         logger.info("Starting exploration loop")
+        logger.info("Review UI available at: http://localhost:8765")
 
         # Connect to browsers
         await self._connect_models()
@@ -280,6 +281,8 @@ class Orchestrator:
             available_models["chatgpt"] = self.chatgpt
         if self.gemini and rate_tracker.is_available("gemini"):
             available_models["gemini"] = self.gemini
+
+        logger.info(f"Available models: {list(available_models.keys())} (gemini={self.gemini is not None})")
 
         if not available_models:
             logger.info("All models rate-limited, waiting...")
@@ -820,6 +823,23 @@ CONTENT:
             logger.info(f"[{thread.id}] Already extracted, skipping")
             return
 
+        # Check if insights already exist for this thread (from previous interrupted run)
+        existing_insights = self._get_existing_insights_for_thread(thread.id)
+        if existing_insights:
+            logger.info(f"[{thread.id}] Found {len(existing_insights)} existing insights, skipping extraction")
+            # Just run review on existing insights if needed
+            if self.reviewer and CONFIG.get("review_panel", {}).get("enabled", False):
+                unreviewed = [i for i in existing_insights if not getattr(i, 'reviewed_at', None)]
+                if unreviewed:
+                    logger.info(f"[{thread.id}] Running review on {len(unreviewed)} unreviewed insights")
+                    blessed_summary = self._get_blessed_summary()
+                    await self._review_insights(unreviewed, blessed_summary)
+            # Mark as extracted
+            thread.chunks_extracted = True
+            thread.extraction_note = f"Resumed with {len(existing_insights)} existing insights"
+            thread.save(self.data_dir)
+            return
+
         # Get Claude reviewer for extraction
         claude_reviewer = None
         if self.reviewer:
@@ -851,6 +871,12 @@ CONTENT:
                 )
 
             if not insights:
+                # Check if extraction_note indicates an error (don't mark as extracted if so)
+                if thread.extraction_note and "failed" in thread.extraction_note.lower():
+                    logger.warning(f"[{thread.id}] Extraction failed, will retry: {thread.extraction_note}")
+                    thread.save(self.data_dir)
+                    return
+                # No insights but no error - genuinely empty
                 logger.info(f"[{thread.id}] No insights extracted")
                 thread.chunks_extracted = True
                 thread.extraction_note = "No insights met extraction criteria"
@@ -1045,6 +1071,32 @@ CONTENT:
                     pass
 
         return blessed
+
+    def _get_existing_insights_for_thread(self, thread_id: str) -> list[AtomicInsight]:
+        """
+        Find any insights that were already extracted for this thread.
+        Checks pending, reviewing, and blessed directories.
+        """
+        existing = []
+        chunks_dir = self.data_dir / "chunks"
+
+        # Check all subdirectories where insights might be
+        subdirs = ["pending", "reviewing", "insights/blessed", "insights/rejected"]
+
+        for subdir in subdirs:
+            search_dir = chunks_dir / subdir
+            if not search_dir.exists():
+                continue
+
+            for filepath in search_dir.glob("*.json"):
+                try:
+                    insight = AtomicInsight.load(filepath)
+                    if insight.source_thread_id == thread_id:
+                        existing.append(insight)
+                except Exception:
+                    pass
+
+        return existing
 
     async def _bless_insight(self, insight: AtomicInsight, review_summary: str = ""):
         """Add an insight to the blessed insights store and augment it."""

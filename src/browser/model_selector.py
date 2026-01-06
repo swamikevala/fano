@@ -131,6 +131,10 @@ def select_model(phase: str, available_models: dict) -> Optional[str]:
     if not candidates:
         return None
 
+    # If only one candidate, return it directly
+    if len(candidates) == 1:
+        return candidates[0][0]
+
     # Weighted random selection
     total_weight = sum(w for _, w in candidates)
     if total_weight == 0:
