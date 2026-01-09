@@ -90,21 +90,30 @@ class TargetNumberSet:
 @dataclass
 class SeedAphorism:
     """
-    A seed aphorism provided by the user to guide exploration.
-    These are pre-blessed axioms that don't need to go through review.
+    A seed entry provided by the user to guide exploration.
+
+    Types:
+    - axiom: Assumed true facts that don't need to be re-discovered
+    - conjecture: Ideas to explore and verify (default)
+    - question: Specific questions to answer
     """
     id: str
     text: str
+    type: str = "conjecture"  # axiom, conjecture, question
     tags: list[str] = field(default_factory=list)
-    confidence: str = "high"  # high, medium, low
+    confidence: str = "high"  # high, medium, low (for conjectures)
     source: str = "user"  # Where this seed came from
     notes: str = ""  # Additional context
 
     @classmethod
     def from_dict(cls, data: dict, index: int = 0) -> "SeedAphorism":
+        # Determine type - default to conjecture for backward compatibility
+        entry_type = data.get("type", "conjecture")
+
         return cls(
             id=data.get("id", f"seed-{index:03d}"),
             text=data.get("text", ""),
+            type=entry_type,
             tags=data.get("tags", []),
             confidence=data.get("confidence", "high"),
             source=data.get("source", "user"),
@@ -181,8 +190,14 @@ class AxiomStore:
 
         return numbers
 
-    def get_seed_aphorisms(self) -> list[SeedAphorism]:
-        """Load seed aphorisms from seeds.yaml."""
+    def get_seed_aphorisms(self, type_filter: str = None) -> list[SeedAphorism]:
+        """
+        Load seed aphorisms from seeds.yaml.
+
+        Args:
+            type_filter: If provided, only return entries of this type
+                        ('axiom', 'conjecture', 'question')
+        """
         if not self.seeds_file.exists():
             return []
 
@@ -196,9 +211,23 @@ class AxiomStore:
         seed_list = data.get("seeds", [])
         for i, seed_data in enumerate(seed_list):
             if isinstance(seed_data, dict) and seed_data.get("text"):
-                seeds.append(SeedAphorism.from_dict(seed_data, i))
+                seed = SeedAphorism.from_dict(seed_data, i)
+                if type_filter is None or seed.type == type_filter:
+                    seeds.append(seed)
 
         return seeds
+
+    def get_axioms(self) -> list[SeedAphorism]:
+        """Get all axioms (assumed true facts)."""
+        return self.get_seed_aphorisms(type_filter="axiom")
+
+    def get_conjectures(self) -> list[SeedAphorism]:
+        """Get all conjectures (to explore and verify)."""
+        return self.get_seed_aphorisms(type_filter="conjecture")
+
+    def get_questions(self) -> list[SeedAphorism]:
+        """Get all questions (to answer)."""
+        return self.get_seed_aphorisms(type_filter="question")
     
     def get_blessed_insights(self) -> list[BlessedInsight]:
         """Load all blessed insights."""
@@ -240,22 +269,50 @@ class AxiomStore:
     def get_context_for_exploration(self, max_seeds: int = 10) -> str:
         """
         Build context string for exploration prompts.
-        Based only on seed aphorisms - the user-provided starting points.
+
+        Includes three types of entries:
+        - Axioms: Assumed true facts (always included as given)
+        - Conjectures: Ideas to explore and verify
+        - Questions: Specific questions to answer
         """
         lines = []
 
-        # Add seed aphorisms (user-provided starting points)
-        seeds = self.get_seed_aphorisms()[:max_seeds]
-        if seeds:
-            lines.append("=== SEED APHORISMS ===")
-            lines.append("These are the foundational conjectures to explore, verify, and build upon:\n")
-            for seed in seeds:
+        # 1. AXIOMS - Assumed true facts (always included)
+        axioms = self.get_axioms()
+        if axioms:
+            lines.append("=== AXIOMS (ASSUMED TRUE) ===")
+            lines.append("These are established facts. Do NOT re-derive or question these - take them as given:\n")
+            for axiom in axioms:
+                lines.append(f"• {axiom.text}")
+                if axiom.notes:
+                    lines.append(f"   Note: {axiom.notes}")
+            lines.append("")
+
+        # 2. CONJECTURES - To explore and verify
+        conjectures = self.get_conjectures()[:max_seeds]
+        if conjectures:
+            lines.append("=== CONJECTURES (TO EXPLORE) ===")
+            lines.append("These are conjectured connections to explore, verify, and build upon:\n")
+            for seed in conjectures:
                 confidence_marker = {"high": "⚡", "medium": "?", "low": "○"}.get(seed.confidence, "?")
                 lines.append(f"{confidence_marker} {seed.text}")
                 if seed.tags:
                     lines.append(f"   [Tags: {', '.join(seed.tags)}]")
                 if seed.notes:
                     lines.append(f"   Note: {seed.notes}")
+            lines.append("")
+
+        # 3. QUESTIONS - Specific questions to answer
+        questions = self.get_questions()
+        if questions:
+            lines.append("=== QUESTIONS (TO ANSWER) ===")
+            lines.append("These are specific questions that need answers:\n")
+            for q in questions:
+                lines.append(f"❓ {q.text}")
+                if q.tags:
+                    lines.append(f"   [Tags: {', '.join(q.tags)}]")
+                if q.notes:
+                    lines.append(f"   Context: {q.notes}")
             lines.append("")
 
         return "\n".join(lines)

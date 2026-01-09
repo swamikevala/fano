@@ -40,22 +40,37 @@ class GeminiInterface(BaseLLMInterface):
     
     async def _check_login_status(self):
         """Check if we're logged in to Gemini."""
-        # Look for sign-in button (means we're NOT logged in)
+        # More reliable check: look for the chat input (only present when logged in)
+        # If input is found, we're logged in
+        if hasattr(self, '_input_selector') and self._input_selector:
+            # Input was found during _wait_for_ready, we're logged in
+            print(f"[gemini] Appears to be logged in (input found)")
+            return True
+
+        # Fallback: check for prominent sign-in button
+        # Only check for actual sign-in buttons, not any Google link
         sign_in_selectors = [
-            "a[href*='accounts.google.com']",
             "button:has-text('Sign in')",
             "[data-test-id='sign-in-button']",
+            "a[href*='accounts.google.com/ServiceLogin']",  # More specific
         ]
-        
+
         for selector in sign_in_selectors:
-            sign_in = await self.page.query_selector(selector)
-            if sign_in:
-                is_visible = await sign_in.is_visible()
-                if is_visible:
-                    print(f"[gemini] WARNING: Not logged in! Sign-in button visible.")
-                    print(f"[gemini] Please run 'python fano_explorer.py auth' and log in to Gemini.")
-                    return False
-        
+            try:
+                sign_in = await self.page.query_selector(selector)
+                if sign_in:
+                    is_visible = await sign_in.is_visible()
+                    # Also check if it's prominent (not just a small link)
+                    if is_visible:
+                        box = await sign_in.bounding_box()
+                        # If sign-in button is large/prominent, we're not logged in
+                        if box and box['width'] > 50 and box['height'] > 20:
+                            print(f"[gemini] WARNING: Not logged in! Sign-in button visible.")
+                            print(f"[gemini] Please run 'python fano_explorer.py auth' and log in to Gemini.")
+                            return False
+            except Exception:
+                continue
+
         print(f"[gemini] Appears to be logged in")
         return True
     
@@ -185,40 +200,97 @@ class GeminiInterface(BaseLLMInterface):
                 logger.warning(f"[gemini] Tools/model selector not found. Visible elements: {element_texts[:15]}")
                 return False
 
-            # Step 2: Click Deep Think option (may be called different things)
+            # Step 2: Click Deep Think option (NOT Deep Research - that's different)
             deep_think_clicked = False
-            deep_think_patterns = ['deep think', 'deep research', 'thinking', 'deep']
+            deep_think_patterns = ['deep think']  # Only Deep Think, not Deep Research
 
             # Wait a moment for menu to fully render
             await asyncio.sleep(0.5)
 
-            # Search all visible elements for Deep Think options
-            all_elements = await self.page.query_selector_all("button, span, div, li, a, [role='menuitem'], [role='option'], [role='listbox'] *")
-            menu_texts = []  # Collect for debugging
+            # Use JavaScript to find and click the correct menu item
+            # This bypasses overlay issues and finds the exact element
+            deep_think_clicked = await self.page.evaluate("""() => {
+                // Look for menu items with specific text - only "deep think"
+                const patterns = ['deep think'];
 
-            for elem in all_elements:
-                try:
-                    is_visible = await elem.is_visible()
-                    if not is_visible:
-                        continue
-                    text = (await elem.inner_text() or "").strip()
-                    if text and len(text) < 50:  # Only short texts
-                        menu_texts.append(text)
+                // Get all potential clickable elements
+                const elements = document.querySelectorAll('button, [role="menuitem"], [role="option"], mat-option, li, a, span');
 
-                    text_lower = text.lower()
-                    for pattern in deep_think_patterns:
-                        if pattern in text_lower:
-                            logger.info(f"[gemini] Clicking Deep Think option: '{text}'")
-                            await elem.click()
-                            deep_think_clicked = True
+                for (const elem of elements) {
+                    // Skip invisible elements
+                    const rect = elem.getBoundingClientRect();
+                    if (rect.width === 0 || rect.height === 0) continue;
+
+                    // Get direct text content (not nested children's full text)
+                    let text = '';
+                    for (const node of elem.childNodes) {
+                        if (node.nodeType === Node.TEXT_NODE) {
+                            text += node.textContent;
+                        }
+                    }
+                    // Also check textContent if no direct text found
+                    if (!text.trim()) {
+                        text = elem.textContent || '';
+                    }
+
+                    const textLower = text.toLowerCase().trim();
+
+                    // Skip if this is a container with too much text (contains multiple items)
+                    if (textLower.length > 50) continue;
+
+                    // Check for exact or close match
+                    for (const pattern of patterns) {
+                        if (textLower.includes(pattern)) {
+                            console.log('[gemini] Clicking:', text.trim());
+                            elem.click();
+                            return true;
+                        }
+                    }
+                }
+                return false;
+            }""")
+
+            if deep_think_clicked:
+                logger.info(f"[gemini] Deep Think clicked via JavaScript")
+            else:
+                # Fallback: try to find by aria-label or specific attributes
+                logger.info(f"[gemini] JS click failed, trying selector fallback...")
+
+                # Search all visible elements for Deep Think options
+                all_elements = await self.page.query_selector_all("[role='menuitem'], [role='option'], mat-option, button.menu-item")
+                menu_texts = []  # Collect for debugging
+
+                for elem in all_elements:
+                    try:
+                        is_visible = await elem.is_visible()
+                        if not is_visible:
+                            continue
+                        # Get text and normalize
+                        raw_text = (await elem.inner_text() or "")
+                        text = ' '.join(raw_text.split()).strip()
+
+                        # Skip long texts (containers)
+                        if len(text) > 50:
+                            continue
+
+                        if text:
+                            menu_texts.append(text)
+
+                        text_lower = text.lower()
+
+                        for pattern in deep_think_patterns:
+                            if pattern in text_lower:
+                                logger.info(f"[gemini] Found Deep Think option: '{text}'")
+                                await elem.click(force=True)
+                                deep_think_clicked = True
+                                break
+                        if deep_think_clicked:
                             break
-                    if deep_think_clicked:
-                        break
-                except Exception:
-                    continue
+                    except Exception:
+                        continue
 
             if not deep_think_clicked:
-                logger.warning(f"[gemini] Deep Think option not found. Menu items: {menu_texts[:20]}")
+                logger.warning(f"[gemini] Deep Think option not found. Menu items: {menu_texts[:20] if 'menu_texts' in dir() else 'N/A'}")
                 # Take screenshot for debugging
                 try:
                     screenshot_path = self.chat_logger.log_dir / "deep_think_menu_debug.png"

@@ -1,21 +1,94 @@
-# Seed Aphorisms
-# These are conjectured connections that guide exploration.
-# The system will use these as starting points and try to verify/develop them.
+# Seeds Configuration
+# ===================
+# This file contains three types of entries:
+#
+# 1. AXIOMS (type: axiom)
+#    - Assumed TRUE facts that don't need to be re-discovered
+#    - Always included in every exploration as "given"
+#    - The system will NOT question these
+#
+# 2. CONJECTURES (type: conjecture) [DEFAULT]
+#    - Ideas to explore and verify
+#    - The system will try to develop and validate these
+#    - Use confidence: high/medium/low to indicate certainty
+#
+# 3. QUESTIONS (type: question)
+#    - Specific questions you want answered
+#    - The system will focus exploration on finding answers
 #
 # Format:
-#   - text: The aphorism text (1-3 sentences)
+#   - text: The statement or question
+#     type: axiom | conjecture | question  (default: conjecture)
 #     tags: [domain1, domain2]  # Helps with categorization
-#     confidence: high/medium/low  # How strongly you believe this
+#     confidence: high/medium/low  # For conjectures only
 #     source: Where this idea came from (optional)
 #     notes: Additional context (optional)
 
 seeds:
-  # Example seeds - replace with your own
+  # ============ AXIOMS (assumed true) ============
+  # Add your established facts here with type: axiom
+  # Example:
+  # - text: "The Fano plane has exactly 7 points and 7 lines"
+  #   type: axiom
+  #   tags: [fano, basic]
+  #   notes: "Fundamental property of the Fano plane"
+
+  # ============ CONJECTURES (to explore) ============
 
   - text: "The Fano plane's 7 points correspond to the 7 chakra dimensions and furthermore the 112 chakras correspond to the 28 'Fano Triangles' adjoined with each of the four remaining points, where the 112 chakras have a natural grouping into 7 groups of 16"
     tags: [fano, chakras, triangles]
-    confidence: high
+    type: axiom
     notes: "This is the basis for understanding the geometry of the entire energy system"
     source: "Prior explorations"
 
+  - text: "The Fano plane's 7 points correspond to the 7 areas of a shatkona. The 7 chakras: mooladhara, swadhistana, manipura, anahata, vishuddhi, agna and sahasrar correspond to the bottom, bottom-right, bottom-left, center, top-right, top-left and top parts of the shatkona respectively. The sahasrar nadi corresponds to the central vertical line passing through the center of the shatkona. i.e. the symmetry has been reduced by fixing the points"
+    tags: [fano, chakras, shatkona, sushumna]
+    type: axiom
+    notes: "This is the order in which the energy travels"
+    source: "Prior explorations"
+
+  - text: "The root chakra (initial distinguished fano point) is strongly associated with the number 4, which corresponds to the 4 lines which do not intersect with it. This in an abstract sense acts as the foundation for the rest of the structure."
+
+  - text: "The 112 chakras can be canonically split into groups of 12, 72, 4, 6, 6 and 12, once the positions of the 7 fano points (macro chakra dimensions) has been fixed"
+    tags: [fano, chakras]
+    confidence: high
+    notes: "This is the basis for understanding the five elements"
+    source: "Prior explorations"
+
+  - text: "The 14 major nadis correspond to the 7 fano lines and their complentary quadrangles"
+    tags: [fano, nadis]
+    confidence: medium
+    notes: "This is the basis for understanding movement between chakras"
+    source: "Prior explorations"
+
+  - text: "The 12 tangential fano triangles (corresponding to a particular fano point) correspond to the 12 musical notes, explaining why there is only one Sa and one Pa, and why the other 5 notes come in pairs, and moreover why the pairs of Re, Ga, Dha, Ni are termed as shuddh and komal (natural and flat), whereas the Ma pair is termed as shuddh and tivra (natural and sharp)"
+    tags: [fano, nadis]
+    confidence: high
+    source: "Guess"
+
+  - text: "What are the most natural/canonical edges in the 112 vertex chakra graph? Are there different types of edges? Are the edges directed or not?"
+    tags: [fano, nadis]
+    type: "question"
   
+  - text: "What exactly do the traditional chakra petal counts correspond to in our fano incidence structure (beyond sanskrit letters). Is it some kind of dimensional ascent?"
+    type: "question"
+
+  - text: "Is there a natural split of the 112 chakras into groups of 12, 72, 4, 6, 6, 12. If so, how is this split derived, and what does it correspond to?"
+    type: "question"
+  
+  - text: "Is there any interesting structure revealed between the 16 micro-chakras in one of the 7 macro-chakras, by considering the relationship between the two triangles: Shared edge, shared vertex, disjoint? And where the triangles are disjoint a further subdivision based on the nature of the relationship with both triangles and the disjoint point (axial-tangent), (tangent-axial), (tangent-tangent)"
+  - type: "question"
+
+  - text: "Do the Sanskrit letters on the chakra petals combined with the bija mantra for each chakra encode any additional mathematical structure?"
+  - type: "question"
+
+  - text: "Do the Sanskrit names of the 14 major nadis encode information about the mathematical structure corresponding to that nadi, based on the phonemes in their names and the petal-letter, chakra-bija-mantra correspondence?"
+
+  - text: "how are the 113th and 114th 'out-of-the-body' chakras most naturally modelled with the existing mathematical framework for the 112 'in-the-body' chakras?"
+  - type: "question"
+
+  - text: "what is the nature of the 4 special chakras out of the 112 and how do they relate to the other chakras? Is there any connection to the numbers 108 and 112 in this respect?"
+  - type: "question"
+
+  - text: "Fano arithmetic uses XOR logical operator. What is the relationship with binary addition and binary multiplication. Can the fano structure give insights on the nature of the relationship between additiona and multiplication via the XOR operator?"
+  - type: "question"

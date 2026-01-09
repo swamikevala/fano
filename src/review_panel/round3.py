@@ -339,17 +339,26 @@ async def _send_to_llm(
     chatgpt_browser,
     claude_reviewer: Optional[ClaudeReviewer],
 ) -> str:
-    """Send a prompt to the specified LLM and get response."""
+    """Send a prompt to the specified LLM and get response.
+
+    Round 3 is the final deliberation round for split decisions.
+    We use the most powerful reasoning modes for all LLMs:
+    - Gemini: Deep Think mode
+    - ChatGPT: Thinking mode
+    - Claude: Extended thinking
+    """
     if llm == "gemini" and gemini_browser:
         # Start fresh chat to ensure clean state
         await gemini_browser.start_new_chat()
-        return await gemini_browser.send_message(prompt)
+        # Use Deep Think for final deliberation - this is the most critical round
+        return await gemini_browser.send_message(prompt, use_deep_think=True)
     elif llm == "chatgpt" and chatgpt_browser:
         # Start fresh chat to ensure clean state
         await chatgpt_browser.start_new_chat()
-        # Use Thinking mode for deliberation (Pro is only for Round 2 deep analysis)
+        # Use Thinking mode for deliberation
         return await chatgpt_browser.send_message(prompt, use_thinking_mode=True)
     elif llm == "claude" and claude_reviewer:
-        return await claude_reviewer.send_message(prompt, extended_thinking=False)
+        # Use extended thinking for final deliberation
+        return await claude_reviewer.send_message(prompt, extended_thinking=True)
     else:
         raise ValueError(f"LLM {llm} not available")
