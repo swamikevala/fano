@@ -1,0 +1,21 @@
+# HTTP Server
+fastapi>=0.104.0
+uvicorn>=0.24.0
+
+# Data validation
+pydantic>=2.5.0
+
+# Configuration
+pyyaml>=6.0.0
+
+# HTTP client (for CLI status command)
+requests>=2.31.0
+
+# Anthropic Claude API
+anthropic>=0.39.0
+
+# Environment variables
+python-dotenv>=1.0.0
+
+# Note: Browser automation (playwright) is used via explorer's modules
+# Install explorer's requirements if using Gemini/ChatGPT backends

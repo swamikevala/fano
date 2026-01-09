@@ -1,0 +1,43 @@
+# Browser Pool Service Configuration
+
+server:
+  host: "127.0.0.1"
+  port: 9000
+
+backends:
+  gemini:
+    enabled: true
+    browser_data_dir: "./browser_data/gemini"
+    url: "https://gemini.google.com/app"
+    response_timeout_seconds: 3600  # Deep Think can be slow
+    deep_mode:
+      daily_limit: 20
+      reset_hour: 0  # Midnight local time
+
+  chatgpt:
+    enabled: true
+    browser_data_dir: "./browser_data/chatgpt"
+    url: "https://chatgpt.com"
+    response_timeout_seconds: 3600
+    pro_mode:
+      daily_limit: 100
+      reset_hour: 0
+
+  claude:
+    enabled: true
+    api_key_env: "ANTHROPIC_API_KEY"
+    model: "claude-sonnet-4-20250514"
+    extended_thinking_model: "claude-sonnet-4-20250514"
+
+queue:
+  max_depth_per_backend: 10  # Reject if queue too deep
+
+browser:
+  headless: false  # Set true for production
+  viewport_width: 1280
+  viewport_height: 720
+  slow_mo: 100
+
+logging:
+  level: "INFO"
+  file: "./logs/pool.log"

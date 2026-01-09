@@ -1,0 +1,8 @@
+# HTTP client for async requests
+aiohttp>=3.9.0
+
+# Anthropic Claude API
+anthropic>=0.39.0
+
+# Environment variables
+python-dotenv>=1.0.0
