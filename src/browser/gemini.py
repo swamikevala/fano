@@ -330,6 +330,9 @@ class GeminiInterface(BaseLLMInterface):
                     pass
                 return False
 
+        except GeminiQuotaExhausted:
+            # Propagate quota exhaustion - this is a critical error
+            raise
         except Exception as e:
             logger.error(f"[gemini] Could not enable Deep Think: {e}")
             return False
@@ -388,11 +391,30 @@ class GeminiInterface(BaseLLMInterface):
         Verify that Deep Think mode is actually active by checking page indicators.
 
         Returns True if we can confirm Deep Think is active.
+        Raises GeminiQuotaExhausted if quota limit message is detected.
         """
         try:
             # Look for indicators that Deep Think is active
             page_text = await self.page.inner_text("body")
             page_text_lower = page_text.lower()
+
+            # FIRST: Check for quota exhaustion message
+            # Pattern: "You've reached your limit for chats with Deep Think until Jan 10, 2:56 PM"
+            quota_patterns = [
+                "you've reached your limit",
+                "reached your limit for chats with deep think",
+                "limit for deep think until",
+            ]
+
+            for pattern in quota_patterns:
+                if pattern in page_text_lower:
+                    # Try to extract the resume time
+                    resume_time = self._extract_resume_time(page_text)
+                    logger.error(f"[gemini] Deep Think quota exhausted! Resume time: {resume_time}")
+                    raise GeminiQuotaExhausted(
+                        f"Gemini Deep Think quota exhausted until {resume_time}",
+                        resume_time=resume_time
+                    )
 
             # Check for Deep Think indicators in the page
             deep_think_indicators = [
@@ -421,9 +443,30 @@ class GeminiInterface(BaseLLMInterface):
             logger.warning(f"[gemini] Page text sample (first 500 chars): {page_text[:500]}")
             return False
 
+        except GeminiQuotaExhausted:
+            # Re-raise quota exhaustion - don't catch it here
+            raise
         except Exception as e:
             logger.error(f"[gemini] Error verifying Deep Think: {e}")
             return False
+
+    def _extract_resume_time(self, page_text: str) -> str:
+        """Extract the resume time from a quota exhaustion message."""
+        import re
+
+        # Pattern: "until Jan 10, 2:56 PM" or similar
+        patterns = [
+            r"until\s+((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2},?\s+\d{1,2}:\d{2}\s*[AP]M)",
+            r"until\s+(\d{1,2}:\d{2}\s*[AP]M)",
+            r"until\s+(tomorrow)",
+        ]
+
+        for pattern in patterns:
+            match = re.search(pattern, page_text, re.IGNORECASE)
+            if match:
+                return match.group(1)
+
+        return "unknown time"
 
     async def start_new_chat(self):
         """Start a new conversation."""
@@ -846,3 +889,16 @@ class GeminiInterface(BaseLLMInterface):
 class RateLimitError(Exception):
     """Raised when rate limit is detected."""
     pass
+
+
+class GeminiQuotaExhausted(Exception):
+    """
+    Raised when Gemini Deep Think quota is exhausted.
+
+    This is different from RateLimitError - quota exhaustion means
+    Deep Think is unavailable until a specific time, but standard
+    mode may still work.
+    """
+    def __init__(self, message: str, resume_time: str = None):
+        super().__init__(message)
+        self.resume_time = resume_time  # e.g., "Jan 10, 2:56 PM"

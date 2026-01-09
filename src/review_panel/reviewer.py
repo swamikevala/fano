@@ -35,6 +35,12 @@ from .models import (
 from .round1 import run_round1
 from .round2 import run_round2
 from .round3 import run_round3
+
+# Import quota exception for special handling
+try:
+    from ..browser.gemini import GeminiQuotaExhausted
+except ImportError:
+    GeminiQuotaExhausted = None
 from .round4 import _get_final_vote, _get_final_vote_claude
 from .prompts import build_round4_final_vote_prompt, build_round_summary
 from .claude_api import get_claude_reviewer, ClaudeReviewer
@@ -376,18 +382,40 @@ class AutomatedReviewer:
                 logger.info(f"[reviewer] Skipping Round 2 (already completed)")
             else:
                 # Round 2: Deep analysis with all Round 1 responses visible
-                round2, mind_changes_r2 = await run_round2(
-                    chunk_insight=current_insight,
-                    blessed_axioms_summary=blessed_axioms_summary,
-                    round1=round1,
-                    gemini_browser=self.gemini_browser,
-                    chatgpt_browser=self.chatgpt_browser,
-                    claude_reviewer=self.claude_reviewer,
-                    config=self.panel_config,
-                    math_verification=review.math_verification,
-                    accepted_modification=accepted_modification,
-                    modification_source=modification_source,
-                )
+                try:
+                    round2, mind_changes_r2 = await run_round2(
+                        chunk_insight=current_insight,
+                        blessed_axioms_summary=blessed_axioms_summary,
+                        round1=round1,
+                        gemini_browser=self.gemini_browser,
+                        chatgpt_browser=self.chatgpt_browser,
+                        claude_reviewer=self.claude_reviewer,
+                        config=self.panel_config,
+                        math_verification=review.math_verification,
+                        accepted_modification=accepted_modification,
+                        modification_source=modification_source,
+                    )
+                except Exception as e:
+                    # Check for Gemini quota exhaustion
+                    if GeminiQuotaExhausted and isinstance(e, GeminiQuotaExhausted):
+                        logger.error(f"[reviewer] Gemini Deep Think quota exhausted: {e}")
+                        # Get partial round from exception if available
+                        if hasattr(e, 'partial_round'):
+                            round2 = e.partial_round
+                            mind_changes_r2 = getattr(e, 'mind_changes', [])
+                            review.add_round(round2)
+                            review.mind_changes.extend(mind_changes_r2)
+                            self._save_progress(review, 2)
+                        # Mark as paused with quota exhaustion reason
+                        review.is_paused = True
+                        review.paused_for_id = f"QUOTA_EXHAUSTED:{e.resume_time}"
+                        logger.info(f"[reviewer] Review paused due to quota exhaustion, resume at: {e.resume_time}")
+                        # Re-raise so the orchestrator can stop processing
+                        raise
+                    else:
+                        # Other errors - re-raise
+                        raise
+
                 review.add_round(round2)
                 review.mind_changes.extend(mind_changes_r2)
 
@@ -475,14 +503,38 @@ class AutomatedReviewer:
                         disputed=review.is_disputed,
                     )
                 else:
-                    round3, mind_changes_r3, is_disputed, modified_insight, refinement_record = await run_round3(
-                        chunk_insight=current_insight,
-                        round2=round2,
-                        gemini_browser=self.gemini_browser,
-                        chatgpt_browser=self.chatgpt_browser,
-                        claude_reviewer=self.claude_reviewer,
-                        config=self.panel_config,
-                    )
+                    try:
+                        round3, mind_changes_r3, is_disputed, modified_insight, refinement_record = await run_round3(
+                            chunk_insight=current_insight,
+                            round2=round2,
+                            gemini_browser=self.gemini_browser,
+                            chatgpt_browser=self.chatgpt_browser,
+                            claude_reviewer=self.claude_reviewer,
+                            config=self.panel_config,
+                        )
+                    except Exception as e:
+                        # Check for Gemini quota exhaustion
+                        if GeminiQuotaExhausted and isinstance(e, GeminiQuotaExhausted):
+                            logger.error(f"[reviewer] Gemini Deep Think quota exhausted in Round 3: {e}")
+                            # Get partial results from exception if available
+                            if hasattr(e, 'partial_round'):
+                                round3 = e.partial_round
+                                mind_changes_r3 = getattr(e, 'mind_changes', [])
+                                is_disputed = getattr(e, 'is_disputed', True)
+                                modified_insight = getattr(e, 'modified_insight', None)
+                                refinement_record = getattr(e, 'refinement_record', None)
+                                review.add_round(round3)
+                                review.mind_changes.extend(mind_changes_r3)
+                                self._save_progress(review, 3)
+                            # Mark as paused with quota exhaustion reason
+                            review.is_paused = True
+                            review.paused_for_id = f"QUOTA_EXHAUSTED:{e.resume_time}"
+                            logger.info(f"[reviewer] Review paused due to quota exhaustion, resume at: {e.resume_time}")
+                            # Re-raise so the orchestrator can stop processing
+                            raise
+                        else:
+                            raise
+
                     review.add_round(round3)
                     review.mind_changes.extend(mind_changes_r3)
 

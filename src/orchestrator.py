@@ -22,6 +22,7 @@ from dotenv import load_dotenv
 # Load environment variables from .env file
 load_dotenv()
 
+from browser import GeminiQuotaExhausted
 from browser import (
     ChatGPTInterface,
     GeminiInterface,
@@ -1118,6 +1119,25 @@ CONTENT:
 
                 # Save updated insight
                 await asyncio.to_thread(insight.save, chunks_dir)
+
+            except GeminiQuotaExhausted as e:
+                # Gemini Deep Think quota exhausted - stop processing
+                logger.error(f"[{insight.id}] Gemini Deep Think quota exhausted")
+                print(f"\n{'='*60}")
+                print(f"⚠️  GEMINI DEEP THINK QUOTA EXHAUSTED")
+                print(f"{'='*60}")
+                print(f"\nDeep Think mode is unavailable until: {e.resume_time}")
+                print(f"\nReviews require Gemini Deep Think for quality analysis.")
+                print(f"Progress has been saved and can be resumed later.")
+                print(f"\nPlease wait until {e.resume_time} before running reviews again.")
+                print(f"{'='*60}\n")
+
+                # Save the insight in its current state (pending)
+                insight.status = InsightStatus.PENDING
+                await asyncio.to_thread(insight.save, chunks_dir)
+
+                # Exit the review loop - don't process any more items
+                break
 
             except Exception as e:
                 logger.error(f"[{insight.id}] Review failed: {e}")

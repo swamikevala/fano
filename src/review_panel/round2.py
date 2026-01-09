@@ -18,6 +18,12 @@ from .models import ReviewResponse, ReviewRound, MindChange, VerificationResult
 from .prompts import build_round2_prompt, parse_round2_response
 from .claude_api import ClaudeReviewer
 
+# Import quota exception for special handling
+try:
+    from ..browser.gemini import GeminiQuotaExhausted
+except ImportError:
+    GeminiQuotaExhausted = None
+
 logger = logging.getLogger(__name__)
 
 
@@ -130,24 +136,44 @@ async def run_round2(
     # Collect responses and track mind changes
     responses = {}
     mind_changes = []
+    quota_exhausted_exception = None  # Track quota exhaustion for later re-raise
 
     for name, result in zip(task_names, results):
         if isinstance(result, Exception):
-            logger.error(f"[round2] {name} failed: {result}")
-            # Carry forward Round 1 response on failure
-            if name in round1.responses:
-                responses[name] = round1.responses[name]
+            # Check for Gemini quota exhaustion - special handling
+            if GeminiQuotaExhausted and isinstance(result, GeminiQuotaExhausted):
+                logger.error(f"[round2] Gemini Deep Think quota exhausted: {result}")
+                quota_exhausted_exception = result
+                # Carry forward Round 1 response so we have something
+                if name in round1.responses:
+                    responses[name] = round1.responses[name]
+                else:
+                    responses[name] = ReviewResponse(
+                        llm=name,
+                        mode="deep",
+                        rating="?",
+                        mathematical_verification="Gemini Deep Think quota exhausted",
+                        structural_analysis="Gemini Deep Think quota exhausted",
+                        naturalness_assessment="Gemini Deep Think quota exhausted",
+                        reasoning=f"Quota exhausted: {str(result)}",
+                        confidence="low",
+                    )
             else:
-                responses[name] = ReviewResponse(
-                    llm=name,
-                    mode="deep",
-                    rating="?",
-                    mathematical_verification="Deep review failed",
-                    structural_analysis="Deep review failed",
-                    naturalness_assessment="Deep review failed",
-                    reasoning=f"Error during deep review: {str(result)}",
-                    confidence="low",
-                )
+                logger.error(f"[round2] {name} failed: {result}")
+                # Carry forward Round 1 response on failure
+                if name in round1.responses:
+                    responses[name] = round1.responses[name]
+                else:
+                    responses[name] = ReviewResponse(
+                        llm=name,
+                        mode="deep",
+                        rating="?",
+                        mathematical_verification="Deep review failed",
+                        structural_analysis="Deep review failed",
+                        naturalness_assessment="Deep review failed",
+                        reasoning=f"Error during deep review: {str(result)}",
+                        confidence="low",
+                    )
         else:
             responses[name] = result
 
@@ -196,6 +222,15 @@ async def run_round2(
         outcome=outcome,
         timestamp=datetime.now(),
     )
+
+    # If quota was exhausted, re-raise AFTER creating the round
+    # so the caller can save partial progress before handling the error
+    if quota_exhausted_exception:
+        logger.warning(f"[round2] Re-raising quota exhaustion after collecting other LLM results")
+        # Attach the round to the exception so caller can save it
+        quota_exhausted_exception.partial_round = review_round
+        quota_exhausted_exception.mind_changes = mind_changes
+        raise quota_exhausted_exception
 
     return review_round, mind_changes
 

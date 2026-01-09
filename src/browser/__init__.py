@@ -8,7 +8,7 @@ from .base import (
     rate_tracker,
 )
 from .chatgpt import ChatGPTInterface
-from .gemini import GeminiInterface
+from .gemini import GeminiInterface, GeminiQuotaExhausted
 from .model_selector import (
     deep_mode_tracker,
     get_deep_mode_status,
@@ -21,6 +21,7 @@ __all__ = [
     "ChatGPTInterface",
     "ChatLogger",
     "GeminiInterface",
+    "GeminiQuotaExhausted",
     "authenticate_all",
     "deep_mode_tracker",
     "get_deep_mode_status",

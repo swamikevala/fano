@@ -26,6 +26,12 @@ from .prompts import (
 )
 from .claude_api import ClaudeReviewer
 
+# Import quota exception for special handling
+try:
+    from ..browser.gemini import GeminiQuotaExhausted
+except ImportError:
+    GeminiQuotaExhausted = None
+
 logger = logging.getLogger(__name__)
 
 
@@ -149,20 +155,43 @@ async def run_round3(
         )
 
     # Step 3: Get final votes from all (on original or modified insight)
-    final_responses, mind_changes = await _get_final_votes(
-        chunk_insight=chunk_insight,
-        minority_argument=minority_argument,
-        majority_response=majority_response,
-        round2=round2,
-        minority_llm=minority_llm,
-        gemini_browser=gemini_browser,
-        chatgpt_browser=chatgpt_browser,
-        claude_reviewer=claude_reviewer,
-        deliberation_minority_argument=minority_argument,
-        deliberation_majority_response=majority_response,
-        modified_insight=modified_insight,
-        modification_accepted=modification_accepted,
-    )
+    try:
+        final_responses, mind_changes = await _get_final_votes(
+            chunk_insight=chunk_insight,
+            minority_argument=minority_argument,
+            majority_response=majority_response,
+            round2=round2,
+            minority_llm=minority_llm,
+            gemini_browser=gemini_browser,
+            chatgpt_browser=chatgpt_browser,
+            claude_reviewer=claude_reviewer,
+            deliberation_minority_argument=minority_argument,
+            deliberation_majority_response=majority_response,
+            modified_insight=modified_insight,
+            modification_accepted=modification_accepted,
+        )
+    except Exception as e:
+        # Check for quota exhaustion - build partial round and re-raise
+        if GeminiQuotaExhausted and isinstance(e, GeminiQuotaExhausted):
+            logger.error(f"[round3] Quota exhausted during final votes")
+            final_responses = getattr(e, 'partial_responses', {})
+            mind_changes = getattr(e, 'mind_changes', [])
+            # Build partial round for saving
+            partial_round = ReviewRound(
+                round_number=3,
+                mode="deliberation",
+                responses=final_responses,
+                outcome="quota_exhausted",
+                timestamp=datetime.now(),
+            )
+            e.partial_round = partial_round
+            e.mind_changes = mind_changes
+            e.is_disputed = True
+            e.modified_insight = modified_insight
+            e.refinement_record = refinement_record
+            raise
+        else:
+            raise
 
     # Determine final outcome
     final_ratings = [r.rating for r in final_responses.values()]
@@ -341,12 +370,22 @@ async def _get_final_votes(
     responses = {}
     mind_changes = []
 
+    quota_exhausted_exception = None  # Track quota exhaustion for later re-raise
+
     for (llm, is_minority, _), result in zip(tasks, results):
         if isinstance(result, Exception):
-            logger.error(f"[round3] Final vote failed for {llm}: {result}")
-            # Carry forward Round 2 response
-            if llm in round2.responses:
-                responses[llm] = round2.responses[llm]
+            # Check for Gemini quota exhaustion - special handling
+            if GeminiQuotaExhausted and isinstance(result, GeminiQuotaExhausted):
+                logger.error(f"[round3] Gemini Deep Think quota exhausted: {result}")
+                quota_exhausted_exception = result
+                # Carry forward Round 2 response
+                if llm in round2.responses:
+                    responses[llm] = round2.responses[llm]
+            else:
+                logger.error(f"[round3] Final vote failed for {llm}: {result}")
+                # Carry forward Round 2 response
+                if llm in round2.responses:
+                    responses[llm] = round2.responses[llm]
         else:
             responses[llm] = result
 
@@ -366,6 +405,13 @@ async def _get_final_votes(
                         to_rating=r3_rating,
                         reason=f"After deliberation{reason_suffix}: {stance}",
                     ))
+
+    # If quota was exhausted, re-raise AFTER collecting other LLM results
+    if quota_exhausted_exception:
+        logger.warning(f"[round3] Re-raising quota exhaustion after collecting other LLM results")
+        quota_exhausted_exception.partial_responses = responses
+        quota_exhausted_exception.mind_changes = mind_changes
+        raise quota_exhausted_exception
 
     return responses, mind_changes
 
