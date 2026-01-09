@@ -6,12 +6,17 @@ Handles Playwright setup, session persistence, and rate limit detection.
 
 import asyncio
 import json
+import os
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 import yaml
 
+from dotenv import load_dotenv
 from playwright.async_api import async_playwright, Browser, BrowserContext, Page
+
+# Load environment variables
+load_dotenv()
 
 
 # Load config - use absolute path resolution
@@ -150,16 +155,30 @@ async def get_browser_context(model: str, playwright_instance=None):
     viewport_width = CONFIG["browser"].get("viewport_width", 1280)
     viewport_height = CONFIG["browser"].get("viewport_height", 720)
 
+    # Check for SSL bypass flag (for corporate proxies)
+    disable_ssl = os.environ.get("BROWSER_DISABLE_SSL_VERIFY", "").lower() in ("1", "true", "yes")
+
+    chrome_args = [
+        "--disable-blink-features=AutomationControlled",
+        "--no-sandbox",
+        "--force-device-scale-factor=1",  # Fix Windows DPI scaling issues
+    ]
+
+    if disable_ssl:
+        print(f"[{model}] SSL verification DISABLED for browser (corporate proxy workaround)")
+        chrome_args.extend([
+            "--ignore-certificate-errors",
+            "--ignore-ssl-errors",
+            "--allow-insecure-localhost",
+        ])
+
     browser = await playwright_instance.chromium.launch_persistent_context(
         user_data_dir=str(storage_dir),
         headless=CONFIG["browser"].get("headless", False),
         slow_mo=CONFIG["browser"].get("slow_mo", 100),
-        args=[
-            "--disable-blink-features=AutomationControlled",
-            "--no-sandbox",
-            "--force-device-scale-factor=1",  # Fix Windows DPI scaling issues
-        ],
+        args=chrome_args,
         viewport={"width": viewport_width, "height": viewport_height},
+        ignore_https_errors=disable_ssl,  # Also ignore at Playwright level
     )
     
     return browser, playwright_instance

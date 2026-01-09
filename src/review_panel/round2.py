@@ -30,12 +30,14 @@ async def run_round2(
     claude_reviewer: Optional[ClaudeReviewer],
     config: dict,
     math_verification: Optional[VerificationResult] = None,
+    accepted_modification: str = "",
+    modification_source: str = "",
 ) -> tuple[ReviewRound, list[MindChange]]:
     """
     Run Round 2: Deep analysis with all Round 1 responses visible.
 
     Args:
-        chunk_insight: The insight text being reviewed
+        chunk_insight: The insight text being reviewed (may be modified from Round 1)
         blessed_axioms_summary: Summary of blessed axioms
         round1: The completed Round 1
         gemini_browser: GeminiBrowser instance
@@ -43,11 +45,15 @@ async def run_round2(
         claude_reviewer: ClaudeReviewer instance
         config: Review panel configuration
         math_verification: Optional DeepSeek verification result
+        accepted_modification: If a modification was accepted after Round 1
+        modification_source: Which LLM proposed the accepted modification
 
     Returns:
         Tuple of (ReviewRound, list of MindChanges)
     """
     logger.info("[round2] Starting deep analysis")
+    if accepted_modification:
+        logger.info(f"[round2] Reviewing MODIFIED insight (proposed by {modification_source})")
 
     # Extract Round 1 responses for the prompt
     gemini_r1 = round1.responses.get("gemini", _empty_response("gemini"))
@@ -68,6 +74,8 @@ async def run_round2(
             this_llm="gemini",
             this_llm_round1_rating=gemini_r1.rating if hasattr(gemini_r1, 'rating') else gemini_r1.get("rating", "?"),
             math_verification=math_verification,
+            accepted_modification=accepted_modification,
+            modification_source=modification_source,
         )
         tasks.append(("gemini", _deep_review_gemini(gemini_browser, prompt)))
     else:
@@ -84,6 +92,8 @@ async def run_round2(
             this_llm="chatgpt",
             this_llm_round1_rating=chatgpt_r1.rating if hasattr(chatgpt_r1, 'rating') else chatgpt_r1.get("rating", "?"),
             math_verification=math_verification,
+            accepted_modification=accepted_modification,
+            modification_source=modification_source,
         )
         tasks.append(("chatgpt", _deep_review_chatgpt(chatgpt_browser, prompt)))
     else:
@@ -100,6 +110,8 @@ async def run_round2(
             this_llm="claude",
             this_llm_round1_rating=claude_r1.rating if hasattr(claude_r1, 'rating') else claude_r1.get("rating", "?"),
             math_verification=math_verification,
+            accepted_modification=accepted_modification,
+            modification_source=modification_source,
         )
         tasks.append(("claude", _deep_review_claude(claude_reviewer, prompt)))
     else:
@@ -158,12 +170,24 @@ async def run_round2(
     ratings = [r.rating for r in responses.values()]
     unique_ratings = set(ratings)
 
-    if len(unique_ratings) == 1:
+    # Check for ABANDON votes (unanimous = early exit)
+    abandon_count = ratings.count("ABANDON")
+    if abandon_count == len(ratings) and abandon_count >= 2:
+        outcome = "abandoned"
+        logger.info(f"[round2] ABANDONED unanimously ({abandon_count} votes)")
+    elif len(unique_ratings) == 1:
         outcome = "unanimous"
         logger.info(f"[round2] Unanimous after deep analysis: {ratings[0]}")
     else:
         outcome = "split"
         logger.info(f"[round2] Still split after deep analysis: {ratings}")
+
+    # Log any modifications proposed
+    modifications = [(name, r.proposed_modification) for name, r in responses.items()
+                     if r.proposed_modification]
+    if modifications:
+        for name, mod in modifications:
+            logger.info(f"[round2] {name} proposed modification: {mod[:100]}...")
 
     review_round = ReviewRound(
         round_number=2,
@@ -187,6 +211,24 @@ def _empty_response(llm: str) -> dict:
     }
 
 
+def _build_deep_response(llm: str, mode: str, parsed: dict) -> ReviewResponse:
+    """Build a ReviewResponse from parsed deep review data."""
+    return ReviewResponse(
+        llm=llm,
+        mode=mode,
+        rating=parsed["rating"],
+        mathematical_verification=parsed.get("mathematical_verification", ""),
+        structural_analysis=parsed.get("structural_analysis", ""),
+        naturalness_assessment=parsed.get("naturalness_assessment", ""),
+        reasoning=parsed["reasoning"],
+        confidence=parsed["confidence"],
+        proposed_modification=parsed.get("proposed_modification") or None,
+        modification_rationale=parsed.get("modification_rationale") or None,
+        new_information=parsed.get("new_information"),
+        changed_mind=parsed.get("changed_mind"),
+    )
+
+
 async def _deep_review_gemini(gemini_browser, prompt: str) -> ReviewResponse:
     """Get deep review from Gemini using Deep Think mode."""
     logger.info("[round2] Sending to Gemini (Deep Think mode)")
@@ -204,18 +246,7 @@ async def _deep_review_gemini(gemini_browser, prompt: str) -> ReviewResponse:
         # Parse the response
         parsed = parse_round2_response(response_text)
 
-        return ReviewResponse(
-            llm="gemini",
-            mode="deep_think",
-            rating=parsed["rating"],
-            mathematical_verification=parsed.get("mathematical_verification", ""),
-            structural_analysis=parsed.get("structural_analysis", ""),
-            naturalness_assessment=parsed.get("naturalness_assessment", ""),
-            reasoning=parsed["reasoning"],
-            confidence=parsed["confidence"],
-            new_information=parsed.get("new_information"),
-            changed_mind=parsed.get("changed_mind"),
-        )
+        return _build_deep_response("gemini", "deep_think", parsed)
 
     except Exception as e:
         logger.error(f"[round2] Gemini Deep Think error: {e}")
@@ -242,18 +273,7 @@ async def _deep_review_chatgpt(chatgpt_browser, prompt: str) -> ReviewResponse:
         # Parse the response
         parsed = parse_round2_response(response_text)
 
-        return ReviewResponse(
-            llm="chatgpt",
-            mode="pro",
-            rating=parsed["rating"],
-            mathematical_verification=parsed.get("mathematical_verification", ""),
-            structural_analysis=parsed.get("structural_analysis", ""),
-            naturalness_assessment=parsed.get("naturalness_assessment", ""),
-            reasoning=parsed["reasoning"],
-            confidence=parsed["confidence"],
-            new_information=parsed.get("new_information"),
-            changed_mind=parsed.get("changed_mind"),
-        )
+        return _build_deep_response("chatgpt", "pro", parsed)
 
     except Exception as e:
         logger.error(f"[round2] ChatGPT Pro error: {e}")
@@ -274,18 +294,7 @@ async def _deep_review_claude(claude_reviewer: ClaudeReviewer, prompt: str) -> R
         # Parse the response
         parsed = parse_round2_response(response_text)
 
-        return ReviewResponse(
-            llm="claude",
-            mode="extended_thinking",
-            rating=parsed["rating"],
-            mathematical_verification=parsed.get("mathematical_verification", ""),
-            structural_analysis=parsed.get("structural_analysis", ""),
-            naturalness_assessment=parsed.get("naturalness_assessment", ""),
-            reasoning=parsed["reasoning"],
-            confidence=parsed["confidence"],
-            new_information=parsed.get("new_information"),
-            changed_mind=parsed.get("changed_mind"),
-        )
+        return _build_deep_response("claude", "extended_thinking", parsed)
 
     except Exception as e:
         logger.error(f"[round2] Claude Extended Thinking error: {e}")

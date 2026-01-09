@@ -1,10 +1,22 @@
 """
-Refinement Round Logic
+Refinement Round Logic (DEPRECATED)
 
-Handles the refinement of insights when Round 1 reviews are mixed
-but critiques indicate fixable issues (articulation, precision, framing).
+NOTE: This module is deprecated. The new review flow allows LLMs to propose
+modifications directly during any round (Round 1, 2, or 3). The modification
+consensus logic in reviewer.py handles accepting and tracking these changes.
 
-Claude Opus writes the refinement. All three LLMs review the refined version.
+This file is kept for backward compatibility but is no longer used by the
+main review flow.
+
+Old approach (deprecated):
+- Handles the refinement of insights when Round 1 reviews are mixed
+- Claude Opus writes the refinement
+- All three LLMs review the refined version
+
+New approach (active):
+- Any LLM can propose PROPOSED_MODIFICATION during review
+- Modifications are evaluated for consensus between rounds
+- ABANDON vote allows early exit for unsalvageable chunks
 """
 
 import logging

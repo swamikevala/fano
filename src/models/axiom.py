@@ -96,10 +96,15 @@ class SeedAphorism:
     - axiom: Assumed true facts that don't need to be re-discovered
     - conjecture: Ideas to explore and verify (default)
     - question: Specific questions to answer
+
+    Priority:
+    - 1-10 scale (10 = highest priority, explore first)
+    - Default is 5 (medium priority)
     """
     id: str
     text: str
     type: str = "conjecture"  # axiom, conjecture, question
+    priority: int = 5  # 1-10, higher = explore first
     tags: list[str] = field(default_factory=list)
     confidence: str = "high"  # high, medium, low (for conjectures)
     source: str = "user"  # Where this seed came from
@@ -110,10 +115,19 @@ class SeedAphorism:
         # Determine type - default to conjecture for backward compatibility
         entry_type = data.get("type", "conjecture")
 
+        # Parse priority (1-10 scale, default 5)
+        priority = data.get("priority", 5)
+        if isinstance(priority, str):
+            # Support "high", "medium", "low" as aliases
+            priority_map = {"high": 8, "medium": 5, "low": 2}
+            priority = priority_map.get(priority.lower(), 5)
+        priority = max(1, min(10, int(priority)))  # Clamp to 1-10
+
         return cls(
             id=data.get("id", f"seed-{index:03d}"),
             text=data.get("text", ""),
             type=entry_type,
+            priority=priority,
             tags=data.get("tags", []),
             confidence=data.get("confidence", "high"),
             source=data.get("source", "user"),
@@ -190,13 +204,14 @@ class AxiomStore:
 
         return numbers
 
-    def get_seed_aphorisms(self, type_filter: str = None) -> list[SeedAphorism]:
+    def get_seed_aphorisms(self, type_filter: str = None, sort_by_priority: bool = True) -> list[SeedAphorism]:
         """
         Load seed aphorisms from seeds.yaml.
 
         Args:
             type_filter: If provided, only return entries of this type
                         ('axiom', 'conjecture', 'question')
+            sort_by_priority: If True, sort by priority (highest first)
         """
         if not self.seeds_file.exists():
             return []
@@ -214,6 +229,10 @@ class AxiomStore:
                 seed = SeedAphorism.from_dict(seed_data, i)
                 if type_filter is None or seed.type == type_filter:
                     seeds.append(seed)
+
+        # Sort by priority (highest first)
+        if sort_by_priority:
+            seeds.sort(key=lambda s: s.priority, reverse=True)
 
         return seeds
 
@@ -288,27 +307,29 @@ class AxiomStore:
                     lines.append(f"   Note: {axiom.notes}")
             lines.append("")
 
-        # 2. CONJECTURES - To explore and verify
+        # 2. CONJECTURES - To explore and verify (sorted by priority)
         conjectures = self.get_conjectures()[:max_seeds]
         if conjectures:
             lines.append("=== CONJECTURES (TO EXPLORE) ===")
             lines.append("These are conjectured connections to explore, verify, and build upon:\n")
             for seed in conjectures:
                 confidence_marker = {"high": "⚡", "medium": "?", "low": "○"}.get(seed.confidence, "?")
-                lines.append(f"{confidence_marker} {seed.text}")
+                priority_marker = f"[P{seed.priority}]" if seed.priority != 5 else ""
+                lines.append(f"{confidence_marker} {priority_marker} {seed.text}".strip())
                 if seed.tags:
                     lines.append(f"   [Tags: {', '.join(seed.tags)}]")
                 if seed.notes:
                     lines.append(f"   Note: {seed.notes}")
             lines.append("")
 
-        # 3. QUESTIONS - Specific questions to answer
+        # 3. QUESTIONS - Specific questions to answer (sorted by priority)
         questions = self.get_questions()
         if questions:
             lines.append("=== QUESTIONS (TO ANSWER) ===")
-            lines.append("These are specific questions that need answers:\n")
+            lines.append("These are specific questions that need answers (highest priority first):\n")
             for q in questions:
-                lines.append(f"❓ {q.text}")
+                priority_marker = f"[P{q.priority}]" if q.priority != 5 else ""
+                lines.append(f"❓ {priority_marker} {q.text}".strip())
                 if q.tags:
                     lines.append(f"   [Tags: {', '.join(q.tags)}]")
                 if q.notes:

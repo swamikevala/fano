@@ -111,6 +111,9 @@ class Orchestrator:
         await self._connect_models()
 
         try:
+            # Check for new seeds and prioritize them
+            await self._check_and_spawn_for_new_seeds()
+
             # Process backlog of unextracted threads first
             if process_backlog_first:
                 await self.process_backlog()
@@ -343,6 +346,85 @@ class Orchestrator:
         
         return threads[:self.config["max_active_threads"]]
     
+    async def _check_and_spawn_for_new_seeds(self):
+        """
+        Check if there are new seeds that haven't been explored yet.
+        If so, spawn a new thread prioritizing those seeds.
+        """
+        logger.info("[seeds] Checking for new/unexplored seeds...")
+
+        # Get all current seeds
+        all_seeds = self.axioms.get_seed_aphorisms()
+        if not all_seeds:
+            logger.info("[seeds] No seeds found")
+            return
+
+        all_seed_ids = {s.id for s in all_seeds}
+
+        # Find which seeds have already been explored (in any thread)
+        explored_seed_ids = set()
+        threads_dir = self.data_dir / "explorations"
+        if threads_dir.exists():
+            for filepath in threads_dir.glob("*.json"):
+                try:
+                    thread = ExplorationThread.load(filepath)
+                    explored_seed_ids.update(thread.seed_axioms or [])
+                except Exception:
+                    pass
+
+        # Find new seeds
+        new_seed_ids = all_seed_ids - explored_seed_ids
+
+        if not new_seed_ids:
+            logger.info(f"[seeds] All {len(all_seed_ids)} seeds have been explored")
+            return
+
+        new_seeds = [s for s in all_seeds if s.id in new_seed_ids]
+        logger.info(f"[seeds] Found {len(new_seeds)} NEW seeds to explore:")
+        for seed in new_seeds:
+            logger.info(f"[seeds]   - {seed.id}: {seed.text[:60]}...")
+
+        # Spawn a new thread specifically for these seeds
+        thread = self._spawn_thread_for_seeds(new_seeds)
+        logger.info(f"[seeds] Spawned new thread {thread.id} for new seeds")
+
+    def _spawn_thread_for_seeds(self, seeds: list) -> ExplorationThread:
+        """Create a new exploration thread for specific seeds."""
+        seed_ids = [s.id for s in seeds]
+        topic = self._generate_topic(seeds)
+
+        thread = ExplorationThread.create_new(
+            topic=topic,
+            seed_axioms=seed_ids,
+            target_numbers=[],
+        )
+
+        thread.save(self.data_dir)
+        return thread
+
+    def _get_context_for_seeds(self, seed_ids: list[str]) -> str:
+        """Get exploration context for specific seed IDs only."""
+        all_seeds = self.axioms.get_seed_aphorisms()
+        filtered_seeds = [s for s in all_seeds if s.id in seed_ids]
+
+        if not filtered_seeds:
+            return self.axioms.get_context_for_exploration()
+
+        lines = []
+        lines.append("=== SEED APHORISMS ===")
+        lines.append("These are the foundational conjectures to explore, verify, and build upon:\n")
+
+        for seed in filtered_seeds:
+            confidence_marker = {"high": "⚡", "medium": "?", "low": "○"}.get(seed.confidence, "?")
+            lines.append(f"{confidence_marker} {seed.text}")
+            if seed.tags:
+                lines.append(f"   [Tags: {', '.join(seed.tags)}]")
+            if seed.notes:
+                lines.append(f"   Note: {seed.notes}")
+        lines.append("")
+
+        return "\n".join(lines)
+
     def _spawn_new_thread(self) -> ExplorationThread:
         """Create a new exploration thread based on seed aphorisms."""
 
@@ -503,7 +585,11 @@ class Orchestrator:
     
     def _build_exploration_prompt(self, thread: ExplorationThread) -> str:
         """Build the prompt for exploration based on seed aphorisms."""
-        context = self.axioms.get_context_for_exploration()
+        # If thread has specific seeds, focus on those; otherwise use all
+        if thread.seed_axioms:
+            context = self._get_context_for_seeds(thread.seed_axioms)
+        else:
+            context = self.axioms.get_context_for_exploration()
         date_prefix = datetime.now().strftime("[FANO %m-%d]")
 
         prompt_parts = [
@@ -944,19 +1030,45 @@ CONTENT:
         blessed_summary: str,
     ):
         """
-        Run automated review on extracted insights.
+        Run automated review on extracted insights using priority-based selection.
+
+        Always processes the highest priority item next. If a higher priority
+        item appears (via UI), pauses the current review and switches to it.
 
         Args:
-            insights: List of AtomicInsight to review
+            insights: List of AtomicInsight to review (used for initial save only)
             blessed_summary: Summary of blessed axioms for context
         """
-        logger.info(f"Starting automated review of {len(insights)} insights")
+        logger.info(f"Starting priority-based review of {len(insights)} insights")
 
         chunks_dir = self.data_dir / "chunks"
 
-        for insight in insights:
+        # Process insights by priority until none remain
+        processed_ids = set()
+        max_iterations = len(insights) * 3  # Safety limit to prevent infinite loops
+
+        for iteration in range(max_iterations):
+            # Get the highest priority pending insight
+            insight_id, priority, rounds_completed = self.reviewer.get_highest_priority_pending()
+
+            if not insight_id:
+                logger.info("No more pending insights to review")
+                break
+
+            if insight_id in processed_ids:
+                # Already tried this one, may be stuck - skip for now
+                logger.warning(f"[{insight_id}] Already processed, skipping to avoid loop")
+                break
+
+            # Load the insight
+            insight = self._load_insight_by_id(insight_id)
+            if not insight:
+                logger.warning(f"[{insight_id}] Could not load insight, skipping")
+                processed_ids.add(insight_id)
+                continue
+
             try:
-                logger.info(f"Reviewing insight [{insight.id}]")
+                logger.info(f"Reviewing [{insight.id}] priority={priority} (rounds_completed={rounds_completed})")
 
                 review = await self.reviewer.review_insight(
                     chunk_id=insight.id,
@@ -965,7 +1077,18 @@ CONTENT:
                     tags=insight.tags,
                     dependencies=insight.depends_on,
                     blessed_axioms_summary=blessed_summary,
+                    priority=priority,
+                    check_priority_switches=True,
                 )
+
+                # Check if review was paused for higher priority item
+                if review.is_paused:
+                    logger.info(f"[{insight.id}] Paused for higher priority item {review.paused_for_id}")
+                    # Don't mark as processed - we'll come back to it
+                    continue
+
+                # Review completed - mark as processed
+                processed_ids.add(insight.id)
 
                 # Get outcome action
                 action = self.reviewer.get_outcome_action(review)
@@ -975,6 +1098,11 @@ CONTENT:
                 insight.rating = review.final_rating
                 insight.is_disputed = review.is_disputed
                 insight.reviewed_at = review.reviewed_at
+
+                # If the insight was modified during deliberation, update the text
+                if review.final_insight_text and review.final_insight_text != insight.insight:
+                    logger.info(f"[{insight.id}] Using modified insight text from deliberation")
+                    insight.insight = review.final_insight_text
 
                 # Update status based on rating
                 if review.final_rating == "⚡":
@@ -995,6 +1123,15 @@ CONTENT:
                 logger.error(f"[{insight.id}] Review failed: {e}")
                 insight.status = InsightStatus.PENDING
                 await asyncio.to_thread(insight.save, chunks_dir)
+                processed_ids.add(insight.id)  # Don't retry failed items in this batch
+
+    def _load_insight_by_id(self, insight_id: str) -> AtomicInsight:
+        """Load an insight by ID from any status directory."""
+        for status in ["pending", "blessed", "interesting", "rejected"]:
+            path = self.data_dir / "chunks" / "insights" / status / f"{insight_id}.json"
+            if path.exists():
+                return AtomicInsight.load(path)
+        return None
 
     def _get_blessed_summary(self) -> str:
         """Get a summary of blessed axioms/insights for prompts."""

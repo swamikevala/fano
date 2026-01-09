@@ -117,12 +117,16 @@ class ReviewResponse:
     """
     llm: str                              # "gemini" | "chatgpt" | "claude"
     mode: str                             # "standard" | "deep_think" | "pro" | "extended_thinking"
-    rating: str                           # "⚡" | "?" | "✗"
+    rating: str                           # "⚡" | "?" | "✗" | "ABANDON"
     mathematical_verification: str         # Verify or refute specific claims
     structural_analysis: str               # Is connection deep or superficial?
     naturalness_assessment: str            # Does it feel inevitable?
     reasoning: str                         # Overall justification (2-4 sentences)
     confidence: str                        # "high" | "medium" | "low"
+
+    # Modification proposal (any round)
+    proposed_modification: Optional[str] = None    # Proposed rewritten insight
+    modification_rationale: Optional[str] = None   # Why the modification is needed
 
     # Round 2+ fields (when reviewing others' responses)
     new_information: Optional[str] = None  # What did others point out?
@@ -144,6 +148,8 @@ class ReviewResponse:
             "naturalness_assessment": self.naturalness_assessment,
             "reasoning": self.reasoning,
             "confidence": self.confidence,
+            "proposed_modification": self.proposed_modification,
+            "modification_rationale": self.modification_rationale,
             "new_information": self.new_information,
             "changed_mind": self.changed_mind,
             "previous_rating": self.previous_rating,
@@ -163,6 +169,8 @@ class ReviewResponse:
             naturalness_assessment=data["naturalness_assessment"],
             reasoning=data["reasoning"],
             confidence=data["confidence"],
+            proposed_modification=data.get("proposed_modification"),
+            modification_rationale=data.get("modification_rationale"),
             new_information=data.get("new_information"),
             changed_mind=data.get("changed_mind"),
             previous_rating=data.get("previous_rating"),
@@ -268,7 +276,11 @@ class ReviewRound:
 @dataclass
 class RefinementRecord:
     """
-    Record of a refinement made to an insight during review.
+    Record of a refinement/modification made to an insight during review.
+
+    This can represent either:
+    1. Old-style refinement: Claude Opus rewrites based on critiques
+    2. New-style modification: An LLM proposes a fix during review
     """
     from_version: int                      # Original version number
     to_version: int                        # New version number
@@ -280,9 +292,12 @@ class RefinementRecord:
     refinement_confidence: str             # "high" | "medium" | "low"
     triggered_by_ratings: dict[str, str]   # Ratings that prompted this
     timestamp: datetime
+    # New fields for modification workflow
+    proposer: Optional[str] = None         # Which LLM proposed this ("gemini", "claude", "chatgpt")
+    round_proposed: Optional[int] = None   # Which round (1, 2, 3)
 
     def to_dict(self) -> dict:
-        return {
+        result = {
             "from_version": self.from_version,
             "to_version": self.to_version,
             "original_insight": self.original_insight,
@@ -294,6 +309,11 @@ class RefinementRecord:
             "triggered_by_ratings": self.triggered_by_ratings,
             "timestamp": self.timestamp.isoformat(),
         }
+        if self.proposer:
+            result["proposer"] = self.proposer
+        if self.round_proposed:
+            result["round_proposed"] = self.round_proposed
+        return result
 
     @classmethod
     def from_dict(cls, data: dict) -> "RefinementRecord":
@@ -308,6 +328,8 @@ class RefinementRecord:
             refinement_confidence=data.get("refinement_confidence", "medium"),
             triggered_by_ratings=data.get("triggered_by_ratings", {}),
             timestamp=datetime.fromisoformat(data["timestamp"]),
+            proposer=data.get("proposer"),
+            round_proposed=data.get("round_proposed"),
         )
 
 
@@ -329,11 +351,18 @@ class ChunkReview:
     review_duration_seconds: float = 0.0   # How long the review took
     reviewed_at: Optional[datetime] = None
 
+    # Final insight text (if modified during deliberation, this is the modified version)
+    final_insight_text: Optional[str] = None
+
     # DeepSeek mathematical verification (between Round 1 and Round 2)
     math_verification: Optional[VerificationResult] = None
     math_verification_skipped: bool = False
     math_verification_skip_reason: str = ""
     rejection_reason: Optional[str] = None  # If auto-rejected by DeepSeek
+
+    # Priority-based pausing
+    is_paused: bool = False                # True if review was paused for higher priority item
+    paused_for_id: Optional[str] = None    # ID of the higher priority item we switched to
 
     def to_dict(self) -> dict:
         return {
@@ -349,10 +378,13 @@ class ChunkReview:
             "total_tokens_used": self.total_tokens_used,
             "review_duration_seconds": self.review_duration_seconds,
             "reviewed_at": self.reviewed_at.isoformat() if self.reviewed_at else None,
+            "final_insight_text": self.final_insight_text,
             "math_verification": self.math_verification.to_dict() if self.math_verification else None,
             "math_verification_skipped": self.math_verification_skipped,
             "math_verification_skip_reason": self.math_verification_skip_reason,
             "rejection_reason": self.rejection_reason,
+            "is_paused": self.is_paused,
+            "paused_for_id": self.paused_for_id,
         }
 
     @classmethod
@@ -374,10 +406,13 @@ class ChunkReview:
             total_tokens_used=data.get("total_tokens_used", 0),
             review_duration_seconds=data.get("review_duration_seconds", 0.0),
             reviewed_at=datetime.fromisoformat(data["reviewed_at"]) if data.get("reviewed_at") else None,
+            final_insight_text=data.get("final_insight_text"),
             math_verification=math_verification,
             math_verification_skipped=data.get("math_verification_skipped", False),
             math_verification_skip_reason=data.get("math_verification_skip_reason", ""),
             rejection_reason=data.get("rejection_reason"),
+            is_paused=data.get("is_paused", False),
+            paused_for_id=data.get("paused_for_id"),
         )
 
     def save(self, base_dir: Path):

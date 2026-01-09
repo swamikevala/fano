@@ -282,43 +282,140 @@ WHICH_IS_BETTER: [A/B/equal] (if duplicate, which wording is clearer/more precis
         return False, f"LLM check failed: {e}"
 
 
+async def batch_check_duplicates_with_llm(
+    new_insight: str,
+    existing_insights: list[dict],
+    claude_reviewer,
+    max_per_batch: int = 15,
+) -> tuple[bool, Optional[str], str]:
+    """
+    Efficiently check a new insight against multiple existing insights in one LLM call.
+
+    Args:
+        new_insight: The new insight text to check
+        existing_insights: List of dicts with 'id' and 'text' keys
+        claude_reviewer: ClaudeReviewer instance
+        max_per_batch: Maximum insights to compare in one call
+
+    Returns:
+        Tuple of (is_duplicate, duplicate_of_id or None, explanation)
+    """
+    if not existing_insights:
+        return False, None, "No existing insights to compare"
+
+    # Take most recent insights first (more likely to be similar)
+    insights_to_check = existing_insights[:max_per_batch]
+
+    # Build the comparison prompt
+    existing_list = "\n".join([
+        f"[{i+1}] {ins['text'][:200]}{'...' if len(ins['text']) > 200 else ''}"
+        for i, ins in enumerate(insights_to_check)
+    ])
+
+    prompt = f"""You are checking if a NEW insight is a semantic duplicate of any EXISTING insight.
+
+NEW INSIGHT:
+{new_insight}
+
+EXISTING INSIGHTS:
+{existing_list}
+
+A duplicate means the NEW insight expresses the SAME core mathematical claim as an existing one, even if:
+- Different words are used
+- One adds minor elaboration to the same idea
+- The wording is rearranged
+
+If the NEW insight makes a DISTINCT claim (even if related), it is NOT a duplicate.
+
+Respond with EXACTLY:
+IS_DUPLICATE: [yes/no]
+DUPLICATE_OF: [number 1-{len(insights_to_check)} or 'none']
+REASON: [one sentence explanation]"""
+
+    try:
+        response = await claude_reviewer.send_message(prompt, extended_thinking=False)
+
+        is_duplicate = False
+        duplicate_of_num = None
+        reason = ""
+
+        for line in response.split("\n"):
+            line = line.strip()
+            if line.startswith("IS_DUPLICATE:"):
+                value = line.replace("IS_DUPLICATE:", "").strip().lower()
+                is_duplicate = value in ("yes", "true", "y")
+            elif line.startswith("DUPLICATE_OF:"):
+                value = line.replace("DUPLICATE_OF:", "").strip().lower()
+                if value != "none":
+                    try:
+                        duplicate_of_num = int(re.search(r'\d+', value).group()) - 1
+                    except (ValueError, AttributeError):
+                        pass
+            elif line.startswith("REASON:"):
+                reason = line.replace("REASON:", "").strip()
+
+        if is_duplicate and duplicate_of_num is not None and 0 <= duplicate_of_num < len(insights_to_check):
+            duplicate_id = insights_to_check[duplicate_of_num]["id"]
+            return True, duplicate_id, reason
+        elif is_duplicate:
+            # Duplicate detected but couldn't identify which one
+            return True, None, reason
+
+        return False, None, reason
+
+    except Exception as e:
+        logger.warning(f"Batch LLM duplicate check failed: {e}")
+        return False, None, f"LLM check failed: {e}"
+
+
 class DeduplicationChecker:
     """
     Checks new insights against existing ones for duplicates.
+
+    Uses a two-stage approach:
+    1. Quick pre-filter with keyword/concept similarity (low threshold to catch more)
+    2. LLM batch comparison for semantic duplicate detection
     """
 
     def __init__(
         self,
         claude_reviewer=None,
-        keyword_threshold: float = 0.6,
-        concept_threshold: float = 0.7,
+        keyword_threshold: float = 0.25,  # Lowered to let more through to LLM
+        concept_threshold: float = 0.30,  # Lowered to let more through to LLM
         use_llm_confirmation: bool = True,
+        use_batch_llm: bool = True,  # Use efficient batch checking
     ):
         """
         Initialize the deduplication checker.
 
         Args:
             claude_reviewer: ClaudeReviewer for LLM confirmation (optional)
-            keyword_threshold: Threshold for keyword similarity flagging
-            concept_threshold: Threshold for concept overlap flagging
+            keyword_threshold: Threshold for keyword similarity flagging (lowered)
+            concept_threshold: Threshold for concept overlap flagging (lowered)
             use_llm_confirmation: Whether to confirm with LLM
+            use_batch_llm: Use batch LLM check against all known insights
         """
         self.claude = claude_reviewer
         self.keyword_threshold = keyword_threshold
         self.concept_threshold = concept_threshold
         self.use_llm = use_llm_confirmation and claude_reviewer is not None
+        self.use_batch_llm = use_batch_llm
 
         # Cache of known insights (id -> text)
         self._known_insights: dict[str, str] = {}
+        # Ordered list for batch checking
+        self._known_insights_list: list[dict] = []
 
         logger.info(
             f"[dedup] Initialized (keyword_thresh={keyword_threshold}, "
-            f"concept_thresh={concept_threshold}, llm={self.use_llm})"
+            f"concept_thresh={concept_threshold}, llm={self.use_llm}, batch={use_batch_llm})"
         )
 
     def add_known_insight(self, insight_id: str, text: str):
         """Add an insight to the known set for future comparisons."""
-        self._known_insights[insight_id] = text
+        if insight_id not in self._known_insights:
+            self._known_insights[insight_id] = text
+            self._known_insights_list.append({"id": insight_id, "text": text})
 
     def load_known_insights(self, insights: list[dict]):
         """
@@ -329,7 +426,7 @@ class DeduplicationChecker:
         """
         for insight in insights:
             self.add_known_insight(insight["id"], insight["text"])
-        logger.info(f"[dedup] Loaded {len(insights)} known insights")
+        logger.info(f"[dedup] Loaded {len(self._known_insights)} known insights")
 
     async def find_duplicates(
         self,
@@ -393,6 +490,8 @@ class DeduplicationChecker:
         """
         Check if a new insight is a duplicate of any known insight.
 
+        Uses batch LLM checking for efficiency when enabled.
+
         Args:
             new_text: The new insight text
             new_id: ID of the new insight
@@ -400,6 +499,23 @@ class DeduplicationChecker:
         Returns:
             Tuple of (is_duplicate, duplicate_of_id or None)
         """
+        # If batch LLM mode is enabled and we have Claude, use efficient batch check
+        if self.use_batch_llm and self.claude and self._known_insights_list:
+            logger.info(f"[dedup] Batch checking {new_id} against {len(self._known_insights_list)} known insights")
+            is_dup, dup_id, reason = await batch_check_duplicates_with_llm(
+                new_text,
+                self._known_insights_list,
+                self.claude,
+                max_per_batch=20,  # Check up to 20 at once
+            )
+            if is_dup:
+                logger.info(f"[dedup] DUPLICATE FOUND: {new_id} duplicates {dup_id} - {reason}")
+                return True, dup_id
+            else:
+                logger.info(f"[dedup] No duplicate found for {new_id}")
+                return False, None
+
+        # Fallback to original method (pre-filter + individual LLM checks)
         duplicates = await self.find_duplicates(new_text, new_id)
 
         if duplicates:
@@ -412,6 +528,7 @@ class DeduplicationChecker:
     def clear(self):
         """Clear all known insights."""
         self._known_insights.clear()
+        self._known_insights_list.clear()
 
 
 def get_dedup_checker(
@@ -433,7 +550,8 @@ def get_dedup_checker(
 
     return DeduplicationChecker(
         claude_reviewer=claude_reviewer,
-        keyword_threshold=dedup_config.get("keyword_threshold", 0.6),
-        concept_threshold=dedup_config.get("concept_threshold", 0.7),
+        keyword_threshold=dedup_config.get("keyword_threshold", 0.25),  # Lower default
+        concept_threshold=dedup_config.get("concept_threshold", 0.30),  # Lower default
         use_llm_confirmation=dedup_config.get("use_llm_confirmation", True),
+        use_batch_llm=dedup_config.get("use_batch_llm", True),  # Enable by default
     )

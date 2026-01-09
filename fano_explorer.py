@@ -6,10 +6,12 @@ Usage:
     python fano_explorer.py auth           # Authenticate with ChatGPT/Gemini
     python fano_explorer.py start          # Start exploration loop
     python fano_explorer.py backlog        # Process unextracted threads (atomic chunking + review)
-    python fano_explorer.py review         # Open review interface
-    python fano_explorer.py status         # Show current status
-    python fano_explorer.py retry-disputed # Re-run Round 3 for disputed insights with Deep Think
-    python fano_explorer.py stop           # Graceful shutdown (or use Ctrl+C)
+    python fano_explorer.py review            # Open review interface
+    python fano_explorer.py status            # Show current status
+    python fano_explorer.py retry-disputed    # Run Round 4 for disputed insights
+    python fano_explorer.py retry-interesting # Run Round 4 for interesting insights (stuck with '?')
+    python fano_explorer.py cleanup-dupes     # Find and archive duplicate blessed insights
+    python fano_explorer.py stop              # Graceful shutdown (or use Ctrl+C)
 """
 
 import sys
@@ -214,10 +216,10 @@ def cmd_status():
 
 
 def cmd_retry_disputed():
-    """Re-run Round 3 for disputed insights with Deep Think enabled."""
+    """Run Round 4 (Modification Focus) for disputed insights."""
     from pathlib import Path
     from review_panel.models import ChunkReview
-    from review_panel.round3 import run_round3
+    from review_panel.round4 import run_round4
     from review_panel.claude_api import ClaudeReviewer
     from browser.gemini import GeminiInterface
     from browser.chatgpt import ChatGPTInterface
@@ -236,7 +238,8 @@ def cmd_retry_disputed():
         return
 
     console.print(f"\n[bold]Found {len(disputed_reviews)} disputed reviews to retry[/bold]")
-    console.print("This will re-run Round 3 with Deep Think mode for all LLMs.\n")
+    console.print("This will run Round 4 (Modification Focus) with full deliberation history.\n")
+    console.print("Round 4 shows all 3 rounds of discussion and asks LLMs to propose fixes.\n")
 
     async def retry_all():
         # Initialize LLM interfaces
@@ -320,30 +323,12 @@ def cmd_retry_disputed():
                 console.print(f"\n[{i}/{len(disputed_reviews)}] [bold]Retrying: {chunk_id}[/bold]")
                 console.print(f"  Insight: {insight_text[:80]}...")
 
-                # Get Round 2 from the review (take the last one if duplicates exist)
-                round2 = None
-                for r in review.rounds:
-                    if r.round_number == 2:
-                        round2 = r  # Keep overwriting to get the last Round 2
+                # Run Round 4: Modification Focus with full deliberation history
+                console.print(f"  [cyan]Running Round 4 (Modification Focus)...[/cyan]")
 
-                if not round2:
-                    # If no Round 2, try to use Round 1
-                    for r in review.rounds:
-                        if r.round_number == 1:
-                            round2 = r
-                            console.print(f"  [yellow]No Round 2 found, using Round 1[/yellow]")
-                            break
-
-                if not round2:
-                    console.print(f"  [yellow]No suitable round found, skipping[/yellow]")
-                    continue
-
-                # Re-run Round 3 with Deep Think
-                console.print(f"  [cyan]Running Round 3 with Deep Think...[/cyan]")
-
-                new_round3, mind_changes, is_disputed = await run_round3(
+                round4, modified_insight, refinement_record, is_intractable = await run_round4(
                     chunk_insight=insight_text,
-                    round2=round2,
+                    review_rounds=review.rounds,
                     gemini_browser=gemini,
                     chatgpt_browser=chatgpt,
                     claude_reviewer=claude,
@@ -351,37 +336,91 @@ def cmd_retry_disputed():
                 )
 
                 # Update the review
-                # Remove old Round 3 if present
-                review.rounds = [r for r in review.rounds if r.round_number != 3]
-                review.rounds.append(new_round3)
-                review.mind_changes.extend(mind_changes)
+                # Remove old Round 4 if present (from previous retry)
+                review.rounds = [r for r in review.rounds if r.round_number != 4]
+                review.rounds.append(round4)
 
-                # Determine final outcome
-                final_ratings = list(new_round3.get_ratings().values())
+                # Handle intractable case
+                if is_intractable:
+                    console.print(f"  [red]✗ Insight marked as INTRACTABLE - no valid fix proposed[/red]")
+                    review.is_disputed = True
+                    review.final_rating = "?"
+                    # Save but keep in disputed
+                    review.save(data_dir)
+                    continue
+
+                # Handle modification if accepted
+                if modified_insight and refinement_record:
+                    # Update version numbers
+                    current_version = review.final_version or 1
+                    refinement_record.from_version = current_version
+                    refinement_record.to_version = current_version + 1
+                    review.refinements.append(refinement_record)
+                    review.was_refined = True
+                    review.final_version = refinement_record.to_version
+                    review.final_insight_text = modified_insight
+                    console.print(f"  [cyan]Insight was MODIFIED in Round 4[/cyan]")
+                    console.print(f"  New insight: {modified_insight[:100]}...")
+
+                # Determine final outcome based on Round 4 votes
+                final_ratings = list(round4.get_ratings().values())
                 unique_ratings = set(final_ratings)
 
-                if len(unique_ratings) == 1:
+                if round4.outcome == "resolved":
                     review.final_rating = final_ratings[0]
                     review.is_unanimous = True
                     review.is_disputed = False
                     console.print(f"  [green]✓ Resolved to unanimous: {review.final_rating}[/green]")
-                else:
-                    # Majority wins
-                    review.final_rating = new_round3.get_majority_rating()
+                elif round4.outcome == "majority":
+                    # Majority is not enough - require unanimous for blessing/rejection
+                    review.final_rating = round4.get_majority_rating()
                     review.is_unanimous = False
-                    review.is_disputed = is_disputed
-                    if is_disputed:
-                        console.print(f"  [yellow]Still disputed: {final_ratings}[/yellow]")
-                    else:
-                        console.print(f"  [green]Majority decision: {review.final_rating}[/green]")
+                    review.is_disputed = True  # Changed: majority = still disputed
+                    console.print(f"  [yellow]Majority decision (still disputed): {review.final_rating} - needs human review[/yellow]")
+                else:
+                    # Still disputed even after Round 4
+                    review.final_rating = round4.get_majority_rating() or "?"
+                    review.is_unanimous = False
+                    review.is_disputed = True
+                    console.print(f"  [yellow]Still disputed after Round 4: {final_ratings}[/yellow]")
 
-                # Save review (will move to completed if no longer disputed)
+                # Save review
                 review.save(data_dir)
 
-                # If no longer disputed, remove from disputed folder
-                if not review.is_disputed and review_path.exists():
-                    review_path.unlink()
+                # Only move out of disputed if UNANIMOUS
+                if not review.is_disputed and review.is_unanimous:
+                    # Update the insight file with final rating and modified text
+                    from chunking import AtomicInsight
+                    chunk_json_path = chunk_path.with_suffix(".json")
+                    if chunk_json_path.exists():
+                        insight = AtomicInsight.load(chunk_json_path)
+                        # Apply modified text if available
+                        if review.final_insight_text:
+                            insight.insight = review.final_insight_text
+                            console.print(f"  [cyan]Applied modified insight text[/cyan]")
+                        insight.apply_rating(review.final_rating, notes="Updated via retry-disputed Round 4 (unanimous)")
+                        insight.save(data_dir / "chunks")
+                        # Remove old files from current location
+                        chunk_json_path.unlink()
+                        if chunk_path.exists():
+                            chunk_path.unlink()
+
+                    if review_path.exists():
+                        review_path.unlink()
                     console.print(f"  [green]Moved to completed[/green]")
+                else:
+                    # Still disputed - apply modified text but keep in disputed
+                    if review.final_insight_text:
+                        from chunking import AtomicInsight
+                        chunk_json_path = chunk_path.with_suffix(".json")
+                        if chunk_json_path.exists():
+                            insight = AtomicInsight.load(chunk_json_path)
+                            insight.insight = review.final_insight_text
+                            # Save in place (don't change status)
+                            with open(chunk_json_path, 'w', encoding='utf-8') as f:
+                                import json
+                                json.dump(insight.to_dict(), f, indent=2, ensure_ascii=False)
+                            console.print(f"  [cyan]Applied modified text, staying in disputed for human review[/cyan]")
 
             except Exception as e:
                 console.print(f"  [red]Error: {e}[/red]")
@@ -403,6 +442,251 @@ def cmd_retry_disputed():
         console.print("\n[yellow]Interrupted[/yellow]")
 
 
+def cmd_retry_interesting():
+    """Run Round 4 for insights stuck in 'interesting' status."""
+    from pathlib import Path
+    from review_panel.models import ChunkReview
+    from review_panel.round4 import run_round4
+    from review_panel.claude_api import ClaudeReviewer
+    from browser.gemini import GeminiInterface
+    from browser.chatgpt import ChatGPTInterface
+
+    data_dir = Path(__file__).parent / "data"
+    interesting_dir = data_dir / "chunks" / "insights" / "interesting"
+    completed_dir = data_dir / "reviews" / "completed"
+
+    if not interesting_dir.exists():
+        console.print("[yellow]No interesting insights found.[/yellow]")
+        return
+
+    # Find interesting insights that have completed reviews
+    interesting_insights = []
+    for chunk_file in interesting_dir.glob("*.json"):
+        chunk_id = chunk_file.stem
+        review_path = completed_dir / f"{chunk_id}.json"
+        if review_path.exists():
+            interesting_insights.append((chunk_file, review_path))
+
+    if not interesting_insights:
+        console.print("[yellow]No interesting insights with reviews found.[/yellow]")
+        return
+
+    console.print(f"\n[bold]Found {len(interesting_insights)} interesting insights to retry[/bold]")
+    console.print("These insights got '?' rating but may benefit from another Round 4 attempt.\n")
+
+    async def retry_all():
+        # Initialize LLM interfaces
+        console.print("[bold]Connecting to LLMs...[/bold]")
+
+        gemini = GeminiInterface()
+        chatgpt = ChatGPTInterface()
+        claude = ClaudeReviewer()
+
+        try:
+            await gemini.connect()
+            logged_in = await gemini._check_login_status()
+            if not logged_in:
+                console.print("  [yellow]![/yellow] Gemini not logged in - run 'python fano_explorer.py auth' first")
+                gemini = None
+            else:
+                console.print("  [green]✓[/green] Gemini connected")
+        except Exception as e:
+            console.print(f"  [red]✗[/red] Gemini failed: {e}")
+            gemini = None
+
+        try:
+            await chatgpt.connect()
+            # Check if actually logged in by looking for login prompts
+            page_text = await chatgpt.page.inner_text("body")
+            if "log in" in page_text.lower() or "sign up" in page_text.lower():
+                console.print("  [yellow]![/yellow] ChatGPT not logged in - run 'python fano_explorer.py auth' first")
+                chatgpt = None
+            else:
+                console.print("  [green]✓[/green] ChatGPT connected")
+        except Exception as e:
+            console.print(f"  [red]✗[/red] ChatGPT failed: {e}")
+            chatgpt = None
+
+        if claude.api_key:
+            console.print("  [green]✓[/green] Claude API ready")
+        else:
+            console.print("  [yellow]![/yellow] Claude API key not found")
+            claude = None
+
+        if not gemini and not chatgpt and not claude:
+            console.print("[red]No LLMs available. Cannot retry.[/red]")
+            return
+
+        console.print("")
+
+        for i, (chunk_path, review_path) in enumerate(interesting_insights, 1):
+            try:
+                review = ChunkReview.load(review_path)
+                chunk_id = review.chunk_id
+
+                # Read insight text from JSON
+                import json
+                with open(chunk_path, encoding="utf-8") as f:
+                    chunk_data = json.load(f)
+                insight_text = chunk_data.get("insight", "")
+
+                if not insight_text:
+                    # Try markdown file
+                    md_path = chunk_path.with_suffix(".md")
+                    if md_path.exists():
+                        content = md_path.read_text(encoding="utf-8")
+                        for line in content.split("\n"):
+                            if line.startswith("> "):
+                                insight_text = line[2:].strip()
+                                break
+
+                if not insight_text:
+                    console.print(f"[{i}/{len(interesting_insights)}] [yellow]Could not extract insight text, skipping[/yellow]")
+                    continue
+
+                console.print(f"\n[{i}/{len(interesting_insights)}] [bold]Retrying: {chunk_id}[/bold]")
+                console.print(f"  Insight: {insight_text[:80]}...")
+
+                # Run Round 4 with existing review history
+                console.print(f"  [cyan]Running Round 4 (Modification Focus)...[/cyan]")
+
+                round4, modified_insight, refinement_record, is_intractable = await run_round4(
+                    chunk_insight=insight_text,
+                    review_rounds=review.rounds,
+                    gemini_browser=gemini,
+                    chatgpt_browser=chatgpt,
+                    claude_reviewer=claude if claude.is_available() else None,
+                    config={},
+                )
+
+                # Add Round 4 to review
+                review.add_round(round4)
+
+                if is_intractable:
+                    console.print(f"  [red]✗ Insight marked as INTRACTABLE[/red]")
+                    review.is_disputed = True
+                    # Move back to disputed
+                    review.save(data_dir)
+                    # Remove from completed
+                    if (completed_dir / f"{chunk_id}.json").exists():
+                        (completed_dir / f"{chunk_id}.json").unlink()
+                    continue
+
+                # Handle modification if accepted
+                if modified_insight and refinement_record:
+                    current_version = review.final_version or 1
+                    refinement_record.from_version = current_version
+                    refinement_record.to_version = current_version + 1
+                    review.refinements.append(refinement_record)
+                    review.final_version = current_version + 1
+                    review.final_insight_text = modified_insight  # Store the modified text!
+                    console.print(f"  [cyan]Modified insight (v{current_version} -> v{current_version + 1})[/cyan]")
+
+                # Determine outcome
+                final_ratings = [r.rating for r in round4.responses.values()]
+                if round4.outcome == "resolved":
+                    review.final_rating = final_ratings[0]
+                    review.is_unanimous = True
+                    review.is_disputed = False
+                    console.print(f"  [green]✓ Resolved to unanimous: {review.final_rating}[/green]")
+                elif round4.outcome == "majority":
+                    # Majority is not enough for blessing - require unanimous for ⚡
+                    # Mark as disputed so human can review
+                    review.final_rating = round4.get_majority_rating()
+                    review.is_unanimous = False
+                    review.is_disputed = True  # Changed: majority = disputed, needs human review
+                    console.print(f"  [yellow]Majority decision (disputed): {review.final_rating} - needs human review[/yellow]")
+                else:
+                    review.final_rating = round4.get_majority_rating() or "?"
+                    review.is_unanimous = False
+                    review.is_disputed = True
+                    console.print(f"  [yellow]Still no consensus: {final_ratings}[/yellow]")
+
+                # Save review
+                review.save(data_dir)
+
+                # Only bless if UNANIMOUS ⚡ - majority goes to disputed for human review
+                if review.final_rating == "⚡" and review.is_unanimous:
+                    # Move chunk to blessed
+                    from chunking import AtomicInsight
+                    insight = AtomicInsight.load(chunk_path)
+                    # Apply modified text if available
+                    if review.final_insight_text:
+                        insight.insight = review.final_insight_text
+                    insight.apply_rating("⚡", notes="Upgraded via retry-interesting Round 4 (unanimous)")
+                    insight.save(data_dir / "chunks")
+                    # Remove from interesting
+                    chunk_path.unlink()
+                    if chunk_path.with_suffix(".md").exists():
+                        chunk_path.with_suffix(".md").unlink()
+                    console.print(f"  [green]✓ Moved to BLESSED[/green]")
+                elif review.final_rating == "✗" and review.is_unanimous:
+                    # Only reject if UNANIMOUS ✗
+                    from chunking import AtomicInsight
+                    insight = AtomicInsight.load(chunk_path)
+                    # Apply modified text if available
+                    if review.final_insight_text:
+                        insight.insight = review.final_insight_text
+                    insight.apply_rating("✗", notes="Rejected via retry-interesting Round 4 (unanimous)")
+                    insight.save(data_dir / "chunks")
+                    chunk_path.unlink()
+                    if chunk_path.with_suffix(".md").exists():
+                        chunk_path.with_suffix(".md").unlink()
+                    console.print(f"  [red]Moved to rejected[/red]")
+                else:
+                    # Disputed or non-unanimous - apply modified text but stay in interesting
+                    if review.final_insight_text:
+                        from chunking import AtomicInsight
+                        insight = AtomicInsight.load(chunk_path)
+                        insight.insight = review.final_insight_text
+                        insight.save(data_dir / "chunks")
+                        console.print(f"  [cyan]Applied modified text, staying in interesting for human review[/cyan]")
+                    else:
+                        console.print(f"  [yellow]Staying in interesting for human review[/yellow]")
+
+            except Exception as e:
+                console.print(f"  [red]Error: {e}[/red]")
+                import traceback
+                traceback.print_exc()
+
+        # Cleanup
+        console.print("\n[bold]Cleaning up...[/bold]")
+        if gemini:
+            await gemini.disconnect()
+        if chatgpt:
+            await chatgpt.disconnect()
+
+        console.print("\n[green]✓ Done![/green]")
+
+    try:
+        asyncio.run(retry_all())
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Interrupted[/yellow]")
+
+
+def cmd_cleanup_dupes():
+    """Find and archive duplicate blessed insights."""
+    import subprocess
+
+    console.print("\n[bold]Cleaning up duplicate blessed insights...[/bold]")
+
+    # Check for --apply flag
+    apply_flag = "--apply" in sys.argv
+
+    cmd = [sys.executable, "cleanup_duplicates.py"]
+    if apply_flag:
+        cmd.append("--apply")
+        console.print("Running in APPLY mode - duplicates will be moved to archive.\n")
+    else:
+        console.print("Running in DRY RUN mode - no changes will be made.")
+        console.print("Use 'cleanup-dupes --apply' to actually archive duplicates.\n")
+
+    try:
+        subprocess.run(cmd, cwd=Path(__file__).parent)
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Interrupted[/yellow]")
+
+
 def cmd_help():
     """Show help."""
     console.print(__doc__)
@@ -415,6 +699,8 @@ COMMANDS = {
     "review": cmd_review,
     "status": cmd_status,
     "retry-disputed": cmd_retry_disputed,
+    "retry-interesting": cmd_retry_interesting,
+    "cleanup-dupes": cmd_cleanup_dupes,
     "help": cmd_help,
     "--help": cmd_help,
     "-h": cmd_help,

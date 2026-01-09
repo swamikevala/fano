@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fano Explorer - {{ page_title }}</title>
+
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+    <!-- MathJax for LaTeX rendering -->
+    <script>
+        MathJax = {
+            tex: {
+                inlineMath: [['$', '$'], ['\\(', '\\)']],
+                displayMath: [['$$', '$$'], ['\\[', '\\]']],
+                processEscapes: true,
+                processEnvironments: true
+            },
+            options: {
+                skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code'],
+                ignoreHtmlClass: 'no-mathjax'
+            }
+        };
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js" async></script>
+
+    <style>
+        :root {
+            --bg-primary: #0f172a;
+            --bg-secondary: #1e293b;
+            --bg-tertiary: #334155;
+            --bg-card: #1e293b;
+            --bg-hover: #334155;
+            --border: #475569;
+            --border-light: #334155;
+            --text-primary: #f1f5f9;
+            --text-secondary: #94a3b8;
+            --text-dim: #64748b;
+            --accent: #38bdf8;
+            --accent-hover: #7dd3fc;
+            --blessed: #fbbf24;
+            --blessed-bg: rgba(251, 191, 36, 0.1);
+            --interesting: #60a5fa;
+            --interesting-bg: rgba(96, 165, 250, 0.1);
+            --rejected: #f87171;
+            --rejected-bg: rgba(248, 113, 113, 0.1);
+            --success: #4ade80;
+            --success-bg: rgba(74, 222, 128, 0.1);
+            --warning: #fbbf24;
+            --warning-bg: rgba(251, 191, 36, 0.1);
+            --disputed: #fb923c;
+            --disputed-bg: rgba(251, 146, 60, 0.1);
+            --code-bg: #0f172a;
+            --gradient-start: #0ea5e9;
+            --gradient-end: #8b5cf6;
+            --seed-color: #a78bfa;
+            --seed-bg: rgba(167, 139, 250, 0.1);
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            font-size: 15px;
+            line-height: 1.6;
+        }
+
+        /* Navigation */
+        .nav {
+            background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border-light);
+            padding: 0 2rem;
+            display: flex;
+            align-items: center;
+            gap: 2rem;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            backdrop-filter: blur(12px);
+            height: 64px;
+        }
+
+        .nav-brand {
+            font-size: 1.1rem;
+            font-weight: 700;
+            color: var(--text-primary);
+            text-decoration: none;
+            letter-spacing: 0.1em;
+            background: linear-gradient(135deg, var(--gradient-start), var(--gradient-end));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 0.25rem;
+            height: 100%;
+        }
+
+        .nav-link {
+            padding: 0 1rem;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            text-decoration: none;
+            color: var(--text-secondary);
+            font-weight: 500;
+            font-size: 0.875rem;
+            transition: all 0.2s;
+            border-bottom: 2px solid transparent;
+            position: relative;
+        }
+
+        .nav-link:hover {
+            color: var(--text-primary);
+            background: var(--bg-hover);
+        }
+
+        .nav-link .count {
+            background: var(--bg-tertiary);
+            padding: 0.125rem 0.5rem;
+            border-radius: 10px;
+            font-size: 0.75rem;
+            margin-left: 0.5rem;
+            font-weight: 600;
+        }
+
+        .nav-link.blessed { color: var(--blessed); }
+        .nav-link.interesting { color: var(--interesting); }
+        .nav-link.rejected { color: var(--rejected); }
+        .nav-link.disputed { color: var(--disputed); }
+
+        .nav-stats {
+            margin-left: auto;
+            display: flex;
+            gap: 1.5rem;
+        }
+
+        .stat-item {
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+        }
+
+        .stat-item span { font-weight: 600; color: var(--text-primary); }
+
+        /* Main Content */
+        .main {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        .page-header {
+            margin-bottom: 2rem;
+        }
+
+        .page-title {
+            font-size: 1.75rem;
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .breadcrumb {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+        }
+
+        .breadcrumb a {
+            color: var(--accent);
+            text-decoration: none;
+        }
+
+        .breadcrumb a:hover {
+            text-decoration: underline;
+        }
+
+        /* Seed Card */
+        .seed-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-light);
+            border-radius: 12px;
+            padding: 2rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .seed-header {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            margin-bottom: 1.5rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid var(--border-light);
+        }
+
+        .seed-id {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.875rem;
+            color: var(--seed-color);
+            background: var(--seed-bg);
+            padding: 0.25rem 0.75rem;
+            border-radius: 6px;
+            border: 1px solid var(--seed-color);
+        }
+
+        .seed-type {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.875rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .seed-type.axiom { color: var(--blessed); }
+        .seed-type.conjecture { color: var(--interesting); }
+        .seed-type.question { color: var(--disputed); }
+
+        .seed-content {
+            margin-bottom: 1.5rem;
+        }
+
+        .seed-text {
+            font-size: 1.25rem;
+            line-height: 1.7;
+            color: var(--text-primary);
+            font-weight: 400;
+        }
+
+        /* Metadata Grid */
+        .meta-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-top: 1.5rem;
+            padding-top: 1.5rem;
+            border-top: 1px solid var(--border-light);
+        }
+
+        .meta-item {
+            background: var(--bg-tertiary);
+            padding: 1rem;
+            border-radius: 8px;
+        }
+
+        .meta-label {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--text-dim);
+            margin-bottom: 0.5rem;
+            font-weight: 600;
+        }
+
+        .meta-value {
+            font-size: 0.95rem;
+            color: var(--text-primary);
+        }
+
+        .priority-bar {
+            height: 6px;
+            background: var(--bg-primary);
+            border-radius: 3px;
+            overflow: hidden;
+            margin-top: 0.5rem;
+        }
+
+        .priority-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--gradient-start), var(--gradient-end));
+            border-radius: 3px;
+            transition: width 0.3s;
+        }
+
+        .confidence-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.25rem;
+            padding: 0.25rem 0.75rem;
+            border-radius: 4px;
+            font-size: 0.875rem;
+            font-weight: 500;
+        }
+
+        .confidence-badge.high {
+            background: var(--success-bg);
+            color: var(--success);
+        }
+
+        .confidence-badge.medium {
+            background: var(--warning-bg);
+            color: var(--warning);
+        }
+
+        .confidence-badge.low {
+            background: var(--rejected-bg);
+            color: var(--rejected);
+        }
+
+        /* Tags */
+        .tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+        }
+
+        .tag {
+            background: var(--bg-primary);
+            color: var(--text-secondary);
+            padding: 0.25rem 0.75rem;
+            border-radius: 16px;
+            font-size: 0.8rem;
+            font-weight: 500;
+        }
+
+        /* Notes */
+        .notes-section {
+            margin-top: 1.5rem;
+            padding-top: 1.5rem;
+            border-top: 1px solid var(--border-light);
+        }
+
+        .notes-label {
+            font-size: 0.875rem;
+            font-weight: 600;
+            color: var(--text-secondary);
+            margin-bottom: 0.75rem;
+        }
+
+        .notes-content {
+            background: var(--bg-tertiary);
+            padding: 1rem;
+            border-radius: 8px;
+            color: var(--text-primary);
+            font-style: italic;
+        }
+
+        /* Back link */
+        .back-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            color: var(--accent);
+            text-decoration: none;
+            font-size: 0.875rem;
+            margin-top: 1.5rem;
+            transition: color 0.2s;
+        }
+
+        .back-link:hover {
+            color: var(--accent-hover);
+        }
+    </style>
+</head>
+<body>
+    <nav class="nav">
+        <a href="/" class="nav-brand">FANO EXPLORER</a>
+        <div class="nav-links">
+            <a href="/" class="nav-link">
+                Pending
+                <span class="count">{{ stats.pending }}</span>
+            </a>
+            <a href="/reviewing" class="nav-link">
+                In Review
+                <span class="count">{{ stats.reviewing }}</span>
+            </a>
+            <a href="/disputed" class="nav-link disputed">
+                Disputed
+                <span class="count">{{ stats.disputed }}</span>
+            </a>
+            <a href="/blessed" class="nav-link blessed">
+                Blessed
+                <span class="count">{{ stats.blessed }}</span>
+            </a>
+            <a href="/interesting" class="nav-link interesting">
+                Interesting
+                <span class="count">{{ stats.interesting }}</span>
+            </a>
+            <a href="/rejected" class="nav-link rejected">
+                Rejected
+                <span class="count">{{ stats.rejected }}</span>
+            </a>
+        </div>
+    </nav>
+
+    <main class="main">
+        <div class="page-header">
+            <div class="breadcrumb">
+                <a href="/">Home</a>
+                <span>/</span>
+                <span>Seeds</span>
+                <span>/</span>
+                <span>{{ seed.id }}</span>
+            </div>
+            <h1 class="page-title">
+                {% if seed.type == 'axiom' %}
+                    <span style="color: var(--blessed);">AXIOM</span>
+                {% elif seed.type == 'conjecture' %}
+                    <span style="color: var(--interesting);">CONJECTURE</span>
+                {% else %}
+                    <span style="color: var(--disputed);">QUESTION</span>
+                {% endif %}
+            </h1>
+        </div>
+
+        <div class="seed-card">
+            <div class="seed-header">
+                <span class="seed-id">{{ seed.id }}</span>
+                <span class="seed-type {{ seed.type }}">
+                    {% if seed.type == 'axiom' %}
+                        Assumed True
+                    {% elif seed.type == 'conjecture' %}
+                        To Explore
+                    {% else %}
+                        To Answer
+                    {% endif %}
+                </span>
+            </div>
+
+            <div class="seed-content">
+                <p class="seed-text">{{ seed.text }}</p>
+            </div>
+
+            <div class="meta-grid">
+                <div class="meta-item">
+                    <div class="meta-label">Priority</div>
+                    <div class="meta-value">{{ seed.priority }} / 10</div>
+                    <div class="priority-bar">
+                        <div class="priority-fill" style="width: {{ seed.priority * 10 }}%"></div>
+                    </div>
+                </div>
+
+                {% if seed.type == 'conjecture' %}
+                <div class="meta-item">
+                    <div class="meta-label">Confidence</div>
+                    <div class="meta-value">
+                        <span class="confidence-badge {{ seed.confidence }}">
+                            {% if seed.confidence == 'high' %}High
+                            {% elif seed.confidence == 'medium' %}Medium
+                            {% else %}Low
+                            {% endif %}
+                        </span>
+                    </div>
+                </div>
+                {% endif %}
+
+                <div class="meta-item">
+                    <div class="meta-label">Source</div>
+                    <div class="meta-value">{{ seed.source }}</div>
+                </div>
+
+                {% if seed.tags %}
+                <div class="meta-item">
+                    <div class="meta-label">Tags</div>
+                    <div class="tags">
+                        {% for tag in seed.tags %}
+                        <span class="tag">{{ tag }}</span>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+
+            {% if seed.notes %}
+            <div class="notes-section">
+                <div class="notes-label">Notes</div>
+                <div class="notes-content">{{ seed.notes }}</div>
+            </div>
+            {% endif %}
+        </div>
+
+        <a href="javascript:history.back()" class="back-link">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M19 12H5M12 19l-7-7 7-7"/>
+            </svg>
+            Back to previous page
+        </a>
+    </main>
+</body>
+</html>

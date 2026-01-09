@@ -52,6 +52,7 @@ class AtomicInsight:
     is_disputed: bool = False        # True if review panel had split decision
     reviewed_at: Optional[datetime] = None
     review_notes: str = ""
+    priority: int = 5                # 1-10 (10 = highest priority, default 5)
 
     # Mathematical verification status (DeepSeek)
     math_verified: bool = False
@@ -75,6 +76,7 @@ class AtomicInsight:
             "is_disputed": self.is_disputed,
             "reviewed_at": self.reviewed_at.isoformat() if self.reviewed_at else None,
             "review_notes": self.review_notes,
+            "priority": self.priority,
             "math_verified": self.math_verified,
             "math_verification_result": self.math_verification_result,
         }
@@ -98,6 +100,7 @@ class AtomicInsight:
             is_disputed=data.get("is_disputed", False),
             reviewed_at=datetime.fromisoformat(data["reviewed_at"]) if data.get("reviewed_at") else None,
             review_notes=data.get("review_notes", ""),
+            priority=data.get("priority", 5),
             math_verified=data.get("math_verified", False),
             math_verification_result=data.get("math_verification_result"),
         )
@@ -144,6 +147,10 @@ class AtomicInsight:
         if rating in status_map:
             self.status = status_map[rating]
 
+    def set_priority(self, priority: int):
+        """Set the priority (1-10, clamped)."""
+        self.priority = max(1, min(10, priority))
+
     def is_foundation_solid(self, blessed_ids: set[str]) -> bool:
         """Check if all dependencies are blessed."""
         return all(dep_id in blessed_ids for dep_id in self.depends_on)
@@ -157,8 +164,19 @@ class AtomicInsight:
             InsightStatus.REJECTED: "rejected",
         }
 
-        insight_dir = base_dir / "insights" / status_dirs[self.status]
+        current_status_dir = status_dirs[self.status]
+        insight_dir = base_dir / "insights" / current_status_dir
         insight_dir.mkdir(parents=True, exist_ok=True)
+
+        # Clean up files from OTHER status directories (prevent duplicates)
+        for status, dir_name in status_dirs.items():
+            if dir_name != current_status_dir:
+                old_json = base_dir / "insights" / dir_name / f"{self.id}.json"
+                old_md = base_dir / "insights" / dir_name / f"{self.id}.md"
+                if old_json.exists():
+                    old_json.unlink()
+                if old_md.exists():
+                    old_md.unlink()
 
         # Save JSON
         json_path = insight_dir / f"{self.id}.json"
@@ -189,6 +207,7 @@ class AtomicInsight:
             "---",
             "",
             f"**Confidence:** {self.confidence}",
+            f"**Priority:** {self.priority}/10",
             f"**Tags:** {', '.join(self.tags)}",
             f"**Status:** {self.status.value}",
             f"**Extracted:** {self.extracted_at.strftime('%Y-%m-%d %H:%M')}",

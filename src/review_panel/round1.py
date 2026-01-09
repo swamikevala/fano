@@ -110,12 +110,24 @@ async def run_round1(
     ratings = [r.rating for r in responses.values()]
     unique_ratings = set(ratings)
 
-    if len(unique_ratings) == 1:
+    # Check for ABANDON votes (unanimous = early exit)
+    abandon_count = ratings.count("ABANDON")
+    if abandon_count == len(ratings) and abandon_count >= 2:
+        outcome = "abandoned"
+        logger.info(f"[round1] ABANDONED unanimously ({abandon_count} votes)")
+    elif len(unique_ratings) == 1:
         outcome = "unanimous"
         logger.info(f"[round1] Unanimous: {ratings[0]}")
     else:
         outcome = "split"
         logger.info(f"[round1] Split: {ratings}")
+
+    # Log any modifications proposed
+    modifications = [(name, r.proposed_modification) for name, r in responses.items()
+                     if r.proposed_modification]
+    if modifications:
+        for name, mod in modifications:
+            logger.info(f"[round1] {name} proposed modification: {mod[:100]}...")
 
     return ReviewRound(
         round_number=1,
@@ -123,6 +135,22 @@ async def run_round1(
         responses=responses,
         outcome=outcome,
         timestamp=datetime.now(),
+    )
+
+
+def _build_response(llm: str, mode: str, parsed: dict) -> ReviewResponse:
+    """Build a ReviewResponse from parsed data."""
+    return ReviewResponse(
+        llm=llm,
+        mode=mode,
+        rating=parsed["rating"],
+        mathematical_verification=parsed["mathematical_verification"],
+        structural_analysis=parsed["structural_analysis"],
+        naturalness_assessment=parsed["naturalness_assessment"],
+        reasoning=parsed["reasoning"],
+        confidence=parsed["confidence"],
+        proposed_modification=parsed.get("proposed_modification") or None,
+        modification_rationale=parsed.get("modification_rationale") or None,
     )
 
 
@@ -140,16 +168,7 @@ async def _review_with_gemini(gemini_browser, prompt: str) -> ReviewResponse:
         # Parse the response
         parsed = parse_round1_response(response_text)
 
-        return ReviewResponse(
-            llm="gemini",
-            mode="standard",
-            rating=parsed["rating"],
-            mathematical_verification=parsed["mathematical_verification"],
-            structural_analysis=parsed["structural_analysis"],
-            naturalness_assessment=parsed["naturalness_assessment"],
-            reasoning=parsed["reasoning"],
-            confidence=parsed["confidence"],
-        )
+        return _build_response("gemini", "standard", parsed)
 
     except Exception as e:
         logger.error(f"[round1] Gemini error: {e}")
@@ -170,16 +189,7 @@ async def _review_with_chatgpt(chatgpt_browser, prompt: str) -> ReviewResponse:
         # Parse the response
         parsed = parse_round1_response(response_text)
 
-        return ReviewResponse(
-            llm="chatgpt",
-            mode="thinking",  # Uses GPT-5.2 Thinking mode
-            rating=parsed["rating"],
-            mathematical_verification=parsed["mathematical_verification"],
-            structural_analysis=parsed["structural_analysis"],
-            naturalness_assessment=parsed["naturalness_assessment"],
-            reasoning=parsed["reasoning"],
-            confidence=parsed["confidence"],
-        )
+        return _build_response("chatgpt", "thinking", parsed)
 
     except Exception as e:
         logger.error(f"[round1] ChatGPT error: {e}")
@@ -200,16 +210,7 @@ async def _review_with_claude(claude_reviewer: ClaudeReviewer, prompt: str) -> R
         # Parse the response
         parsed = parse_round1_response(response_text)
 
-        return ReviewResponse(
-            llm="claude",
-            mode="standard",
-            rating=parsed["rating"],
-            mathematical_verification=parsed["mathematical_verification"],
-            structural_analysis=parsed["structural_analysis"],
-            naturalness_assessment=parsed["naturalness_assessment"],
-            reasoning=parsed["reasoning"],
-            confidence=parsed["confidence"],
-        )
+        return _build_response("claude", "standard", parsed)
 
     except Exception as e:
         logger.error(f"[round1] Claude error: {e}")

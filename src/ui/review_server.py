@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from chunking import AtomicInsight, InsightStatus
 from review_panel.models import ChunkReview, ReviewRound, ReviewResponse
 from augmentation import AugmentedInsight, Augmentation, AugmentationType
+from models.axiom import AxiomStore, SeedAphorism
 
 
 def render_markdown(text: str) -> str:
@@ -82,7 +83,7 @@ def markdown_filter(text):
 
 
 def get_insights_by_status(status: str) -> list[AtomicInsight]:
-    """Load all insights with a given status."""
+    """Load all insights with a given status, sorted by most recently worked on first."""
     insights_dir = DATA_DIR / "chunks" / "insights" / status
     insights = []
 
@@ -94,7 +95,14 @@ def get_insights_by_status(status: str) -> list[AtomicInsight]:
             except Exception as e:
                 print(f"[review] Error loading {json_file}: {e}")
 
-    return sorted(insights, key=lambda i: i.extracted_at, reverse=True)
+    # Sort by most recent activity first (reviewed_at if available, else extracted_at)
+    # Secondary sort by priority (descending)
+    def sort_key(i):
+        # Use reviewed_at if available, otherwise extracted_at
+        last_activity = i.reviewed_at if i.reviewed_at else i.extracted_at
+        return (last_activity, i.priority)
+
+    return sorted(insights, key=sort_key, reverse=True)
 
 
 def get_insight_by_id(insight_id: str) -> tuple[AtomicInsight, str]:
@@ -104,6 +112,16 @@ def get_insight_by_id(insight_id: str) -> tuple[AtomicInsight, str]:
         if json_path.exists():
             return AtomicInsight.load(json_path), status
     return None, None
+
+
+def get_seed_by_id(seed_id: str) -> SeedAphorism:
+    """Load a seed aphorism by ID (e.g., 'seed-002')."""
+    axiom_store = AxiomStore(DATA_DIR)
+    seeds = axiom_store.get_seed_aphorisms()
+    for seed in seeds:
+        if seed.id == seed_id:
+            return seed
+    return None
 
 
 def get_review_for_insight(insight_id: str) -> ChunkReview:
@@ -140,7 +158,57 @@ def get_stats() -> dict:
             stats[status] = len(list(dir_path.glob("*.json")))
         else:
             stats[status] = 0
+
+    # Count insights currently being reviewed (in reviewing directory)
+    reviewing_dir = DATA_DIR / "chunks" / "reviewing"
+    if reviewing_dir.exists():
+        stats["reviewing"] = len(list(reviewing_dir.glob("*.json")))
+    else:
+        stats["reviewing"] = 0
+
+    # Count disputed reviews
+    disputed_dir = DATA_DIR / "reviews" / "disputed"
+    if disputed_dir.exists():
+        stats["disputed"] = len(list(disputed_dir.glob("*.json")))
+    else:
+        stats["disputed"] = 0
+
     return stats
+
+
+def get_reviewing_insights() -> list[dict]:
+    """Get insights currently being reviewed with their review progress."""
+    reviewing_dir = DATA_DIR / "chunks" / "reviewing"
+    insights = []
+
+    if not reviewing_dir.exists():
+        return insights
+
+    for json_file in reviewing_dir.glob("*.json"):
+        try:
+            insight = AtomicInsight.load(json_file)
+
+            # Try to get in-progress review data
+            review = get_review_for_insight(insight.id)
+            rounds_completed = len(review.rounds) if review else 0
+
+            insights.append({
+                "insight": insight,
+                "review": review,
+                "rounds_completed": rounds_completed,
+                "augmentations": None,
+            })
+        except Exception as e:
+            print(f"[review] Error loading {json_file}: {e}")
+
+    # Sort by most recent activity (last round timestamp or extracted_at)
+    def sort_key(item):
+        review = item.get("review")
+        if review and review.rounds:
+            return review.rounds[-1].timestamp
+        return item["insight"].extracted_at
+
+    return sorted(insights, key=sort_key, reverse=True)
 
 
 @app.route("/")
@@ -236,9 +304,80 @@ def rejected():
     )
 
 
+@app.route("/reviewing")
+def reviewing():
+    """Show insights currently being reviewed (in deliberation)."""
+    enriched = get_reviewing_insights()
+    stats = get_stats()
+
+    return render_template(
+        "review.html",
+        insights=enriched,
+        stats=stats,
+        current_status="reviewing",
+        page_title="🔄 In Review",
+    )
+
+
+@app.route("/disputed")
+def disputed():
+    """Show disputed insights that need Round 4."""
+    disputed_dir = DATA_DIR / "reviews" / "disputed"
+    stats = get_stats()
+
+    enriched = []
+    if disputed_dir.exists():
+        for json_file in disputed_dir.glob("*.json"):
+            try:
+                with open(json_file, encoding="utf-8") as f:
+                    review = ChunkReview.from_dict(json.load(f))
+
+                # Try to find the corresponding insight
+                insight = None
+                insight_id = review.chunk_id
+                for status in ["pending", "blessed", "interesting", "rejected"]:
+                    json_path = DATA_DIR / "chunks" / "insights" / status / f"{insight_id}.json"
+                    if json_path.exists():
+                        insight = AtomicInsight.load(json_path)
+                        break
+
+                if insight:
+                    enriched.append({
+                        "insight": insight,
+                        "review": review,
+                        "augmentations": get_augmentations_for_insight(insight_id),
+                    })
+            except Exception as e:
+                print(f"[review] Error loading disputed {json_file}: {e}")
+
+    # Sort by most recent
+    enriched.sort(key=lambda x: x["review"].rounds[-1].timestamp if x["review"].rounds else x["insight"].extracted_at, reverse=True)
+
+    return render_template(
+        "review.html",
+        insights=enriched,
+        stats=stats,
+        current_status="disputed",
+        page_title="⚠️ Disputed Insights",
+    )
+
+
 @app.route("/insight/<insight_id>")
 def view_insight(insight_id: str):
     """View a single insight with full details."""
+    # Check if this is a seed ID
+    if insight_id.startswith("seed-"):
+        seed = get_seed_by_id(insight_id)
+        if not seed:
+            return f"Seed {insight_id} not found", 404
+
+        return render_template(
+            "seed_view.html",
+            seed=seed,
+            stats=get_stats(),
+            page_title=f"Seed: {insight_id}",
+        )
+
     insight, status = get_insight_by_id(insight_id)
     if not insight:
         return "Insight not found", 404
@@ -341,24 +480,66 @@ def submit_feedback():
     return jsonify({"success": True, "new_status": insight.status.value})
 
 
+@app.route("/api/priority", methods=["POST"])
+def update_priority():
+    """Update the priority of an insight."""
+    data = request.json
+    insight_id = data.get("insight_id")
+    priority = data.get("priority")
+
+    if not insight_id or priority is None:
+        return jsonify({"error": "Missing insight_id or priority"}), 400
+
+    try:
+        priority = int(priority)
+        if not 1 <= priority <= 10:
+            return jsonify({"error": "Priority must be between 1 and 10"}), 400
+    except (ValueError, TypeError):
+        return jsonify({"error": "Invalid priority value"}), 400
+
+    insight, current_status = get_insight_by_id(insight_id)
+    if not insight:
+        return jsonify({"error": "Insight not found"}), 404
+
+    # Update priority
+    insight.set_priority(priority)
+
+    # Save in place (same status directory)
+    insight.save(DATA_DIR / "chunks")
+
+    return jsonify({"success": True, "priority": insight.priority})
+
+
 def start_server():
     """Start the review server."""
     host = CONFIG["review_server"]["host"]
     port = CONFIG["review_server"]["port"]
+    debug = CONFIG["review_server"].get("debug", False)
 
     print(f"\n  Fano Explorer Review Server")
     print(f"  ===========================")
     print(f"  Running at: http://{host}:{port}")
+    if debug:
+        print(f"  Mode: DEBUG (auto-reload enabled)")
     print(f"")
     print(f"  Pages:")
-    print(f"    /         - Pending insights")
-    print(f"    /blessed  - Blessed insights with augmentations")
+    print(f"    /            - Pending insights")
+    print(f"    /reviewing   - Insights in review")
+    print(f"    /disputed    - Disputed insights (needs Round 4)")
+    print(f"    /blessed     - Blessed insights with augmentations")
     print(f"    /interesting - Interesting insights")
-    print(f"    /rejected - Rejected insights")
+    print(f"    /rejected    - Rejected insights")
     print(f"")
     print(f"  Press Ctrl+C to stop\n")
 
-    app.run(host=host, port=port, debug=False)
+    # In debug mode, Flask auto-reloads on Python and template changes
+    # Extra files can be watched with extra_files parameter
+    extra_files = None
+    if debug:
+        # Watch template files for changes
+        extra_files = list(TEMPLATE_DIR.glob("*.html"))
+
+    app.run(host=host, port=port, debug=debug, extra_files=extra_files)
 
 
 if __name__ == "__main__":

@@ -119,7 +119,7 @@ orchestration:
   # How many exchange rounds before considering chunk-ready
   min_exchanges_for_chunk: 4
   # Maximum exchanges before forcing synthesis
-  max_exchanges_per_thread: 20
+  max_exchanges_per_thread: 12
   # Number of concurrent exploration threads
   max_active_threads: 3
 
@@ -149,6 +149,8 @@ synthesis:
 review_server:
   host: "127.0.0.1"
   port: 8765
+  # Enable debug mode for auto-reload on file changes (templates, Python files)
+  debug: true
 
 # Atomic chunking settings
 chunking:
@@ -178,12 +180,14 @@ dependencies:
 deduplication:
   # Enable deduplication checking
   enabled: true
-  # Keyword Jaccard similarity threshold for flagging potential duplicates (lowered for better catch rate)
-  keyword_threshold: 0.45
-  # Concept overlap threshold (domain-specific terms) - lowered to catch rephrased duplicates
-  concept_threshold: 0.5
-  # Use LLM to confirm duplicates (slower but more accurate)
+  # Keyword Jaccard similarity threshold - very low to let more through to LLM
+  keyword_threshold: 0.25
+  # Concept overlap threshold - very low to let more through to LLM
+  concept_threshold: 0.30
+  # Use LLM to confirm duplicates (required for semantic matching)
   use_llm_confirmation: true
+  # Use batch LLM checking (compares new insight against all existing in one call)
+  use_batch_llm: true
 
 # Mathematical verification settings (DeepSeek Prover V2 via OpenRouter)
 math_verification:

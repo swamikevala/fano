@@ -1,19 +1,23 @@
 """
-Round 3: Structured Deliberation
+Round 3: Structured Deliberation with Collaborative Modification
 
 When Round 2 still has a split (2-1), we engage in structured deliberation:
-1. Minority states their strongest single argument
-2. Majority responds to that specific argument
-3. Final votes are cast
+1. Minority states their strongest single argument AND may propose a modification
+2. Majority responds to argument AND evaluates any proposed modification
+3. If modification is accepted by majority, final votes are on the modified insight
 4. If still 2-1, majority wins but result is flagged as "disputed"
+
+Key insight: Sometimes a small modification to definitions/wording reveals a
+profound mathematical truth that the original wording obscured. LLMs should
+be able to collaboratively refine the insight during deliberation.
 """
 
 import asyncio
 import logging
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Tuple
 
-from .models import ReviewResponse, ReviewRound, MindChange
+from .models import ReviewResponse, ReviewRound, MindChange, RefinementRecord
 from .prompts import (
     build_round3_minority_prompt,
     build_round3_majority_response_prompt,
@@ -32,9 +36,9 @@ async def run_round3(
     chatgpt_browser,
     claude_reviewer: Optional[ClaudeReviewer],
     config: dict,
-) -> tuple[ReviewRound, list[MindChange], bool]:
+) -> Tuple[ReviewRound, list[MindChange], bool, Optional[str], Optional[RefinementRecord]]:
     """
-    Run Round 3: Structured deliberation.
+    Run Round 3: Structured deliberation with collaborative modification.
 
     Args:
         chunk_insight: The insight text being reviewed
@@ -45,9 +49,11 @@ async def run_round3(
         config: Review panel configuration
 
     Returns:
-        Tuple of (ReviewRound, list of MindChanges, is_disputed)
+        Tuple of (ReviewRound, list of MindChanges, is_disputed, modified_insight, refinement_record)
+        - modified_insight: The new insight text if modification was accepted, else None
+        - refinement_record: Record of the modification if one was accepted, else None
     """
-    logger.info("[round3] Starting structured deliberation")
+    logger.info("[round3] Starting structured deliberation with collaborative modification")
 
     # Identify majority and minority positions
     majority_rating = round2.get_majority_rating()
@@ -57,7 +63,7 @@ async def run_round3(
     if not majority_rating or not minority_llms:
         # This shouldn't happen - Round 3 only runs on 2-1 splits
         logger.warning("[round3] No clear majority/minority, skipping deliberation")
-        return round2, [], False
+        return round2, [], False, None, None
 
     minority_llm = minority_llms[0]  # Should be exactly one
     minority_rating = round2.responses[minority_llm].rating
@@ -69,8 +75,8 @@ async def run_round3(
     majority_reasoning = _summarize_reasoning(round2, majority_llms)
     minority_reasoning = _summarize_reasoning(round2, minority_llms)
 
-    # Step 1: Get minority's strongest argument
-    minority_argument = await _get_minority_argument(
+    # Step 1: Get minority's strongest argument (and optional modification proposal)
+    minority_result = await _get_minority_argument(
         chunk_insight=chunk_insight,
         majority_rating=majority_rating,
         majority_count=len(majority_llms),
@@ -84,30 +90,65 @@ async def run_round3(
         claude_reviewer=claude_reviewer,
     )
 
-    if not minority_argument:
+    if not minority_result:
         logger.warning("[round3] Could not get minority argument")
-        return round2, [], True  # Flag as disputed
+        return round2, [], True, None, None
+
+    # minority_result is now a dict with argument and optional modification
+    minority_argument = minority_result.get("strongest_argument", "")
+    proposed_modification = minority_result.get("proposed_modification", "")
+    modification_rationale = minority_result.get("modification_rationale", "")
 
     logger.info(f"[round3] Minority argument: {minority_argument[:100]}...")
+    if proposed_modification:
+        logger.info(f"[round3] Minority proposed modification: {proposed_modification[:100]}...")
 
-    # Step 2: Get majority's response
-    majority_response = await _get_majority_response(
+    # Step 2: Get majority's response (including evaluation of any proposed modification)
+    majority_result = await _get_majority_response(
         chunk_insight=chunk_insight,
         majority_rating=majority_rating,
         minority_argument=minority_argument,
         majority_llms=majority_llms,
+        proposed_modification=proposed_modification,
+        modification_rationale=modification_rationale,
         gemini_browser=gemini_browser,
         chatgpt_browser=chatgpt_browser,
         claude_reviewer=claude_reviewer,
     )
 
-    if not majority_response:
+    if not majority_result:
         logger.warning("[round3] Could not get majority response")
-        return round2, [], True  # Flag as disputed
+        return round2, [], True, None, None
+
+    majority_response = majority_result.get("response_to_argument", "")
+    modification_accepted = majority_result.get("accept_modification", False)
+    modification_assessment = majority_result.get("modification_assessment", "")
 
     logger.info(f"[round3] Majority response: {majority_response[:100]}...")
+    if proposed_modification:
+        logger.info(f"[round3] Modification accepted: {modification_accepted}")
 
-    # Step 3: Get final votes from all (passing the deliberation exchange for storage)
+    # Track accepted modification
+    modified_insight = None
+    refinement_record = None
+
+    if proposed_modification and modification_accepted:
+        logger.info("[round3] MODIFICATION ACCEPTED - Final votes will be on modified insight")
+        modified_insight = proposed_modification
+        refinement_record = RefinementRecord(
+            from_version=1,  # Will be updated by caller with actual version
+            to_version=2,
+            original_insight=chunk_insight,
+            refined_insight=proposed_modification,
+            changes_made=[f"Modified during Round 3 deliberation by {minority_llm}"],
+            addressed_critiques=[minority_argument],
+            unresolved_issues=[],
+            refinement_confidence="high",
+            triggered_by_ratings=round2.get_ratings(),
+            timestamp=datetime.now(),
+        )
+
+    # Step 3: Get final votes from all (on original or modified insight)
     final_responses, mind_changes = await _get_final_votes(
         chunk_insight=chunk_insight,
         minority_argument=minority_argument,
@@ -119,6 +160,8 @@ async def run_round3(
         claude_reviewer=claude_reviewer,
         deliberation_minority_argument=minority_argument,
         deliberation_majority_response=majority_response,
+        modified_insight=modified_insight,
+        modification_accepted=modification_accepted,
     )
 
     # Determine final outcome
@@ -129,6 +172,8 @@ async def run_round3(
         outcome = "resolved"
         is_disputed = False
         logger.info(f"[round3] Resolved to unanimous: {final_ratings[0]}")
+        if modified_insight:
+            logger.info("[round3] Unanimous on MODIFIED insight!")
     else:
         outcome = "disputed"
         is_disputed = True
@@ -142,7 +187,7 @@ async def run_round3(
         timestamp=datetime.now(),
     )
 
-    return review_round, mind_changes, is_disputed
+    return review_round, mind_changes, is_disputed, modified_insight, refinement_record
 
 
 def _summarize_reasoning(round2: ReviewRound, llms: list[str]) -> str:
@@ -168,8 +213,13 @@ async def _get_minority_argument(
     gemini_browser,
     chatgpt_browser,
     claude_reviewer: Optional[ClaudeReviewer],
-) -> Optional[str]:
-    """Get the minority's strongest argument."""
+) -> Optional[dict]:
+    """Get the minority's strongest argument and optional modification proposal.
+
+    Returns:
+        Dict with keys: strongest_argument, proposed_modification, modification_rationale
+        Or None if failed.
+    """
     prompt = build_round3_minority_prompt(
         chunk_insight=chunk_insight,
         majority_rating=majority_rating,
@@ -185,7 +235,11 @@ async def _get_minority_argument(
             minority_llm, prompt, gemini_browser, chatgpt_browser, claude_reviewer
         )
         parsed = parse_round3_response(response_text, is_minority=True)
-        return parsed.get("strongest_argument", "")
+        return {
+            "strongest_argument": parsed.get("strongest_argument", ""),
+            "proposed_modification": parsed.get("proposed_modification", ""),
+            "modification_rationale": parsed.get("modification_rationale", ""),
+        }
     except Exception as e:
         logger.error(f"[round3] Error getting minority argument: {e}")
         return None
@@ -196,15 +250,24 @@ async def _get_majority_response(
     majority_rating: str,
     minority_argument: str,
     majority_llms: list[str],
+    proposed_modification: str,
+    modification_rationale: str,
     gemini_browser,
     chatgpt_browser,
     claude_reviewer: Optional[ClaudeReviewer],
-) -> Optional[str]:
-    """Get the majority's response to the minority argument."""
+) -> Optional[dict]:
+    """Get the majority's response to the minority argument and modification proposal.
+
+    Returns:
+        Dict with keys: response_to_argument, accept_modification, modification_assessment
+        Or None if failed.
+    """
     prompt = build_round3_majority_response_prompt(
         chunk_insight=chunk_insight,
         majority_rating=majority_rating,
         minority_strongest_argument=minority_argument,
+        proposed_modification=proposed_modification,
+        modification_rationale=modification_rationale,
     )
 
     # Get response from first available majority LLM
@@ -214,7 +277,11 @@ async def _get_majority_response(
                 llm, prompt, gemini_browser, chatgpt_browser, claude_reviewer
             )
             parsed = parse_round3_response(response_text, is_minority=False)
-            return parsed.get("response_to_argument", "")
+            return {
+                "response_to_argument": parsed.get("response_to_argument", ""),
+                "accept_modification": parsed.get("accept_modification", False),
+                "modification_assessment": parsed.get("modification_assessment", ""),
+            }
         except Exception as e:
             logger.warning(f"[round3] Error getting majority response from {llm}: {e}")
             continue
@@ -233,8 +300,15 @@ async def _get_final_votes(
     claude_reviewer: Optional[ClaudeReviewer],
     deliberation_minority_argument: str = "",
     deliberation_majority_response: str = "",
+    modified_insight: Optional[str] = None,
+    modification_accepted: bool = False,
 ) -> tuple[dict[str, ReviewResponse], list[MindChange]]:
-    """Get final votes from all reviewers after deliberation."""
+    """Get final votes from all reviewers after deliberation.
+
+    Args:
+        modified_insight: If modification was accepted, the new insight text
+        modification_accepted: Whether a modification was accepted by majority
+    """
 
     # Build prompts for each LLM
     tasks = []
@@ -247,6 +321,8 @@ async def _get_final_votes(
             minority_strongest_argument=minority_argument,
             majority_response=majority_response,
             is_minority=is_minority,
+            modified_insight=modified_insight or "",
+            modification_accepted=modification_accepted,
         )
 
         # Determine which browser/API to use
@@ -280,14 +356,15 @@ async def _get_final_votes(
                 r3_rating = result.rating
 
                 if r2_rating != r3_rating:
-                    logger.info(f"[round3] {llm} changed mind: {r2_rating} -> {r3_rating}")
+                    reason_suffix = " (on modified insight)" if modification_accepted else ""
+                    logger.info(f"[round3] {llm} changed mind: {r2_rating} -> {r3_rating}{reason_suffix}")
                     stance = result.final_stance or ("conceded" if is_minority else "persuaded")
                     mind_changes.append(MindChange(
                         llm=llm,
                         round_number=3,
                         from_rating=r2_rating,
                         to_rating=r3_rating,
-                        reason=f"After deliberation: {stance}",
+                        reason=f"After deliberation{reason_suffix}: {stance}",
                     ))
 
     return responses, mind_changes
