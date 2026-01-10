@@ -7,11 +7,18 @@ Routes requests appropriately:
 """
 
 import asyncio
-import logging
 import os
+import sys
+from pathlib import Path
 from typing import Optional
 
 import aiohttp
+
+# Add shared module to path
+SHARED_PATH = Path(__file__).resolve().parent.parent.parent / "shared"
+sys.path.insert(0, str(SHARED_PATH.parent))
+
+from shared.logging import get_logger
 
 from .models import (
     LLMResponse,
@@ -21,7 +28,7 @@ from .models import (
     BackendStatus,
 )
 
-logger = logging.getLogger(__name__)
+log = get_logger("llm", "client")
 
 # Backends that require browser automation (go through pool)
 BROWSER_BACKENDS = {"gemini", "chatgpt"}
@@ -158,7 +165,7 @@ class LLMClient:
                 return LLMResponse.from_pool_response(data)
 
         except aiohttp.ClientError as e:
-            logger.error(f"Pool request failed: {e}")
+            log.error("llm.pool.request_failed", backend=backend, error=str(e))
             raise PoolUnavailableError(f"Could not connect to pool: {e}")
 
         except asyncio.TimeoutError:

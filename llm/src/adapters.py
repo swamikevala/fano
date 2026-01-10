@@ -5,12 +5,19 @@ These adapters allow existing code (orchestrator, review_panel, etc.)
 to work with the new LLM library without major refactoring.
 """
 
-import logging
+import sys
+from pathlib import Path
 from typing import Optional
+
+# Add shared module to path
+SHARED_PATH = Path(__file__).resolve().parent.parent.parent / "shared"
+sys.path.insert(0, str(SHARED_PATH.parent))
+
+from shared.logging import get_logger
 
 from .client import LLMClient
 
-logger = logging.getLogger(__name__)
+log = get_logger("llm", "adapters")
 
 
 class BrowserAdapter:
@@ -42,12 +49,12 @@ class BrowserAdapter:
     async def connect(self):
         """Mark as connected. Pool handles actual connection."""
         self._connected = True
-        logger.info(f"[{self.backend}] Adapter connected (via LLMClient)")
+        log.info("llm.adapter.lifecycle", action="connected", backend=self.backend)
 
     async def disconnect(self):
         """Mark as disconnected."""
         self._connected = False
-        logger.info(f"[{self.backend}] Adapter disconnected")
+        log.info("llm.adapter.lifecycle", action="disconnected", backend=self.backend)
 
     async def start_new_chat(self):
         """Start new chat - passed through to pool."""
@@ -88,7 +95,7 @@ class BrowserAdapter:
 
         if not response.success:
             error_msg = f"{response.error}: {response.message}"
-            logger.error(f"[{self.backend}] Request failed: {error_msg}")
+            log.error("llm.adapter.request_failed", backend=self.backend, error=response.error, message=response.message)
             raise RuntimeError(error_msg)
 
         return response.text or ""
@@ -179,7 +186,7 @@ class ClaudeAdapter(BrowserAdapter):
 
         if not response.success:
             error_msg = f"{response.error}: {response.message}"
-            logger.error(f"[claude] Request failed: {error_msg}")
+            log.error("llm.adapter.request_failed", backend="claude", error=response.error, message=response.message)
             raise RuntimeError(error_msg)
 
         return response.text or ""

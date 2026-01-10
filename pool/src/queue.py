@@ -1,15 +1,21 @@
 """Request queue management for the Browser Pool Service."""
 
 import asyncio
-import logging
+import sys
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Optional
 from heapq import heappush, heappop
 
+# Add shared module to path
+SHARED_PATH = Path(__file__).resolve().parent.parent.parent / "shared"
+sys.path.insert(0, str(SHARED_PATH.parent))
+
+from shared.logging import get_logger
 from .models import Priority, SendRequest
 
-logger = logging.getLogger(__name__)
+log = get_logger("pool", "queue")
 
 
 @dataclass(order=True)
@@ -72,7 +78,13 @@ class RequestQueue:
             queued = QueuedRequest.create(request, future, request_id)
             heappush(self._queue, queued)
 
-            logger.info(f"[{self.backend}] Enqueued request {request_id} (priority={request.options.priority}, depth={len(self._queue)})")
+            log.info(
+                "pool.queue.enqueue",
+                backend=self.backend,
+                request_id=request_id,
+                priority=request.options.priority.value,
+                queue_depth=len(self._queue),
+            )
             return future
 
     async def dequeue(self) -> Optional[QueuedRequest]:

@@ -1,13 +1,19 @@
 """State management for the Browser Pool Service."""
 
 import json
-import logging
+import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 from threading import Lock
 
-logger = logging.getLogger(__name__)
+# Add shared module to path
+SHARED_PATH = Path(__file__).resolve().parent.parent.parent / "shared"
+sys.path.insert(0, str(SHARED_PATH.parent))
+
+from shared.logging import get_logger
+
+log = get_logger("pool", "state")
 
 
 class StateManager:
@@ -33,7 +39,7 @@ class StateManager:
                 with open(self.state_file, encoding="utf-8") as f:
                     return json.load(f)
             except Exception as e:
-                logger.warning(f"Could not load state: {e}, using defaults")
+                log.warning("pool.state.load_failed", error=str(e), using_defaults=True)
 
         return {
             "gemini": {
@@ -100,7 +106,7 @@ class StateManager:
         with self._lock:
             self._state[backend]["authenticated"] = authenticated
             self._save()
-            logger.info(f"[{backend}] Marked authenticated={authenticated}")
+            log.info("pool.state.auth_changed", backend=backend, authenticated=authenticated)
 
     def mark_rate_limited(self, backend: str, retry_after_seconds: int = 3600):
         """Mark a backend as rate limited."""
@@ -109,7 +115,7 @@ class StateManager:
             self._state[backend]["rate_limited"] = True
             self._state[backend]["rate_limit_resets_at"] = reset_at.isoformat()
             self._save()
-            logger.warning(f"[{backend}] Rate limited until {reset_at}")
+            log.warning("pool.rate_limit.activated", backend=backend, resets_at=reset_at.isoformat())
 
     def clear_rate_limit(self, backend: str):
         """Clear rate limit for a backend."""
@@ -117,7 +123,7 @@ class StateManager:
             self._state[backend]["rate_limited"] = False
             self._state[backend]["rate_limit_resets_at"] = None
             self._save()
-            logger.info(f"[{backend}] Rate limit cleared")
+            log.info("pool.rate_limit.cleared", backend=backend)
 
     def increment_deep_mode_usage(self, backend: str):
         """Increment deep/pro mode usage counter."""

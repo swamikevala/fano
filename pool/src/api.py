@@ -1,7 +1,7 @@
 """FastAPI HTTP API for the Browser Pool Service."""
 
 import asyncio
-import logging
+import sys
 import time
 from datetime import datetime
 from pathlib import Path
@@ -9,6 +9,12 @@ from typing import Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
+
+# Add shared module to path
+SHARED_PATH = Path(__file__).resolve().parent.parent.parent / "shared"
+sys.path.insert(0, str(SHARED_PATH.parent))
+
+from shared.logging import get_logger
 
 from .models import (
     SendRequest, SendResponse, Backend, Priority,
@@ -18,7 +24,7 @@ from .state import StateManager
 from .queue import QueueManager, QueueFullError
 from .workers import GeminiWorker, ChatGPTWorker, ClaudeWorker
 
-logger = logging.getLogger(__name__)
+log = get_logger("pool", "api")
 
 
 class BrowserPool:
@@ -60,33 +66,33 @@ class BrowserPool:
 
     async def startup(self):
         """Start all workers and connect to backends."""
-        logger.info("Starting Browser Pool...")
+        log.info("pool.service.lifecycle", action="starting", backends=list(self.workers.keys()))
 
         for name, worker in self.workers.items():
             try:
                 await worker.connect()
             except Exception as e:
-                logger.warning(f"[{name}] Initial connection failed (will retry later): {e}")
+                log.warning("pool.backend.connect_failed", backend=name, error=str(e), will_retry=True)
             # Start worker loop regardless - it will wait for availability
             try:
                 await worker.start()
             except Exception as e:
-                logger.error(f"Failed to start {name} worker loop: {e}")
+                log.error("pool.backend.worker_start_failed", backend=name, error=str(e))
 
-        logger.info("Browser Pool started")
+        log.info("pool.service.lifecycle", action="started", backends=list(self.workers.keys()))
 
     async def shutdown(self):
         """Stop all workers and disconnect."""
-        logger.info("Shutting down Browser Pool...")
+        log.info("pool.service.lifecycle", action="stopping")
 
         for name, worker in self.workers.items():
             try:
                 await worker.stop()
                 await worker.disconnect()
             except Exception as e:
-                logger.error(f"Error stopping {name} worker: {e}")
+                log.error("pool.backend.stop_failed", backend=name, error=str(e))
 
-        logger.info("Browser Pool stopped")
+        log.info("pool.service.lifecycle", action="stopped")
 
     async def send(self, request: SendRequest) -> SendResponse:
         """Send a prompt to a backend and wait for response."""

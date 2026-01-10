@@ -5,7 +5,6 @@ Each worker manages a browser instance and processes requests from its queue.
 """
 
 import asyncio
-import logging
 import os
 import sys
 import time
@@ -16,11 +15,16 @@ from typing import Optional
 EXPLORER_SRC = Path(__file__).resolve().parent.parent.parent / "explorer" / "src"
 sys.path.insert(0, str(EXPLORER_SRC))
 
+# Add shared module to path
+SHARED_PATH = Path(__file__).resolve().parent.parent.parent / "shared"
+sys.path.insert(0, str(SHARED_PATH.parent))
+
+from shared.logging import get_logger, set_session_id
 from .models import SendRequest, SendResponse, ResponseMetadata, Backend
 from .state import StateManager
 from .queue import RequestQueue, QueuedRequest
 
-logger = logging.getLogger(__name__)
+log = get_logger("pool", "workers")
 
 
 class BaseWorker:
@@ -39,7 +43,7 @@ class BaseWorker:
         """Start the worker."""
         self._running = True
         self._task = asyncio.create_task(self._run_loop())
-        logger.info(f"[{self.backend_name}] Worker started")
+        log.info("pool.worker.lifecycle", action="started", backend=self.backend_name)
 
     async def stop(self):
         """Stop the worker."""
@@ -50,7 +54,7 @@ class BaseWorker:
                 await self._task
             except asyncio.CancelledError:
                 pass
-        logger.info(f"[{self.backend_name}] Worker stopped")
+        log.info("pool.worker.lifecycle", action="stopped", backend=self.backend_name)
 
     async def _run_loop(self):
         """Main worker loop - process requests from queue."""
@@ -68,12 +72,25 @@ class BaseWorker:
                     continue
 
                 # Process the request
-                logger.info(f"[{self.backend_name}] Processing request {queued.request_id}")
+                start_time = log.request_start(
+                    queued.request_id, self.backend_name, queued.request.prompt,
+                    priority=queued.request.options.priority.value,
+                    deep_mode_requested=queued.request.options.deep_mode,
+                )
                 try:
                     response = await self._process_request(queued.request)
+                    log.request_complete(
+                        queued.request_id, self.backend_name,
+                        response.response or "", start_time,
+                        success=response.success,
+                        deep_mode_used=response.metadata.deep_mode_used if response.metadata else False,
+                    )
                     queued.future.set_result(response)
                 except Exception as e:
-                    logger.error(f"[{self.backend_name}] Request failed: {e}")
+                    log.request_error(
+                        queued.request_id, self.backend_name,
+                        str(e), type(e).__name__, start_time,
+                    )
                     error_response = SendResponse(
                         success=False,
                         error="processing_error",
@@ -84,7 +101,7 @@ class BaseWorker:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.error(f"[{self.backend_name}] Worker loop error: {e}")
+                log.exception(e, "pool.worker.loop_error", {"backend": self.backend_name})
                 await asyncio.sleep(1)
 
     async def _process_request(self, request: SendRequest) -> SendResponse:
@@ -128,10 +145,10 @@ class GeminiWorker(BaseWorker):
 
             await self.browser.connect()
             self.state.mark_authenticated(self.backend_name, True)
-            logger.info(f"[{self.backend_name}] Connected")
+            log.info("pool.worker.lifecycle", action="connected", backend=self.backend_name)
 
         except Exception as e:
-            logger.error(f"[{self.backend_name}] Connection failed: {e}")
+            log.exception(e, "pool.worker.connection_failed", {"backend": self.backend_name})
             self.state.mark_authenticated(self.backend_name, False)
             raise
 
@@ -150,11 +167,11 @@ class GeminiWorker(BaseWorker):
             browser = GeminiInterface()
             await browser.connect()
 
-            logger.info(f"[{self.backend_name}] Auth browser opened - waiting for user to log in")
+            log.info("pool.worker.auth", action="browser_opened", backend=self.backend_name)
             return True
 
         except Exception as e:
-            logger.error(f"[{self.backend_name}] Auth failed: {e}")
+            log.exception(e, "pool.worker.auth_failed", {"backend": self.backend_name})
             return False
 
     async def _process_request(self, request: SendRequest) -> SendResponse:
@@ -182,9 +199,9 @@ class GeminiWorker(BaseWorker):
                         deep_mode_used = True
                         self.state.increment_deep_mode_usage(self.backend_name)
                     except Exception as e:
-                        logger.warning(f"[{self.backend_name}] Could not enable deep mode: {e}")
+                        log.warning("pool.deep_mode.enable_failed", backend=self.backend_name, error=str(e))
                 else:
-                    logger.warning(f"[{self.backend_name}] Deep mode limit reached, using standard mode")
+                    log.warning("pool.deep_mode.limit_reached", backend=self.backend_name)
 
             # Send the prompt
             response_text = await self.browser.send_message(request.prompt)
@@ -207,7 +224,7 @@ class GeminiWorker(BaseWorker):
             )
 
         except Exception as e:
-            logger.error(f"[{self.backend_name}] Request error: {e}")
+            log.exception(e, "pool.request.processing_error", {"backend": self.backend_name})
             return SendResponse(
                 success=False,
                 error="processing_error",
@@ -232,10 +249,10 @@ class ChatGPTWorker(BaseWorker):
             self.browser = ChatGPTInterface()
             await self.browser.connect()
             self.state.mark_authenticated(self.backend_name, True)
-            logger.info(f"[{self.backend_name}] Connected")
+            log.info("pool.worker.lifecycle", action="connected", backend=self.backend_name)
 
         except Exception as e:
-            logger.error(f"[{self.backend_name}] Connection failed: {e}")
+            log.exception(e, "pool.worker.connection_failed", {"backend": self.backend_name})
             self.state.mark_authenticated(self.backend_name, False)
             raise
 
@@ -252,11 +269,11 @@ class ChatGPTWorker(BaseWorker):
 
             browser = ChatGPTInterface()
             await browser.connect()
-            logger.info(f"[{self.backend_name}] Auth browser opened")
+            log.info("pool.worker.auth", action="browser_opened", backend=self.backend_name)
             return True
 
         except Exception as e:
-            logger.error(f"[{self.backend_name}] Auth failed: {e}")
+            log.exception(e, "pool.worker.auth_failed", {"backend": self.backend_name})
             return False
 
     async def _process_request(self, request: SendRequest) -> SendResponse:
@@ -283,7 +300,7 @@ class ChatGPTWorker(BaseWorker):
                         pro_mode_used = True
                         self.state.increment_deep_mode_usage(self.backend_name)
                     except Exception as e:
-                        logger.warning(f"[{self.backend_name}] Could not enable pro mode: {e}")
+                        log.warning("pool.pro_mode.enable_failed", backend=self.backend_name, error=str(e))
 
             response_text = await self.browser.send_message(request.prompt)
 
@@ -304,7 +321,7 @@ class ChatGPTWorker(BaseWorker):
             )
 
         except Exception as e:
-            logger.error(f"[{self.backend_name}] Request error: {e}")
+            log.exception(e, "pool.request.processing_error", {"backend": self.backend_name})
             return SendResponse(
                 success=False,
                 error="processing_error",
@@ -333,10 +350,10 @@ class ClaudeWorker(BaseWorker):
 
             self.client = anthropic.Anthropic(api_key=api_key)
             self.state.mark_authenticated(self.backend_name, True)
-            logger.info(f"[{self.backend_name}] API client initialized")
+            log.info("pool.worker.lifecycle", action="connected", backend=self.backend_name)
 
         except Exception as e:
-            logger.error(f"[{self.backend_name}] Connection failed: {e}")
+            log.exception(e, "pool.worker.connection_failed", {"backend": self.backend_name})
             self.state.mark_authenticated(self.backend_name, False)
             raise
 
@@ -390,7 +407,7 @@ class ClaudeWorker(BaseWorker):
             if "rate" in error_str.lower() or "429" in error_str:
                 self.state.mark_rate_limited(self.backend_name, 60)
 
-            logger.error(f"[{self.backend_name}] API error: {e}")
+            log.exception(e, "pool.request.api_error", {"backend": self.backend_name})
             return SendResponse(
                 success=False,
                 error="api_error",

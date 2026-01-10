@@ -6,15 +6,22 @@ reaching consensus through structured deliberation.
 """
 
 import asyncio
-import logging
+import sys
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
+
+# Add shared module to path
+SHARED_PATH = Path(__file__).resolve().parent.parent.parent / "shared"
+sys.path.insert(0, str(SHARED_PATH.parent))
+
+from shared.logging import get_logger
 
 from .client import LLMClient
 from .models import LLMResponse, ConsensusResult, ReviewResponse
 
-logger = logging.getLogger(__name__)
+log = get_logger("llm", "consensus")
 
 
 class ConsensusReviewer:
@@ -99,7 +106,13 @@ class ConsensusReviewer:
                 rounds=[{"error": f"Need at least 2 backends, only {len(available)} available"}],
             )
 
-        logger.info(f"[consensus] Starting review with backends: {available}")
+        log.info(
+            "llm.consensus.review_start",
+            backends=available,
+            text_length=len(text),
+            tags=tags,
+            use_deep_mode=use_deep_mode,
+        )
 
         # Round 1: Independent parallel review
         round1_responses = await self._run_round1(
@@ -108,8 +121,21 @@ class ConsensusReviewer:
 
         # Check for early exit (unanimous)
         ratings = [r.rating for r in round1_responses.values()]
+        log.info(
+            "llm.consensus.round_complete",
+            round=1,
+            ratings={k: v.rating for k, v in round1_responses.items()},
+            unanimous=len(set(ratings)) == 1,
+        )
         if len(set(ratings)) == 1:
             elapsed = time.time() - start_time
+            log.info(
+                "llm.consensus.review_complete",
+                final_rating=ratings[0],
+                rounds_needed=1,
+                is_unanimous=True,
+                duration_ms=round(elapsed * 1000, 2),
+            )
             return ConsensusResult(
                 success=True,
                 final_rating=ratings[0],
@@ -126,8 +152,33 @@ class ConsensusReviewer:
 
         # Check for resolution
         ratings = [r.rating for r in round2_responses.values()]
+        # Track mind changes
+        for backend in round1_responses:
+            if backend in round2_responses:
+                r1_rating = round1_responses[backend].rating
+                r2_rating = round2_responses[backend].rating
+                if r1_rating != r2_rating:
+                    log.info(
+                        "llm.consensus.mind_change",
+                        llm=backend,
+                        from_rating=r1_rating,
+                        to_rating=r2_rating,
+                    )
+        log.info(
+            "llm.consensus.round_complete",
+            round=2,
+            ratings={k: v.rating for k, v in round2_responses.items()},
+            unanimous=len(set(ratings)) == 1,
+        )
         if len(set(ratings)) == 1:
             elapsed = time.time() - start_time
+            log.info(
+                "llm.consensus.review_complete",
+                final_rating=ratings[0],
+                rounds_needed=2,
+                is_unanimous=True,
+                duration_ms=round(elapsed * 1000, 2),
+            )
             return ConsensusResult(
                 success=True,
                 final_rating=ratings[0],
@@ -146,6 +197,14 @@ class ConsensusReviewer:
         )
 
         elapsed = time.time() - start_time
+        log.info(
+            "llm.consensus.review_complete",
+            final_rating=final_rating,
+            rounds_needed=3,
+            is_unanimous=not is_disputed,
+            is_disputed=is_disputed,
+            duration_ms=round(elapsed * 1000, 2),
+        )
         return ConsensusResult(
             success=True,
             final_rating=final_rating,
