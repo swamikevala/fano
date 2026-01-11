@@ -148,6 +148,40 @@ documenter:
     strictness: "moderate"
 
 # =============================================================================
+# DEDUPLICATION SETTINGS (shared across explorer and documenter)
+# =============================================================================
+deduplication:
+  # Enable deduplication checking
+  enabled: true
+
+  # LLM model for semantic duplicate detection (use cheap/fast model)
+  model: "claude-sonnet-4-20250514"
+
+  # Detection method: LLM-first approach (recommended for mathematical content)
+  # Heuristics often miss semantic duplicates where same concept is expressed differently
+  use_signature_check: true   # Instant - catches exact duplicates
+  use_heuristic_check: false  # Disabled by default - LLM is better for math
+  use_llm_check: true         # Primary detection method
+  use_batch_llm: true         # Efficient batch checking
+
+  # Batch size for LLM checks (items checked in one API call)
+  batch_size: 20
+
+  # Heuristic thresholds (only used if use_heuristic_check is true)
+  keyword_threshold: 0.40
+  concept_threshold: 0.45
+  combined_threshold: 0.50
+
+  # LLM confidence requirements
+  require_high_confidence: false
+
+  # Timeout for LLM calls (seconds)
+  llm_timeout: 60
+
+  # Stats logging interval (log stats every N checks, 0 to disable)
+  stats_log_interval: 50
+
+# =============================================================================
 # LOGGING
 # =============================================================================
 logging:

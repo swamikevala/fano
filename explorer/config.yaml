@@ -176,18 +176,13 @@ dependencies:
   # Flag during review if insight has unresolved dependencies
   warn_on_unresolved: true
 
-# Deduplication settings (prevents near-duplicate insights)
+# Deduplication settings
+# NOTE: Main deduplication config is now centralized in fano/config.yaml
+# These settings are kept for backward compatibility but the shared module
+# will load from the root config.yaml by default.
 deduplication:
   # Enable deduplication checking
   enabled: true
-  # Keyword Jaccard similarity threshold - very low to let more through to LLM
-  keyword_threshold: 0.25
-  # Concept overlap threshold - very low to let more through to LLM
-  concept_threshold: 0.30
-  # Use LLM to confirm duplicates (required for semantic matching)
-  use_llm_confirmation: true
-  # Use batch LLM checking (compares new insight against all existing in one call)
-  use_batch_llm: true
 
 # Mathematical verification settings (DeepSeek Prover V2 via OpenRouter)
 math_verification:

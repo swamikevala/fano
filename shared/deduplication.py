@@ -504,6 +504,8 @@ class DeduplicationChecker:
         combined_threshold: float = 0.50,
         # LLM confidence requirements
         require_high_confidence: bool = False,
+        # Stats logging
+        stats_log_interval: int = 50,  # Log stats every N checks (0 to disable)
     ):
         """
         Initialize the deduplication checker.
@@ -521,6 +523,7 @@ class DeduplicationChecker:
             concept_threshold: Heuristic threshold (if enabled)
             combined_threshold: Heuristic threshold (if enabled)
             require_high_confidence: Only accept LLM duplicates with high confidence
+            stats_log_interval: Log stats every N checks (0 to disable)
         """
         self.llm_callback = llm_callback
         self.keyword_threshold = keyword_threshold
@@ -532,6 +535,7 @@ class DeduplicationChecker:
         self.use_batch_llm = use_batch_llm
         self.batch_size = batch_size
         self.require_high_confidence = require_high_confidence
+        self.stats_log_interval = stats_log_interval
 
         # Known content registry
         self._known_items: dict[str, ContentItem] = {}
@@ -552,6 +556,8 @@ class DeduplicationChecker:
             use_heuristics=self.use_heuristic_check,
             use_llm=self.use_llm_check,
             use_batch=self.use_batch_llm,
+            batch_size=self.batch_size,
+            stats_log_interval=self.stats_log_interval,
         )
 
     def add_content(self, item: ContentItem) -> None:
@@ -645,6 +651,7 @@ class DeduplicationChecker:
                 result.check_time_ms = (time.time() - start_time) * 1000
                 self._stats["duplicates_found"] += 1
                 self._stats["by_signature"] += 1
+                self._maybe_log_stats()
                 return result
 
         # Layer 2: Heuristic check (fast)
@@ -654,6 +661,7 @@ class DeduplicationChecker:
                 result.check_time_ms = (time.time() - start_time) * 1000
                 self._stats["duplicates_found"] += 1
                 self._stats["by_heuristic"] += 1
+                self._maybe_log_stats()
                 return result
             # Even if not duplicate, track candidates for LLM check
             heuristic_candidates = result.similarity  # May be None or partial
@@ -665,6 +673,7 @@ class DeduplicationChecker:
                 result.check_time_ms = (time.time() - start_time) * 1000
                 self._stats["duplicates_found"] += 1
                 self._stats["by_llm"] += 1
+                self._maybe_log_stats()
                 return result
 
         # No duplicate found
@@ -676,6 +685,7 @@ class DeduplicationChecker:
             time_ms=round(elapsed, 2),
         )
 
+        self._maybe_log_stats()
         return DuplicateResult(
             is_duplicate=False,
             checked_item_id=item_id,
@@ -917,6 +927,33 @@ class DeduplicationChecker:
             "known_items": len(self._known_items),
         }
 
+    def log_stats(self) -> None:
+        """Log current deduplication statistics."""
+        stats = self.get_stats()
+        dup_rate = (
+            stats["duplicates_found"] / stats["checks"] * 100
+            if stats["checks"] > 0 else 0.0
+        )
+        log.info(
+            "deduplication.stats",
+            total_checks=stats["checks"],
+            duplicates_found=stats["duplicates_found"],
+            duplicate_rate_pct=round(dup_rate, 1),
+            by_signature=stats["by_signature"],
+            by_heuristic=stats["by_heuristic"],
+            by_llm=stats["by_llm"],
+            known_items=stats["known_items"],
+        )
+
+    def _maybe_log_stats(self) -> None:
+        """Log stats if interval reached."""
+        if (
+            self.stats_log_interval > 0 and
+            self._stats["checks"] > 0 and
+            self._stats["checks"] % self.stats_log_interval == 0
+        ):
+            self.log_stats()
+
     @property
     def known_count(self) -> int:
         """Number of known content items."""
@@ -987,40 +1024,81 @@ class DeduplicationChecker:
         return result.is_duplicate, result.duplicate_of
 
 
+def load_dedup_config(config_path: Optional[str] = None) -> dict:
+    """
+    Load deduplication config from YAML file.
+
+    Args:
+        config_path: Path to config file. If None, tries to find fano/config.yaml
+
+    Returns:
+        Deduplication config dict
+    """
+    import yaml
+
+    if config_path is None:
+        # Try to find config.yaml in the fano project root
+        fano_root = Path(__file__).resolve().parent.parent
+        config_path = fano_root / "config.yaml"
+
+    try:
+        with open(config_path, 'r') as f:
+            full_config = yaml.safe_load(f) or {}
+        return full_config.get("deduplication", {})
+    except (FileNotFoundError, yaml.YAMLError) as e:
+        log.warning(
+            "deduplication.config.load_failed",
+            config_path=str(config_path),
+            error=str(e),
+        )
+        return {}
+
+
 def get_dedup_checker(
     claude_reviewer=None,
     config: dict = None,
+    llm_callback: Optional[LLMCallback] = None,
 ) -> DeduplicationChecker:
     """
-    Factory function to create a DeduplicationChecker (backward-compatible).
+    Factory function to create a DeduplicationChecker.
 
     This provides compatibility with the explorer's existing interface while
-    using the new shared implementation.
+    using the new shared implementation. Configuration is read from the
+    centralized config.yaml if not provided.
 
     Args:
         claude_reviewer: Object with send_message method (ClaudeReviewer interface).
                         Should be a cheap/fast model to preserve expensive quota.
-        config: Configuration dict (optional)
+        config: Configuration dict (optional). If None, loads from config.yaml
+        llm_callback: Direct LLM callback (alternative to claude_reviewer)
 
     Returns:
         Configured DeduplicationChecker with LLM-first approach
     """
-    config = config or {}
-    dedup_config = config.get("deduplication", {})
+    # Load config from file if not provided
+    if config is None:
+        dedup_config = load_dedup_config()
+    else:
+        dedup_config = config.get("deduplication", config)
 
     # Create LLM callback if claude_reviewer is provided
-    llm_callback = None
-    if claude_reviewer is not None:
+    if llm_callback is None and claude_reviewer is not None:
         async def callback(prompt: str) -> str:
             return await claude_reviewer.send_message(prompt, extended_thinking=False)
         llm_callback = callback
 
     return DeduplicationChecker(
         llm_callback=llm_callback,
-        use_signature_check=True,
-        use_heuristic_check=dedup_config.get("use_heuristics", False),  # Off by default
-        use_llm_check=dedup_config.get("use_llm", True),
+        use_signature_check=dedup_config.get("use_signature_check", True),
+        use_heuristic_check=dedup_config.get("use_heuristic_check", False),
+        use_llm_check=dedup_config.get("use_llm_check", True),
         use_batch_llm=dedup_config.get("use_batch_llm", True),
+        batch_size=dedup_config.get("batch_size", 20),
+        keyword_threshold=dedup_config.get("keyword_threshold", 0.40),
+        concept_threshold=dedup_config.get("concept_threshold", 0.45),
+        combined_threshold=dedup_config.get("combined_threshold", 0.50),
+        require_high_confidence=dedup_config.get("require_high_confidence", False),
+        stats_log_interval=dedup_config.get("stats_log_interval", 50),
     )
 
 

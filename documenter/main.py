@@ -21,6 +21,7 @@ from shared.deduplication import (
     DeduplicationChecker,
     ContentItem,
     ContentType,
+    load_dedup_config,
 )
 
 from llm.src.client import LLMClient
@@ -200,14 +201,19 @@ class Documenter:
             self.snapshot_time,
         )
 
+        # Load deduplication config from centralized config.yaml
+        self._dedup_config = load_dedup_config()
+
         # Initialize deduplication checker with LLM callback
-        # Uses cheap LLM (Sonnet) for dedup to preserve expensive quota for exploration
+        # Uses cheap LLM (configured model) for dedup to preserve expensive quota
         self.dedup_checker = DeduplicationChecker(
             llm_callback=self._dedup_llm_callback,
-            use_signature_check=True,
-            use_heuristic_check=False,  # LLM-first approach
-            use_batch_llm=True,
-            batch_size=15,
+            use_signature_check=self._dedup_config.get("use_signature_check", True),
+            use_heuristic_check=self._dedup_config.get("use_heuristic_check", False),
+            use_llm_check=self._dedup_config.get("use_llm_check", True),
+            use_batch_llm=self._dedup_config.get("use_batch_llm", True),
+            batch_size=self._dedup_config.get("batch_size", 20),
+            stats_log_interval=self._dedup_config.get("stats_log_interval", 50),
         )
 
         # Load existing document sections into dedup checker
@@ -257,13 +263,16 @@ inevitable — structure that must exist, not structure we impose.
         """
         LLM callback for deduplication checks.
 
-        Uses Claude Sonnet (cheap/fast) to preserve expensive quota for exploration.
+        Uses configured model (cheap/fast) to preserve expensive quota for exploration.
         """
+        model = self._dedup_config.get("model", "claude-sonnet-4-20250514")
+        timeout = self._dedup_config.get("llm_timeout", 60)
+
         response = await self.llm_client.send(
             "claude",
             prompt,
-            model="claude-sonnet-4-20250514",  # Use cheap model for dedup
-            timeout_seconds=60,
+            model=model,
+            timeout_seconds=timeout,
         )
         if response.success:
             return response.text
