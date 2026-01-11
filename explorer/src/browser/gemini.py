@@ -633,10 +633,6 @@ class GeminiInterface(BaseLLMInterface):
                 print(f"[gemini] No send button found, pressing Enter...")
                 await self.page.keyboard.press("Enter")
 
-            # Wait briefly for URL to update with conversation ID
-            await asyncio.sleep(1)
-            self.current_chat_url = self.page.url  # Capture URL after send
-
             # CRITICAL: Set guard to prevent any concurrent operations during response wait
             self._response_in_progress = True
             logger.info(f"[gemini] Response guard ON - waiting for response...")
@@ -653,6 +649,9 @@ class GeminiInterface(BaseLLMInterface):
             if self._check_rate_limit(response):
                 rate_tracker.mark_limited(self.model_name)
                 raise RateLimitError("Gemini rate limit detected")
+
+            # Capture final URL (now has conversation ID)
+            self.current_chat_url = self.page.url
 
             # Log the exchange locally
             self.chat_logger.log_exchange(message, response)
@@ -720,6 +719,9 @@ class GeminiInterface(BaseLLMInterface):
 
         logger.info(f"[gemini] Initial wait: {initial_wait}s before stability checks")
         await asyncio.sleep(initial_wait)
+
+        # Capture URL early (should have conversation ID by now)
+        self.current_chat_url = self.page.url
 
         while (datetime.now() - start_time).seconds < timeout:
             elapsed = (datetime.now() - start_time).seconds

@@ -421,12 +421,11 @@ class ChatGPTInterface(BaseLLMInterface):
                 print(f"[chatgpt] No send button found, pressing Enter...")
                 await self.page.keyboard.press("Enter")
 
-            # Wait briefly for URL to update with conversation ID
-            await asyncio.sleep(1)
-            self.current_chat_url = self.page.url  # Capture URL after send
-
             # Wait for response
             response = await self._wait_for_response()
+
+            # Capture final URL (now has conversation ID)
+            self.current_chat_url = self.page.url
 
             # Check for rate limiting
             if self._check_rate_limit(response):
@@ -454,19 +453,26 @@ class ChatGPTInterface(BaseLLMInterface):
             timeout = self.config.get("response_timeout", 600)  # Pro mode can be slow
 
         print(f"[chatgpt] Waiting for response (timeout: {timeout}s)...")
-        
+
         start_time = datetime.now()
         last_response = ""
         stable_count = 0
-        
+        url_captured = False
+
         # Selectors for assistant messages
         response_selectors = [
             "div[data-message-author-role='assistant']",
             "[data-testid='conversation-turn']:last-child div.markdown",
             "div.agent-turn div.markdown",
         ]
-        
+
         while (datetime.now() - start_time).seconds < timeout:
+            # Capture URL early once it has conversation ID
+            if not url_captured:
+                current_url = self.page.url
+                if "/c/" in current_url:  # ChatGPT conversation URLs contain /c/
+                    self.current_chat_url = current_url
+                    url_captured = True
             for selector in response_selectors:
                 messages = await self.page.query_selector_all(selector)
                 
