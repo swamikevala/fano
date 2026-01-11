@@ -17,6 +17,11 @@ FANO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(FANO_ROOT))
 
 from shared.logging import get_logger, correlation_context
+from shared.deduplication import (
+    DeduplicationChecker,
+    ContentItem,
+    ContentType,
+)
 
 from llm.src.client import LLMClient
 from llm.src.consensus import ConsensusReviewer
@@ -111,6 +116,9 @@ class Documenter:
         # Annotations (user comments and protected regions)
         self.annotation_manager: Optional[AnnotationManager] = None
 
+        # Deduplication checker
+        self.dedup_checker: Optional[DeduplicationChecker] = None
+
     def _load_config(self, config_path: Optional[Path]) -> dict:
         """Load configuration from file."""
         if config_path is None:
@@ -192,11 +200,30 @@ class Documenter:
             self.snapshot_time,
         )
 
+        # Initialize deduplication checker with LLM callback
+        self.dedup_checker = DeduplicationChecker(
+            llm_callback=self._dedup_llm_callback,
+            keyword_threshold=0.40,
+            concept_threshold=0.45,
+            combined_threshold=0.50,
+            use_batch_llm=True,
+            batch_size=15,
+        )
+
+        # Load existing document sections into dedup checker
+        for section in self.document.sections:
+            self.dedup_checker.add_content(ContentItem(
+                id=section.id,
+                text=section.content,
+                content_type=ContentType.SECTION,
+            ))
+
         log.info(
             "documenter.initialized",
             sections=len(self.document.sections),
             concepts=len(self.concept_tracker.get_established_concepts()),
             pending_opportunities=self.opportunity_finder.get_pending_count(),
+            dedup_known_items=self.dedup_checker.known_count,
             use_deep_mode=self.use_deep_mode,
         )
 
@@ -225,6 +252,21 @@ inevitable — structure that must exist, not structure we impose.
         if self.llm_client:
             await self.llm_client.close()
             log.info("documenter.cleanup.complete")
+
+    async def _dedup_llm_callback(self, prompt: str) -> str:
+        """
+        LLM callback for deduplication checks.
+
+        Uses Claude for semantic duplicate detection.
+        """
+        response = await self.llm_client.send(
+            "claude",
+            prompt,
+            timeout_seconds=60,
+        )
+        if response.success:
+            return response.text
+        raise RuntimeError(f"LLM call failed: {response.error}")
 
     async def _plan_next_work(self) -> Optional[dict]:
         """
@@ -467,6 +509,22 @@ ESTABLISHES:
         """
         establishes = establishes or []
 
+        # Check for duplicates before writing
+        if self.dedup_checker:
+            dedup_result = await self.dedup_checker.check_duplicate(
+                content,
+                item_id=f"prereq-pending",
+                content_type=ContentType.PREREQUISITE,
+            )
+            if dedup_result.is_duplicate:
+                log.info(
+                    "documenter.prerequisite.duplicate_detected",
+                    duplicate_of=dedup_result.duplicate_of,
+                    method=dedup_result.check_method,
+                    reason=dedup_result.reason,
+                )
+                return  # Skip this prerequisite, it's already covered
+
         # Fix math formatting if needed
         content = await self._fix_math_formatting(content)
 
@@ -493,6 +551,14 @@ ESTABLISHES:
 
         # Refresh concept tracker by recreating it
         self.concept_tracker = ConceptTracker(self.document)
+
+        # Add to dedup checker for future duplicate detection
+        if self.dedup_checker:
+            self.dedup_checker.add_content(ContentItem(
+                id=section.id,
+                text=content,
+                content_type=ContentType.PREREQUISITE,
+            ))
 
         log.info(
             "documenter.prerequisite.written",
@@ -706,6 +772,25 @@ ESTABLISHES:
             insight_id=opportunity.insight_id,
         )
 
+        # Step 0: Check for duplicates with existing document content
+        if self.dedup_checker:
+            dedup_result = await self.dedup_checker.check_duplicate(
+                opportunity.text,
+                item_id=opportunity.insight_id or "unknown",
+                content_type=ContentType.INSIGHT,
+            )
+            if dedup_result.is_duplicate:
+                log.info(
+                    "documenter.opportunity.duplicate_detected",
+                    insight_id=opportunity.insight_id,
+                    duplicate_of=dedup_result.duplicate_of,
+                    method=dedup_result.check_method,
+                    reason=dedup_result.reason,
+                )
+                # Mark as incorporated (skip it, don't dispute)
+                self.opportunity_finder.mark_incorporated(opportunity)
+                return
+
         # Step 1: Evaluate mathematics
         math_approved = await self._evaluate_math(opportunity)
         if not math_approved:
@@ -905,6 +990,14 @@ ESTABLISHES:
 
         # Register concepts
         self.concept_tracker.register_section(section)
+
+        # Add to dedup checker for future duplicate detection
+        if self.dedup_checker:
+            self.dedup_checker.add_content(ContentItem(
+                id=section.id,
+                text=content,
+                content_type=ContentType.SECTION,
+            ))
 
         # Mark opportunity as incorporated
         self.opportunity_finder.mark_incorporated(opportunity)

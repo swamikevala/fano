@@ -24,11 +24,16 @@ from .prompts import (
     parse_refinement_response,
     parse_post_refinement_review,
 )
-from .deduplication import (
+# Use shared deduplication module
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
+
+from shared.deduplication import (
     DeduplicationChecker,
     get_dedup_checker,
-    is_likely_duplicate,
-    calculate_keyword_similarity,
+    is_similar_heuristic as is_likely_duplicate,  # Backward-compatible alias
+    calculate_keyword_similarity,  # Backward-compatible function
 )
 
 __all__ = [
