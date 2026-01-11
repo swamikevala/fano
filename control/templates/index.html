@@ -1364,6 +1364,7 @@
             document.getElementById(`page-${pageName}`).classList.add('active');
 
             currentPage = pageName;
+            location.hash = pageName;
 
             if (pageName === 'document') {
                 loadDocument();
@@ -1382,6 +1383,13 @@
             if (currentPage === 'logs') loadFullLogs(currentLogsSource, true);
             if (currentPage === 'explorer') loadExplorerStats();
         }, 5000);
+
+        // Restore page from URL hash
+        const validPages = ['dashboard', 'explorer', 'document', 'logs'];
+        const hashPage = location.hash.slice(1);
+        if (hashPage && validPages.includes(hashPage)) {
+            showPage(hashPage);
+        }
 
         // Initial load
         refreshStatus();
