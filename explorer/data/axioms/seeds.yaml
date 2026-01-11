@@ -104,6 +104,10 @@ seeds:
     type: "question"
     priority: 8
 
-  - text: "Our fano geometry relies on symmetry breaking by defining a reference point. Once this one point has been defined, is there a natural second point, and a natural sequence of all 7 points?"
+  - text: "Our fano geometry relies on symmetry breaking by defining a reference point or line. Once this one point (or line) has been defined, is there a natural second point, and a natural sequence of all 7 points?"
+    type: "question"
+    priority: 9
+
+  - text: "The 7 chakras correspond to the 7 musical swaras (S,R,G,M,P,D,N) - but which chakra corresponds to which swara? Ma seems to naturally correspond to the distinguished point/line. In music R,G,D,N all come in pairs, and S, P come as singletones which are more fundamental in nature. Which chakra point/lines do they correspond to (once symmetry has been broken byb choosing Ma)"
     type: "question"
     priority: 9
