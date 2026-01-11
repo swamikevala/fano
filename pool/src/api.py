@@ -146,8 +146,100 @@ class BrowserPool:
                 message=f"Request timed out after {timeout} seconds",
             )
 
+    async def check_all_health(self, auto_recover: bool = True) -> dict[str, tuple[bool, str]]:
+        """
+        Run health checks on all browser workers.
+
+        Args:
+            auto_recover: If True, attempt to reconnect crashed browsers.
+
+        Returns dict of backend -> (is_healthy, reason)
+        """
+        results = {}
+        for name, worker in self.workers.items():
+            try:
+                is_healthy, reason = await worker.check_health()
+
+                # If unhealthy and auto_recover enabled, try to reconnect
+                if not is_healthy and auto_recover and name in ("gemini", "chatgpt"):
+                    log.info("pool.health.auto_recover", backend=name, reason=reason)
+                    if await worker.try_reconnect():
+                        # Re-check health after reconnect
+                        is_healthy, reason = await worker.check_health()
+
+                results[name] = (is_healthy, reason)
+            except Exception as e:
+                results[name] = (False, f"health_check_error:{type(e).__name__}")
+        return results
+
+    async def get_status_async(self, run_health_check: bool = True) -> PoolStatus:
+        """Get status of all backends with optional health check."""
+        backends_config = self.config.get("backends", {})
+        depths = self.queues.get_depths()
+
+        # Run health checks if requested
+        health_results = {}
+        if run_health_check:
+            health_results = await self.check_all_health()
+
+        status = PoolStatus()
+
+        if "gemini" in self.workers:
+            state = self.state.get_backend_state("gemini")
+            gemini_config = backends_config.get("gemini", {})
+
+            # Use health check result if available, otherwise fall back to state
+            if "gemini" in health_results:
+                is_healthy, health_reason = health_results["gemini"]
+                available = is_healthy and not state.get("rate_limited", False)
+            else:
+                available = self.state.is_available("gemini")
+
+            status.gemini = BackendStatus(
+                available=available,
+                authenticated=state.get("authenticated", False),
+                rate_limited=state.get("rate_limited", False),
+                rate_limit_resets_at=state.get("rate_limit_resets_at"),
+                queue_depth=depths.get("gemini", 0),
+                deep_mode_uses_today=state.get("deep_mode_uses_today", 0),
+                deep_mode_limit=gemini_config.get("deep_mode", {}).get("daily_limit", 20),
+            )
+
+        if "chatgpt" in self.workers:
+            state = self.state.get_backend_state("chatgpt")
+            chatgpt_config = backends_config.get("chatgpt", {})
+
+            # Use health check result if available
+            if "chatgpt" in health_results:
+                is_healthy, health_reason = health_results["chatgpt"]
+                available = is_healthy and not state.get("rate_limited", False)
+            else:
+                available = self.state.is_available("chatgpt")
+
+            status.chatgpt = BackendStatus(
+                available=available,
+                authenticated=state.get("authenticated", False),
+                rate_limited=state.get("rate_limited", False),
+                rate_limit_resets_at=state.get("rate_limit_resets_at"),
+                queue_depth=depths.get("chatgpt", 0),
+                pro_mode_uses_today=state.get("pro_mode_uses_today", 0),
+                pro_mode_limit=chatgpt_config.get("pro_mode", {}).get("daily_limit", 100),
+            )
+
+        if "claude" in self.workers:
+            state = self.state.get_backend_state("claude")
+            status.claude = BackendStatus(
+                available=self.state.is_available("claude"),
+                authenticated=state.get("authenticated", False),
+                rate_limited=state.get("rate_limited", False),
+                rate_limit_resets_at=state.get("rate_limit_resets_at"),
+                queue_depth=depths.get("claude", 0),
+            )
+
+        return status
+
     def get_status(self) -> PoolStatus:
-        """Get status of all backends."""
+        """Get status of all backends (sync version, no health check)."""
         backends_config = self.config.get("backends", {})
         depths = self.queues.get_depths()
 
@@ -224,9 +316,15 @@ def create_app(config: dict) -> FastAPI:
         return await pool.send(request)
 
     @app.get("/status", response_model=PoolStatus)
-    async def status():
-        """Get status of all backends."""
-        return pool.get_status()
+    async def status(health_check: bool = True):
+        """
+        Get status of all backends.
+
+        Args:
+            health_check: If True (default), runs actual browser health checks.
+                         Set to False for faster response without health verification.
+        """
+        return await pool.get_status_async(run_health_check=health_check)
 
     @app.post("/auth/{backend}", response_model=AuthResponse)
     async def auth(backend: str):
@@ -254,6 +352,28 @@ def create_app(config: dict) -> FastAPI:
             uptime_seconds=time.time() - pool.start_time,
             version="0.1.0",
         )
+
+    @app.post("/shutdown")
+    async def shutdown_endpoint():
+        """
+        Gracefully shutdown the pool service.
+
+        This allows external controllers (like the control panel) to stop
+        the pool even if they didn't start it.
+        """
+        import os
+        import signal
+
+        log.info("pool.service.lifecycle", action="shutdown_requested")
+
+        # Schedule shutdown after response is sent
+        async def delayed_shutdown():
+            await asyncio.sleep(0.5)  # Give time for response to be sent
+            await pool.shutdown()
+            os.kill(os.getpid(), signal.SIGTERM)
+
+        asyncio.create_task(delayed_shutdown())
+        return {"status": "shutting_down", "message": "Pool will shutdown shortly"}
 
     return app
 

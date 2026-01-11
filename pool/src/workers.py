@@ -122,6 +122,32 @@ class BaseWorker:
         """Trigger interactive authentication. Override in subclasses."""
         raise NotImplementedError
 
+    async def check_health(self) -> tuple[bool, str]:
+        """
+        Check if the backend is actually healthy and responsive.
+
+        Returns:
+            Tuple of (is_healthy, reason)
+        """
+        # Default implementation - subclasses should override
+        return True, "ok"
+
+    async def try_reconnect(self) -> bool:
+        """
+        Attempt to reconnect a crashed browser.
+
+        Returns True if reconnection succeeded.
+        """
+        log.info("pool.worker.reconnect.attempt", backend=self.backend_name)
+        try:
+            await self.disconnect()
+            await self.connect()
+            log.info("pool.worker.reconnect.success", backend=self.backend_name)
+            return True
+        except Exception as e:
+            log.error("pool.worker.reconnect.failed", backend=self.backend_name, error=str(e))
+            return False
+
     async def _try_enable_deep_mode(self) -> bool:
         """
         Try to enable deep/pro mode if available and within limits.
@@ -203,6 +229,35 @@ class GeminiWorker(BaseWorker):
         except Exception as e:
             log.exception(e, "pool.worker.auth_failed", {"backend": self.backend_name})
             return False
+
+    async def check_health(self) -> tuple[bool, str]:
+        """Check if Gemini browser is healthy by verifying page is responsive."""
+        if not self.browser:
+            return False, "browser_not_initialized"
+
+        try:
+            # Check if page exists and is not closed
+            if not self.browser.page:
+                return False, "page_not_initialized"
+
+            # Try a simple page query to verify page is responsive
+            # This will throw TargetClosedError if browser crashed
+            await asyncio.wait_for(
+                self.browser.page.evaluate("() => document.readyState"),
+                timeout=5.0
+            )
+            return True, "ok"
+
+        except asyncio.TimeoutError:
+            log.warning("pool.health.timeout", backend=self.backend_name)
+            self.state.mark_authenticated(self.backend_name, False)
+            return False, "page_unresponsive"
+
+        except Exception as e:
+            error_name = type(e).__name__
+            log.warning("pool.health.failed", backend=self.backend_name, error=error_name, message=str(e))
+            self.state.mark_authenticated(self.backend_name, False)
+            return False, f"page_error:{error_name}"
 
     async def _process_request(self, request: SendRequest) -> SendResponse:
         """Process a Gemini request."""
@@ -289,6 +344,35 @@ class ChatGPTWorker(BaseWorker):
         except Exception as e:
             log.exception(e, "pool.worker.auth_failed", {"backend": self.backend_name})
             return False
+
+    async def check_health(self) -> tuple[bool, str]:
+        """Check if ChatGPT browser is healthy by verifying page is responsive."""
+        if not self.browser:
+            return False, "browser_not_initialized"
+
+        try:
+            # Check if page exists and is not closed
+            if not self.browser.page:
+                return False, "page_not_initialized"
+
+            # Try a simple page query to verify page is responsive
+            # This will throw TargetClosedError if browser crashed
+            await asyncio.wait_for(
+                self.browser.page.evaluate("() => document.readyState"),
+                timeout=5.0
+            )
+            return True, "ok"
+
+        except asyncio.TimeoutError:
+            log.warning("pool.health.timeout", backend=self.backend_name)
+            self.state.mark_authenticated(self.backend_name, False)
+            return False, "page_unresponsive"
+
+        except Exception as e:
+            error_name = type(e).__name__
+            log.warning("pool.health.failed", backend=self.backend_name, error=error_name, message=str(e))
+            self.state.mark_authenticated(self.backend_name, False)
+            return False, f"page_error:{error_name}"
 
     async def _process_request(self, request: SendRequest) -> SendResponse:
         """Process a ChatGPT request."""

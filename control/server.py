@@ -340,6 +340,44 @@ def create_app() -> Flask:
         if component not in ["pool", "explorer", "documenter"]:
             return jsonify({"error": f"Unknown component: {component}"}), 400
 
+        # Special handling for pool - might be external
+        if component == "pool":
+            config = load_config()
+            pool_host = config.get("llm", {}).get("pool", {}).get("host", "127.0.0.1")
+            pool_port = config.get("llm", {}).get("pool", {}).get("port", 9000)
+
+            proc = _processes.get("pool")
+            proc_running = proc is not None and proc.poll() is None
+
+            # If we have the process, terminate it directly
+            if proc_running:
+                try:
+                    proc.terminate()
+                    proc.wait(timeout=5)
+                    _processes["pool"] = None
+                    return jsonify({"status": "stopped", "component": "pool"})
+                except Exception as e:
+                    proc.kill()
+                    _processes["pool"] = None
+                    return jsonify({"status": "killed", "component": "pool", "error": str(e)})
+
+            # Otherwise, try to call the shutdown endpoint (for external pool)
+            if check_pool_health(pool_host, pool_port):
+                try:
+                    import urllib.request
+                    req = urllib.request.Request(
+                        f"http://{pool_host}:{pool_port}/shutdown",
+                        method="POST"
+                    )
+                    with urllib.request.urlopen(req, timeout=5) as resp:
+                        result = json.loads(resp.read().decode())
+                    return jsonify({"status": "shutdown_requested", "component": "pool", "result": result})
+                except Exception as e:
+                    return jsonify({"error": f"Failed to shutdown external pool: {e}"}), 500
+
+            return jsonify({"error": "Pool is not running"}), 400
+
+        # For other components, use normal process termination
         proc = _processes.get(component)
         if proc is None or proc.poll() is not None:
             return jsonify({"error": f"{component} is not running"}), 400
