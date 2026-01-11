@@ -456,17 +456,27 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 1rem;
         }
 
         .document-toolbar {
             position: sticky;
             top: var(--nav-height);
             z-index: 100;
-            margin-bottom: 1rem;
+            margin-bottom: 0.75rem;
+            padding: 0.5rem 1rem;
         }
 
-        .document-stats { color: var(--text-dim); font-size: 0.9rem; }
+        .document-toolbar h2 {
+            font-size: 1.1rem;
+            margin: 0;
+        }
+
+        .document-toolbar .btn {
+            padding: 0.25rem 0.6rem;
+            font-size: 0.8rem;
+        }
+
+        .document-stats { color: var(--text-dim); font-size: 0.75rem; }
 
         /* Full Logs Page */
         .logs-page-container {
