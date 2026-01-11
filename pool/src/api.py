@@ -403,6 +403,31 @@ def create_app(config: dict) -> FastAPI:
 
         return result
 
+    @app.get("/recovered")
+    async def get_recovered():
+        """
+        Get any recovered responses pending pickup.
+
+        After a pool restart, responses that were recovered from in-progress
+        chats are stored here for later pickup by the client.
+        """
+        responses = pool.state.get_recovered_responses()
+        return {"responses": responses, "count": len(responses)}
+
+    @app.delete("/recovered/{request_id}")
+    async def clear_recovered(request_id: str):
+        """
+        Mark a recovered response as picked up.
+
+        Call this after successfully processing a recovered response
+        to remove it from the pending list.
+        """
+        found = pool.state.clear_recovered_response(request_id)
+        if found:
+            return {"status": "cleared", "request_id": request_id}
+        else:
+            raise HTTPException(status_code=404, detail=f"No recovered response with id: {request_id}")
+
     @app.post("/shutdown")
     async def shutdown_endpoint():
         """

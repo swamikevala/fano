@@ -573,6 +573,64 @@ class ChatGPTInterface(BaseLLMInterface):
             el.dispatchEvent(new Event('input', { bubbles: true }));
         }""", text)
 
+    async def is_generating(self) -> bool:
+        """Check if ChatGPT is currently generating a response."""
+        # Check for stop button which indicates active generation
+        streaming_selectors = [
+            "button[aria-label='Stop generating']",
+            "button[aria-label='Stop streaming']",
+            "button[aria-label='Stop']",
+        ]
+
+        for selector in streaming_selectors:
+            try:
+                elem = await self.page.query_selector(selector)
+                if elem and await elem.is_visible():
+                    return True
+            except Exception:
+                continue
+        return False
+
+    async def try_get_response(self) -> Optional[str]:
+        """
+        Try to get the last response if already generated, without waiting.
+
+        Used for recovery after restart - checks if a response exists and
+        is not currently being generated.
+
+        Returns:
+            Response text if ready, None if still generating or no response.
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+
+        # If still generating, return None
+        if await self.is_generating():
+            logger.info("[chatgpt] try_get_response: still generating")
+            return None
+
+        # Selectors for assistant messages
+        response_selectors = [
+            "div[data-message-author-role='assistant']",
+            "[data-testid='conversation-turn']:last-child div.markdown",
+            "div.agent-turn div.markdown",
+        ]
+
+        for selector in response_selectors:
+            try:
+                messages = await self.page.query_selector_all(selector)
+                if messages:
+                    last_msg = messages[-1]
+                    response = await last_msg.inner_text()
+                    if response and len(response) > 10:
+                        logger.info(f"[chatgpt] try_get_response: found response ({len(response)} chars)")
+                        return response.strip()
+            except Exception:
+                continue
+
+        logger.info("[chatgpt] try_get_response: no response found")
+        return None
+
 
 class RateLimitError(Exception):
     """Raised when rate limit is detected."""

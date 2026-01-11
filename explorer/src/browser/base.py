@@ -517,3 +517,19 @@ class BaseLLMInterface:
     async def _wait_for_response(self, timeout: int = None) -> str:
         """Wait for and extract response. Override in subclasses."""
         raise NotImplementedError
+
+    async def try_get_response(self) -> Optional[str]:
+        """
+        Try to get the last response if already generated, without waiting.
+
+        Used for recovery after restart - checks if a response exists and
+        is not currently being generated.
+
+        Returns:
+            Response text if ready, None if still generating or no response.
+        """
+        raise NotImplementedError
+
+    async def is_generating(self) -> bool:
+        """Check if the LLM is currently generating a response."""
+        raise NotImplementedError

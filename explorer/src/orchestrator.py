@@ -10,9 +10,12 @@ The orchestrator is responsible for:
 """
 
 import asyncio
+import json
 import logging
 import random
 import re
+import urllib.error
+import urllib.request
 import yaml
 from datetime import datetime
 from pathlib import Path
@@ -118,6 +121,9 @@ class Orchestrator:
         await self._connect_models()
 
         try:
+            # Check for any recovered responses from pool restart
+            await self._check_recovered_responses()
+
             # Check for new seeds and prioritize them
             await self._check_and_spawn_for_new_seeds()
 
@@ -198,6 +204,93 @@ class Orchestrator:
                 await asyncio.sleep(5)
 
         logger.info(f"[backlog] Completed processing {len(unprocessed)} threads")
+
+    async def _check_recovered_responses(self):
+        """
+        Check for any recovered responses from pool restart.
+
+        When the pool restarts while an LLM was generating a response,
+        it attempts to recover the response by navigating back to the chat.
+        Those recovered responses are stored and can be retrieved here.
+        """
+        if not self.llm_client:
+            return
+
+        try:
+            # Get pool config
+            pool_config = CONFIG.get("llm", {}).get("pool", {})
+            pool_host = pool_config.get("host", "127.0.0.1")
+            pool_port = pool_config.get("port", 9000)
+
+            # Query pool for recovered responses
+            url = f"http://{pool_host}:{pool_port}/recovered"
+            with urllib.request.urlopen(url, timeout=5) as resp:
+                data = json.loads(resp.read().decode())
+
+            responses = data.get("responses", [])
+            if not responses:
+                return
+
+            logger.info(f"[recovery] Found {len(responses)} recovered responses from pool")
+
+            for item in responses:
+                request_id = item.get("request_id")
+                thread_id = item.get("thread_id")
+                response_text = item.get("response", "")
+                backend = item.get("backend")
+                prompt = item.get("prompt", "")
+
+                logger.info(f"[recovery] Processing recovered response from {backend}",
+                           extra={"request_id": request_id, "thread_id": thread_id,
+                                  "response_length": len(response_text)})
+
+                # Try to find the associated thread and add the response
+                if thread_id:
+                    try:
+                        thread = self._load_thread_by_id(thread_id)
+                        if thread:
+                            # Add the recovered response to the thread
+                            from models import Exchange
+                            thread.add_exchange(Exchange(
+                                role=ExchangeRole.LLM,
+                                content=response_text,
+                                model=backend,
+                                timestamp=datetime.now(),
+                            ))
+                            thread.save(self.data_dir / "explorations")
+                            logger.info(f"[recovery] Added recovered response to thread {thread_id}")
+                    except Exception as e:
+                        logger.warning(f"[recovery] Could not add response to thread {thread_id}: {e}")
+
+                # Clear the recovered response from pool
+                try:
+                    clear_url = f"http://{pool_host}:{pool_port}/recovered/{request_id}"
+                    req = urllib.request.Request(clear_url, method="DELETE")
+                    urllib.request.urlopen(req, timeout=5)
+                    logger.info(f"[recovery] Cleared recovered response {request_id}")
+                except Exception as e:
+                    logger.warning(f"[recovery] Could not clear recovered response {request_id}: {e}")
+
+        except urllib.error.URLError:
+            # Pool not running or not reachable - that's fine
+            pass
+        except Exception as e:
+            logger.warning(f"[recovery] Error checking for recovered responses: {e}")
+
+    def _load_thread_by_id(self, thread_id: str) -> Optional[ExplorationThread]:
+        """Load a thread by its ID (short or full)."""
+        threads_dir = self.data_dir / "explorations"
+        if not threads_dir.exists():
+            return None
+
+        # Try to find matching thread file
+        for filepath in threads_dir.glob("*.json"):
+            if thread_id in filepath.stem:
+                try:
+                    return ExplorationThread.load(filepath)
+                except Exception:
+                    pass
+        return None
 
     def _get_backlog_model(self) -> tuple[Optional[str], Optional[object]]:
         """Get an available model for backlog processing."""

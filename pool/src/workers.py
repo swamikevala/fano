@@ -8,6 +8,7 @@ import asyncio
 import os
 import sys
 import time
+import uuid
 from pathlib import Path
 from typing import Optional
 
@@ -260,6 +261,92 @@ class BaseWorker:
             if self.browser._check_rate_limit(response_text):
                 self.state.mark_rate_limited(self.backend_name)
 
+    async def check_and_recover_work(self) -> Optional[SendResponse]:
+        """
+        Check for and recover any in-progress work from before a restart.
+
+        If there's active work in state and we can navigate back to the chat,
+        try to collect the response and store it for later pickup.
+
+        Returns SendResponse if work was recovered, None otherwise.
+        """
+        if not self.browser or not hasattr(self.browser, 'page'):
+            return None
+
+        active = self.state.get_active_work(self.backend_name)
+        if not active:
+            return None
+
+        chat_url = active.get("chat_url")
+        if not chat_url:
+            # No chat URL to recover from
+            self.state.clear_active_work(self.backend_name)
+            return None
+
+        log.info("pool.worker.recovery.attempting",
+                 backend=self.backend_name,
+                 request_id=active.get("request_id"),
+                 chat_url=chat_url)
+
+        try:
+            # Navigate back to the chat
+            await self.browser.page.goto(chat_url)
+            await self.browser.page.wait_for_load_state("networkidle")
+            await asyncio.sleep(2)  # Let page settle
+
+            # Check if response is ready or still generating
+            if hasattr(self.browser, 'is_generating') and await self.browser.is_generating():
+                log.info("pool.worker.recovery.still_generating", backend=self.backend_name)
+                # Still generating - wait for it
+                response_text = await self.browser._wait_for_response()
+            elif hasattr(self.browser, 'try_get_response'):
+                response_text = await self.browser.try_get_response()
+                if not response_text:
+                    log.warning("pool.worker.recovery.no_response", backend=self.backend_name)
+                    self.state.clear_active_work(self.backend_name)
+                    return None
+            else:
+                log.warning("pool.worker.recovery.no_method", backend=self.backend_name)
+                self.state.clear_active_work(self.backend_name)
+                return None
+
+            # Store the recovered response for later pickup
+            self.state.add_recovered_response(
+                backend=self.backend_name,
+                request_id=active.get("request_id", str(uuid.uuid4())),
+                prompt=active.get("prompt", ""),
+                response=response_text,
+                thread_id=active.get("thread_id"),
+                options=active.get("options"),
+            )
+
+            # Clear active work
+            self.state.clear_active_work(self.backend_name)
+
+            log.info("pool.worker.recovery.success",
+                     backend=self.backend_name,
+                     request_id=active.get("request_id"),
+                     response_length=len(response_text))
+
+            return SendResponse(
+                success=True,
+                response=response_text,
+                recovered=True,
+                metadata=ResponseMetadata(
+                    backend=self.backend_name,
+                    deep_mode_used=active.get("options", {}).get("deep_mode", False),
+                ),
+            )
+
+        except Exception as e:
+            log.error("pool.worker.recovery.failed",
+                      backend=self.backend_name,
+                      error=str(e),
+                      error_type=type(e).__name__)
+            # Clear the stale active work
+            self.state.clear_active_work(self.backend_name)
+            return None
+
 
 class GeminiWorker(BaseWorker):
     """Worker for Gemini backend."""
@@ -286,6 +373,9 @@ class GeminiWorker(BaseWorker):
             await self.browser.connect()
             self.state.mark_authenticated(self.backend_name, True)
             log.info("pool.worker.lifecycle", action="connected", backend=self.backend_name)
+
+            # Check for and recover any in-progress work from before restart
+            await self.check_and_recover_work()
 
         except Exception as e:
             log.exception(e, "pool.worker.connection_failed", {"backend": self.backend_name})
@@ -354,6 +444,7 @@ class GeminiWorker(BaseWorker):
 
         start_time = time.time()
         deep_mode_used = False
+        request_id = self._current_request_id or str(uuid.uuid4())
 
         try:
             if request.options.new_chat:
@@ -362,8 +453,37 @@ class GeminiWorker(BaseWorker):
             if request.options.deep_mode:
                 deep_mode_used = await self._try_enable_deep_mode()
 
+            # Capture chat URL before sending message
+            chat_url = self.browser.page.url
+
+            # Record active work so we can recover if pool restarts
+            self.state.set_active_work(
+                backend=self.backend_name,
+                request_id=request_id,
+                prompt=request.prompt,
+                chat_url=chat_url,
+                thread_id=getattr(request, 'thread_id', None),
+                options={"deep_mode": deep_mode_used, "new_chat": request.options.new_chat},
+            )
+
             response_text = await self.browser.send_message(request.prompt)
+
+            # Update chat URL after sending (it may have changed to include conversation ID)
+            final_chat_url = self.browser.page.url
+            if final_chat_url != chat_url:
+                self.state.set_active_work(
+                    backend=self.backend_name,
+                    request_id=request_id,
+                    prompt=request.prompt,
+                    chat_url=final_chat_url,
+                    thread_id=getattr(request, 'thread_id', None),
+                    options={"deep_mode": deep_mode_used, "new_chat": request.options.new_chat},
+                )
+
             self._check_and_mark_rate_limit(response_text)
+
+            # Clear active work on successful completion
+            self.state.clear_active_work(self.backend_name)
 
             return SendResponse(
                 success=True,
@@ -378,6 +498,7 @@ class GeminiWorker(BaseWorker):
 
         except Exception as e:
             log.exception(e, "pool.request.processing_error", {"backend": self.backend_name})
+            # Don't clear active work on error - we might be able to recover
             return SendResponse(
                 success=False,
                 error="processing_error",
@@ -403,6 +524,9 @@ class ChatGPTWorker(BaseWorker):
             await self.browser.connect()
             self.state.mark_authenticated(self.backend_name, True)
             log.info("pool.worker.lifecycle", action="connected", backend=self.backend_name)
+
+            # Check for and recover any in-progress work from before restart
+            await self.check_and_recover_work()
 
         except Exception as e:
             log.exception(e, "pool.worker.connection_failed", {"backend": self.backend_name})
@@ -469,6 +593,7 @@ class ChatGPTWorker(BaseWorker):
 
         start_time = time.time()
         deep_mode_used = False
+        request_id = self._current_request_id or str(uuid.uuid4())
 
         try:
             if request.options.new_chat:
@@ -481,8 +606,37 @@ class ChatGPTWorker(BaseWorker):
                 # (browser may remember Pro mode from previous session)
                 await self.browser.enable_thinking_mode()
 
+            # Capture chat URL before sending message
+            chat_url = self.browser.page.url
+
+            # Record active work so we can recover if pool restarts
+            self.state.set_active_work(
+                backend=self.backend_name,
+                request_id=request_id,
+                prompt=request.prompt,
+                chat_url=chat_url,
+                thread_id=getattr(request, 'thread_id', None),
+                options={"deep_mode": deep_mode_used, "new_chat": request.options.new_chat},
+            )
+
             response_text = await self.browser.send_message(request.prompt)
+
+            # Update chat URL after sending (it may have changed to include conversation ID)
+            final_chat_url = self.browser.page.url
+            if final_chat_url != chat_url:
+                self.state.set_active_work(
+                    backend=self.backend_name,
+                    request_id=request_id,
+                    prompt=request.prompt,
+                    chat_url=final_chat_url,
+                    thread_id=getattr(request, 'thread_id', None),
+                    options={"deep_mode": deep_mode_used, "new_chat": request.options.new_chat},
+                )
+
             self._check_and_mark_rate_limit(response_text)
+
+            # Clear active work on successful completion
+            self.state.clear_active_work(self.backend_name)
 
             return SendResponse(
                 success=True,
@@ -497,6 +651,7 @@ class ChatGPTWorker(BaseWorker):
 
         except Exception as e:
             log.exception(e, "pool.request.processing_error", {"backend": self.backend_name})
+            # Don't clear active work on error - we might be able to recover
             return SendResponse(
                 success=False,
                 error="processing_error",

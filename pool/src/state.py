@@ -2,9 +2,10 @@
 
 import json
 import sys
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 from threading import Lock
 
 # Add shared module to path
@@ -54,6 +55,7 @@ class StateManager:
                 "rate_limit_resets_at": None,
                 "deep_mode_uses_today": 0,
                 "deep_mode_reset_date": None,
+                "active_work": None,  # Tracks in-progress request
             },
             "chatgpt": {
                 "authenticated": False,
@@ -61,12 +63,15 @@ class StateManager:
                 "rate_limit_resets_at": None,
                 "pro_mode_uses_today": 0,
                 "pro_mode_reset_date": None,
+                "active_work": None,  # Tracks in-progress request
             },
             "claude": {
                 "authenticated": True,  # API-based, always "authenticated" if key exists
                 "rate_limited": False,
                 "rate_limit_resets_at": None,
             },
+            # Recovered responses waiting to be picked up by clients
+            "recovered_responses": [],
         }
 
     def _save(self):
@@ -154,3 +159,103 @@ class StateManager:
         """Check if a backend is available (authenticated and not rate limited)."""
         state = self.get_backend_state(backend)
         return state.get("authenticated", False) and not state.get("rate_limited", False)
+
+    # --- Active Work Tracking ---
+
+    def set_active_work(
+        self,
+        backend: str,
+        request_id: str,
+        prompt: str,
+        chat_url: str,
+        thread_id: Optional[str] = None,
+        options: Optional[dict] = None,
+    ):
+        """Record that a backend is working on a request."""
+        with self._lock:
+            if backend not in self._state:
+                return
+            self._state[backend]["active_work"] = {
+                "request_id": request_id,
+                "prompt": prompt,
+                "chat_url": chat_url,
+                "thread_id": thread_id,
+                "started_at": time.time(),
+                "options": options or {},
+            }
+            self._save()
+            log.info("pool.state.active_work_set",
+                     backend=backend,
+                     request_id=request_id,
+                     chat_url=chat_url)
+
+    def clear_active_work(self, backend: str):
+        """Clear active work for a backend (request completed)."""
+        with self._lock:
+            if backend not in self._state:
+                return
+            had_work = self._state[backend].get("active_work") is not None
+            self._state[backend]["active_work"] = None
+            self._save()
+            if had_work:
+                log.info("pool.state.active_work_cleared", backend=backend)
+
+    def get_active_work(self, backend: str) -> Optional[dict]:
+        """Get active work for a backend, if any."""
+        with self._lock:
+            if backend not in self._state:
+                return None
+            return self._state[backend].get("active_work")
+
+    # --- Recovered Responses ---
+
+    def add_recovered_response(
+        self,
+        backend: str,
+        request_id: str,
+        prompt: str,
+        response: str,
+        thread_id: Optional[str] = None,
+        options: Optional[dict] = None,
+    ):
+        """Store a recovered response for later pickup."""
+        with self._lock:
+            # Initialize if not present
+            if "recovered_responses" not in self._state:
+                self._state["recovered_responses"] = []
+
+            self._state["recovered_responses"].append({
+                "request_id": request_id,
+                "backend": backend,
+                "prompt": prompt,
+                "response": response,
+                "thread_id": thread_id,
+                "options": options or {},
+                "recovered_at": time.time(),
+            })
+            self._save()
+            log.info("pool.state.response_recovered",
+                     backend=backend,
+                     request_id=request_id,
+                     response_length=len(response))
+
+    def get_recovered_responses(self) -> list[dict]:
+        """Get all recovered responses pending pickup."""
+        with self._lock:
+            return list(self._state.get("recovered_responses", []))
+
+    def clear_recovered_response(self, request_id: str) -> bool:
+        """Remove a recovered response (after pickup). Returns True if found."""
+        with self._lock:
+            if "recovered_responses" not in self._state:
+                return False
+            original_len = len(self._state["recovered_responses"])
+            self._state["recovered_responses"] = [
+                r for r in self._state["recovered_responses"]
+                if r.get("request_id") != request_id
+            ]
+            removed = len(self._state["recovered_responses"]) < original_len
+            if removed:
+                self._save()
+                log.info("pool.state.recovered_response_cleared", request_id=request_id)
+            return removed

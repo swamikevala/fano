@@ -33,6 +33,7 @@ class SendRequest(BaseModel):
     backend: Backend
     prompt: str
     options: SendOptions = Field(default_factory=SendOptions)
+    thread_id: Optional[str] = None  # For tracking/recovery purposes
 
 
 class ResponseMetadata(BaseModel):
@@ -51,6 +52,7 @@ class SendResponse(BaseModel):
     message: Optional[str] = None
     retry_after_seconds: Optional[int] = None
     metadata: Optional[ResponseMetadata] = None
+    recovered: bool = False  # True if this response was recovered after a restart
 
 
 class BackendStatus(BaseModel):
