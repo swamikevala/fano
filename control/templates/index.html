@@ -18,6 +18,8 @@
         };
     </script>
     <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js" async></script>
+    <!-- Marked.js for proper markdown rendering -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <style>
         :root {
             --bg-dark: #0f172a;
@@ -311,20 +313,144 @@
         .log-level-ERROR { color: var(--error); }
 
         /* Document Page */
+        /* GitHub-style markdown rendering */
         .document-container {
             background: #fff;
-            color: #333;
+            color: #24292f;
             max-width: 900px;
             margin: 0 auto;
             padding: 2rem 3rem;
             border-radius: 12px;
-            line-height: 1.8;
-            font-family: Georgia, 'Times New Roman', serif;
+            line-height: 1.6;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
+            font-size: 16px;
+            word-wrap: break-word;
         }
 
-        .document-container h1 { color: #1a1a2e; border-bottom: 2px solid #8b5cf6; padding-bottom: 10px; }
-        .document-container h2 { color: #333; border-bottom: 1px solid #ddd; padding-bottom: 5px; margin-top: 2rem; }
-        .document-container code { background: #f4f4f4; padding: 2px 6px; border-radius: 3px; }
+        .document-container h1, .document-container h2, .document-container h3,
+        .document-container h4, .document-container h5, .document-container h6 {
+            margin-top: 24px;
+            margin-bottom: 16px;
+            font-weight: 600;
+            line-height: 1.25;
+        }
+
+        .document-container h1 {
+            font-size: 2em;
+            color: #1a1a2e;
+            border-bottom: 2px solid #8b5cf6;
+            padding-bottom: 0.3em;
+        }
+
+        .document-container h2 {
+            font-size: 1.5em;
+            color: #1f2328;
+            border-bottom: 1px solid #d0d7de;
+            padding-bottom: 0.3em;
+        }
+
+        .document-container h3 { font-size: 1.25em; }
+        .document-container h4 { font-size: 1em; }
+
+        .document-container p {
+            margin-top: 0;
+            margin-bottom: 16px;
+        }
+
+        .document-container blockquote {
+            margin: 0 0 16px 0;
+            padding: 0 1em;
+            color: #656d76;
+            border-left: 0.25em solid #d0d7de;
+        }
+
+        .document-container ul, .document-container ol {
+            margin-top: 0;
+            margin-bottom: 16px;
+            padding-left: 2em;
+        }
+
+        .document-container li {
+            margin-top: 0.25em;
+        }
+
+        .document-container li + li {
+            margin-top: 0.25em;
+        }
+
+        .document-container code {
+            background: rgba(175, 184, 193, 0.2);
+            padding: 0.2em 0.4em;
+            border-radius: 6px;
+            font-size: 85%;
+            font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+        }
+
+        .document-container pre {
+            margin-top: 0;
+            margin-bottom: 16px;
+            padding: 16px;
+            overflow: auto;
+            font-size: 85%;
+            line-height: 1.45;
+            background-color: #f6f8fa;
+            border-radius: 6px;
+        }
+
+        .document-container pre code {
+            background: transparent;
+            padding: 0;
+            font-size: 100%;
+            border-radius: 0;
+        }
+
+        .document-container table {
+            border-spacing: 0;
+            border-collapse: collapse;
+            margin-top: 0;
+            margin-bottom: 16px;
+            width: max-content;
+            max-width: 100%;
+            overflow: auto;
+        }
+
+        .document-container table th, .document-container table td {
+            padding: 6px 13px;
+            border: 1px solid #d0d7de;
+        }
+
+        .document-container table th {
+            font-weight: 600;
+            background-color: #f6f8fa;
+        }
+
+        .document-container table tr:nth-child(2n) {
+            background-color: #f6f8fa;
+        }
+
+        .document-container hr {
+            height: 0.25em;
+            padding: 0;
+            margin: 24px 0;
+            background-color: #d0d7de;
+            border: 0;
+        }
+
+        .document-container strong { font-weight: 600; }
+
+        .document-container a {
+            color: #0969da;
+            text-decoration: none;
+        }
+
+        .document-container a:hover {
+            text-decoration: underline;
+        }
+
+        .document-container img {
+            max-width: 100%;
+            box-sizing: border-box;
+        }
 
         .document-header {
             display: flex;
@@ -2005,34 +2131,65 @@
                     return;
                 }
 
-                // Convert annotation markers to anchor spans BEFORE other processing
-                // Markers look like: <!-- @ann:c001 --> or <!-- @ann:p001 -->
-                let content = data.content.replace(
+                // Protect LaTeX math from markdown processing
+                const mathBlocks = [];
+                let content = data.content;
+
+                // Save display math blocks
+                content = content.replace(/\\\[[\s\S]*?\\\]/g, match => {
+                    mathBlocks.push(match);
+                    return `%%MATH_${mathBlocks.length - 1}%%`;
+                });
+                content = content.replace(/\$\$[\s\S]*?\$\$/g, match => {
+                    mathBlocks.push(match);
+                    return `%%MATH_${mathBlocks.length - 1}%%`;
+                });
+                // Save inline math
+                content = content.replace(/\\\(.*?\\\)/g, match => {
+                    mathBlocks.push(match);
+                    return `%%MATH_${mathBlocks.length - 1}%%`;
+                });
+                content = content.replace(/\$(?!\$)([^\$\n]+)\$/g, match => {
+                    mathBlocks.push(match);
+                    return `%%MATH_${mathBlocks.length - 1}%%`;
+                });
+
+                // Convert annotation markers to placeholders (before markdown)
+                content = content.replace(
                     /<!-- @ann:(\w+) -->/g,
+                    '%%ANN_$1%%'
+                );
+
+                // Configure marked for GFM
+                marked.setOptions({
+                    gfm: true,
+                    breaks: false,
+                    pedantic: false
+                });
+
+                // Render markdown
+                let html = marked.parse(content);
+
+                // Restore annotation markers as spans
+                html = html.replace(
+                    /%%ANN_(\w+)%%/g,
                     '<span class="annotation-anchor" data-annotation-id="$1"></span>'
                 );
 
-                let html = content
-                    .replace(/^### (.*$)/gm, '<h3>$1</h3>')
-                    .replace(/^## (.*$)/gm, '<h2>$1</h2>')
-                    .replace(/^# (.*$)/gm, '<h1>$1</h1>')
-                    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-                    .replace(/\*(.*?)\*/g, '<em>$1</em>')
-                    .replace(/`(.*?)`/g, '<code>$1</code>')
-                    .replace(/^> (.*$)/gm, '<blockquote>$1</blockquote>')
-                    .replace(/^\d+\. (.*$)/gm, '<li>$1</li>')
-                    .replace(/^- (.*$)/gm, '<li>$1</li>')
-                    .replace(/\n\n/g, '</p><p>')
-                    .replace(/\n/g, '<br>');
+                // Restore math blocks
+                mathBlocks.forEach((math, i) => {
+                    html = html.replace(`%%MATH_${i}%%`, math);
+                });
 
-                container.innerHTML = '<p>' + html + '</p>';
+                container.innerHTML = html;
                 statsEl.textContent = `${data.sections} sections · ${Math.round(data.length / 1000)}k characters`;
 
                 // Load annotations and render margin notes
                 await loadAnnotationsAndRender();
 
+                // Typeset math
                 if (typeof MathJax !== 'undefined' && MathJax.typesetPromise) {
-                    MathJax.typesetPromise().catch(err => console.log('MathJax error:', err));
+                    MathJax.typesetPromise([container]).catch(err => console.log('MathJax error:', err));
                 }
             } catch (e) {
                 container.innerHTML = `<p style="color: #888; text-align: center;">Failed to load document: ${e}</p>`;
@@ -2224,28 +2381,45 @@
 
                 const timestamp = new Date(data.version.timestamp).toLocaleString();
 
-                let html = data.content
-                    .replace(/^### (.*$)/gm, '<h3>$1</h3>')
-                    .replace(/^## (.*$)/gm, '<h2>$1</h2>')
-                    .replace(/^# (.*$)/gm, '<h1>$1</h1>')
-                    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-                    .replace(/\*(.*?)\*/g, '<em>$1</em>')
-                    .replace(/`(.*?)`/g, '<code>$1</code>')
-                    .replace(/\n\n/g, '</p><p>')
-                    .replace(/\n/g, '<br>');
+                // Protect math blocks and render with marked
+                const mathBlocks = [];
+                let content = data.content;
+
+                content = content.replace(/\\\[[\s\S]*?\\\]/g, match => {
+                    mathBlocks.push(match);
+                    return `%%MATH_${mathBlocks.length - 1}%%`;
+                });
+                content = content.replace(/\$\$[\s\S]*?\$\$/g, match => {
+                    mathBlocks.push(match);
+                    return `%%MATH_${mathBlocks.length - 1}%%`;
+                });
+                content = content.replace(/\\\(.*?\\\)/g, match => {
+                    mathBlocks.push(match);
+                    return `%%MATH_${mathBlocks.length - 1}%%`;
+                });
+                content = content.replace(/\$(?!\$)([^\$\n]+)\$/g, match => {
+                    mathBlocks.push(match);
+                    return `%%MATH_${mathBlocks.length - 1}%%`;
+                });
+
+                let html = marked.parse(content);
+
+                mathBlocks.forEach((math, i) => {
+                    html = html.replace(`%%MATH_${i}%%`, math);
+                });
 
                 container.innerHTML = `
                     <div style="background: var(--warning); color: black; padding: 0.75rem; margin-bottom: 1rem; border-radius: 4px;">
                         <strong>Viewing version:</strong> ${timestamp} - ${escapeHtml(data.version.description)}
                         <button class="btn" style="float: right; padding: 0.25rem 0.5rem; background: white;" onclick="loadDocument()">Back to Current</button>
                     </div>
-                    <p>${html}</p>
+                    ${html}
                 `;
 
                 statsEl.textContent = `Version from ${timestamp}`;
 
                 if (typeof MathJax !== 'undefined' && MathJax.typesetPromise) {
-                    MathJax.typesetPromise().catch(err => console.log('MathJax error:', err));
+                    MathJax.typesetPromise([container]).catch(err => console.log('MathJax error:', err));
                 }
             } catch (e) {
                 showToast('Failed to load version: ' + e);
