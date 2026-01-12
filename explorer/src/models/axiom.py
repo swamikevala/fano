@@ -345,3 +345,154 @@ class AxiomStore:
         for insight in self.get_blessed_insights():
             explained.update(insight.numbers_explained)
         return list(all_numbers - explained)
+
+    def save_seeds(self, seeds: list[SeedAphorism]) -> None:
+        """
+        Save all seeds to the seeds.yaml file.
+
+        Args:
+            seeds: List of SeedAphorism objects to save
+        """
+        # Build the YAML structure
+        seeds_data = []
+        for seed in seeds:
+            seed_dict = {"text": seed.text}
+            # Always save ID to ensure persistence across loads
+            seed_dict["id"] = seed.id
+            if seed.type != "conjecture":
+                seed_dict["type"] = seed.type
+            if seed.priority != 5:
+                seed_dict["priority"] = seed.priority
+            if seed.tags:
+                seed_dict["tags"] = seed.tags
+            if seed.confidence != "high":
+                seed_dict["confidence"] = seed.confidence
+            if seed.source and seed.source != "user":
+                seed_dict["source"] = seed.source
+            if seed.notes:
+                seed_dict["notes"] = seed.notes
+            seeds_data.append(seed_dict)
+
+        # Create the full YAML content with header comments
+        header = """# Seeds Configuration
+# ===================
+# This file contains three types of entries:
+#
+# 1. AXIOMS (type: axiom)
+#    - Assumed TRUE facts that don't need to be re-discovered
+#    - Always included in every exploration as "given"
+#    - The system will NOT question these
+#
+# 2. CONJECTURES (type: conjecture) [DEFAULT]
+#    - Ideas to explore and verify
+#    - The system will try to develop and validate these
+#    - Use confidence: high/medium/low to indicate certainty
+#
+# 3. QUESTIONS (type: question)
+#    - Specific questions you want answered
+#    - The system will focus exploration on finding answers
+#
+# Format:
+#   - text: The statement or question
+#     type: axiom | conjecture | question  (default: conjecture)
+#     tags: [domain1, domain2]  # Helps with categorization
+#     confidence: high/medium/low  # For conjectures only
+#     source: Where this idea came from (optional)
+#     notes: Additional context (optional)
+
+"""
+        yaml_content = yaml.dump(
+            {"seeds": seeds_data},
+            default_flow_style=False,
+            allow_unicode=True,
+            sort_keys=False,
+            width=120,
+        )
+
+        self.seeds_file.parent.mkdir(parents=True, exist_ok=True)
+        self.seeds_file.write_text(header + yaml_content, encoding="utf-8")
+
+    def add_seed(self, seed: SeedAphorism) -> None:
+        """
+        Add a new seed to the seeds file.
+
+        Args:
+            seed: The SeedAphorism to add
+        """
+        seeds = self.get_seed_aphorisms(sort_by_priority=False)
+        seeds.append(seed)
+        self.save_seeds(seeds)
+
+    def update_seed(self, seed_id: str, updates: dict) -> bool:
+        """
+        Update an existing seed.
+
+        Args:
+            seed_id: The ID of the seed to update
+            updates: Dictionary of fields to update
+
+        Returns:
+            True if seed was found and updated, False otherwise
+        """
+        seeds = self.get_seed_aphorisms(sort_by_priority=False)
+        for i, seed in enumerate(seeds):
+            if seed.id == seed_id:
+                # Apply updates
+                if "text" in updates:
+                    seed.text = updates["text"]
+                if "type" in updates:
+                    seed.type = updates["type"]
+                if "priority" in updates:
+                    priority = updates["priority"]
+                    if isinstance(priority, str):
+                        priority_map = {"high": 8, "medium": 5, "low": 2}
+                        priority = priority_map.get(priority.lower(), 5)
+                    seed.priority = max(1, min(10, int(priority)))
+                if "tags" in updates:
+                    seed.tags = updates["tags"]
+                if "confidence" in updates:
+                    seed.confidence = updates["confidence"]
+                if "source" in updates:
+                    seed.source = updates["source"]
+                if "notes" in updates:
+                    seed.notes = updates["notes"]
+
+                seeds[i] = seed
+                self.save_seeds(seeds)
+                return True
+        return False
+
+    def delete_seed(self, seed_id: str) -> bool:
+        """
+        Delete a seed by its ID.
+
+        Args:
+            seed_id: The ID of the seed to delete
+
+        Returns:
+            True if seed was found and deleted, False otherwise
+        """
+        seeds = self.get_seed_aphorisms(sort_by_priority=False)
+        original_count = len(seeds)
+        seeds = [s for s in seeds if s.id != seed_id]
+
+        if len(seeds) < original_count:
+            self.save_seeds(seeds)
+            return True
+        return False
+
+    def get_seed_by_id(self, seed_id: str) -> Optional[SeedAphorism]:
+        """
+        Get a specific seed by its ID.
+
+        Args:
+            seed_id: The ID of the seed to retrieve
+
+        Returns:
+            The SeedAphorism if found, None otherwise
+        """
+        seeds = self.get_seed_aphorisms(sort_by_priority=False)
+        for seed in seeds:
+            if seed.id == seed_id:
+                return seed
+        return None
