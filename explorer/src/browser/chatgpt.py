@@ -65,7 +65,7 @@ class ChatGPTInterface(BaseLLMInterface):
                     print(f"[chatgpt] Found input with selector: {selector}")
                     self._input_selector = selector
                     return
-            except:
+            except Exception:
                 continue
         
         print(f"[chatgpt] WARNING: Could not find input element. Current URL: {self.page.url}")
@@ -124,7 +124,7 @@ class ChatGPTInterface(BaseLLMInterface):
                         print(f"[chatgpt] WARNING: Not logged in! Found: {selector}")
                         print(f"[chatgpt] Please run auth setup for ChatGPT")
                         return False
-                except:
+                except Exception:
                     continue
 
             # Check 3: URL-based detection
@@ -133,7 +133,7 @@ class ChatGPTInterface(BaseLLMInterface):
                 if '/auth/' in current_url or 'login' in current_url.lower():
                     print(f"[chatgpt] WARNING: On login page: {current_url}")
                     return False
-            except:
+            except Exception:
                 pass  # URL check failed, continue
 
             # Check 4: Look for logged-in indicators as confirmation
@@ -149,7 +149,7 @@ class ChatGPTInterface(BaseLLMInterface):
                     if element:
                         print(f"[chatgpt] Confirmed logged in (found: {selector})")
                         return True
-                except:
+                except Exception:
                     continue
 
             # Uncertain - assume logged in if no login indicators found
@@ -360,7 +360,7 @@ class ChatGPTInterface(BaseLLMInterface):
                         await effort_control.click()
                         await asyncio.sleep(0.3)
                         break
-                except:
+                except Exception:
                     continue
 
             # Look for the specific effort level option
@@ -378,7 +378,7 @@ class ChatGPTInterface(BaseLLMInterface):
                         await option.click()
                         await asyncio.sleep(0.3)
                         return
-                except:
+                except Exception:
                     continue
 
             # Try looking for a slider or segmented control

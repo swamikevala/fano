@@ -58,7 +58,7 @@ class ClaudeInterface(BaseLLMInterface):
                     print(f"[claude] Found input with selector: {selector}")
                     self._input_selector = selector
                     return
-            except:
+            except Exception:
                 continue
 
         print(f"[claude] WARNING: Could not find input element. Current URL: {self.page.url}")
@@ -114,7 +114,7 @@ class ClaudeInterface(BaseLLMInterface):
                         print(f"[claude] WARNING: Not logged in! Found: {selector}")
                         print(f"[claude] Please run auth setup for Claude")
                         return False
-                except:
+                except Exception:
                     continue
 
             # Check 3: URL-based detection
@@ -123,7 +123,7 @@ class ClaudeInterface(BaseLLMInterface):
                 if '/login' in current_url.lower() or 'auth' in current_url.lower():
                     print(f"[claude] WARNING: On login page: {current_url}")
                     return False
-            except:
+            except Exception:
                 pass
 
             # Check 4: Look for logged-in indicators
@@ -140,7 +140,7 @@ class ClaudeInterface(BaseLLMInterface):
                     if element:
                         print(f"[claude] Confirmed logged in (found: {selector})")
                         return True
-                except:
+                except Exception:
                     continue
 
             # Uncertain - assume logged in if no login indicators found
@@ -208,7 +208,7 @@ class ClaudeInterface(BaseLLMInterface):
                         log.info(f"[claude] Found model selector: {selector}")
                         break
                     model_btn = None
-                except:
+                except Exception:
                     continue
 
             if model_btn:
@@ -233,7 +233,7 @@ class ClaudeInterface(BaseLLMInterface):
                             await asyncio.sleep(1)
                             self.extended_thinking_enabled = True
                             return True
-                    except:
+                    except Exception:
                         continue
 
                 # Close dropdown if no option found
@@ -256,7 +256,7 @@ class ClaudeInterface(BaseLLMInterface):
                         await asyncio.sleep(0.5)
                         self.extended_thinking_enabled = True
                         return True
-                except:
+                except Exception:
                     continue
 
             log.warning("[claude] Extended Thinking toggle not found")
@@ -437,7 +437,7 @@ class ClaudeInterface(BaseLLMInterface):
                         if is_visible:
                             is_still_processing = True
                             break
-                except:
+                except Exception:
                     continue
 
             if is_still_processing:
@@ -456,7 +456,7 @@ class ClaudeInterface(BaseLLMInterface):
                         if current_response and len(current_response) > 10:
                             response_started = True
                             break
-                except:
+                except Exception:
                     continue
 
             if current_response:
@@ -474,7 +474,7 @@ class ClaudeInterface(BaseLLMInterface):
                                 if elem and await elem.is_visible():
                                     final_check = True
                                     break
-                            except:
+                            except Exception:
                                 continue
 
                         if not final_check:
@@ -553,7 +553,7 @@ class ClaudeInterface(BaseLLMInterface):
                 elem = await self.page.query_selector(selector)
                 if elem and await elem.is_visible():
                     return True
-            except:
+            except Exception:
                 continue
         return False
 
@@ -587,7 +587,7 @@ class ClaudeInterface(BaseLLMInterface):
                     if response and len(response) > 10:
                         log.info(f"[claude] try_get_response: found response ({len(response)} chars)")
                         return response.strip()
-            except:
+            except Exception:
                 continue
 
         log.info("[claude] try_get_response: no response found")

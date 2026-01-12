@@ -97,7 +97,7 @@ class GeminiInterface(BaseLLMInterface):
                     print(f"[gemini] Found input with selector: {selector}")
                     self._input_selector = selector
                     return
-            except:
+            except Exception:
                 continue
         
         print(f"[gemini] WARNING: Could not find input element")
