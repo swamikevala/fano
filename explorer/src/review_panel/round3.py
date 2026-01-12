@@ -26,6 +26,7 @@ from .prompts import (
     parse_round3_response,
 )
 from .claude_api import ClaudeReviewer
+from .llm_executor import LLMExecutor, create_executors, send_to_llm
 
 # Import quota exception for special handling
 try:
@@ -60,7 +61,10 @@ async def run_round3(
         - modified_insight: The new insight text if modification was accepted, else None
         - refinement_record: Record of the modification if one was accepted, else None
     """
-    log.info("[round3] Starting structured deliberation with collaborative modification")
+    log.info("round3.started")
+
+    # Create executors for available LLMs
+    executors = create_executors(gemini_browser, chatgpt_browser, claude_reviewer)
 
     # Identify majority and minority positions
     majority_rating = round2.get_majority_rating()
@@ -68,15 +72,14 @@ async def run_round3(
     majority_llms = round2.get_majority_llms()
 
     if not majority_rating or not minority_llms:
-        # This shouldn't happen - Round 3 only runs on 2-1 splits
-        log.warning("[round3] No clear majority/minority, skipping deliberation")
+        log.warning("round3.no_clear_split")
         return round2, [], False, None, None
 
     minority_llm = minority_llms[0]  # Should be exactly one
     minority_rating = round2.responses[minority_llm].rating
 
-    log.info(f"[round3] Majority ({majority_rating}): {majority_llms}")
-    log.info(f"[round3] Minority ({minority_rating}): {minority_llms}")
+    log.info("round3.positions", majority=majority_llms, minority=minority_llms,
+             majority_rating=majority_rating, minority_rating=minority_rating)
 
     # Build summaries for prompts
     majority_reasoning = _summarize_reasoning(round2, majority_llms)
@@ -92,23 +95,20 @@ async def run_round3(
         minority_count=len(minority_llms),
         minority_reasoning=minority_reasoning,
         minority_llm=minority_llm,
-        gemini_browser=gemini_browser,
-        chatgpt_browser=chatgpt_browser,
-        claude_reviewer=claude_reviewer,
+        executors=executors,
     )
 
     if not minority_result:
-        log.warning("[round3] Could not get minority argument")
+        log.warning("round3.minority_argument_failed")
         return round2, [], True, None, None
 
-    # minority_result is now a dict with argument and optional modification
     minority_argument = minority_result.get("strongest_argument", "")
     proposed_modification = minority_result.get("proposed_modification", "")
     modification_rationale = minority_result.get("modification_rationale", "")
 
-    log.info(f"[round3] Minority argument: {minority_argument[:100]}...")
+    log.info("round3.minority_argument", preview=minority_argument[:100])
     if proposed_modification:
-        log.info(f"[round3] Minority proposed modification: {proposed_modification[:100]}...")
+        log.info("round3.minority_modification", preview=proposed_modification[:100])
 
     # Step 2: Get majority's response (including evaluation of any proposed modification)
     majority_result = await _get_majority_response(
@@ -118,32 +118,29 @@ async def run_round3(
         majority_llms=majority_llms,
         proposed_modification=proposed_modification,
         modification_rationale=modification_rationale,
-        gemini_browser=gemini_browser,
-        chatgpt_browser=chatgpt_browser,
-        claude_reviewer=claude_reviewer,
+        executors=executors,
     )
 
     if not majority_result:
-        log.warning("[round3] Could not get majority response")
+        log.warning("round3.majority_response_failed")
         return round2, [], True, None, None
 
     majority_response = majority_result.get("response_to_argument", "")
     modification_accepted = majority_result.get("accept_modification", False)
-    modification_assessment = majority_result.get("modification_assessment", "")
 
-    log.info(f"[round3] Majority response: {majority_response[:100]}...")
+    log.info("round3.majority_response", preview=majority_response[:100])
     if proposed_modification:
-        log.info(f"[round3] Modification accepted: {modification_accepted}")
+        log.info("round3.modification_decision", accepted=modification_accepted)
 
     # Track accepted modification
     modified_insight = None
     refinement_record = None
 
     if proposed_modification and modification_accepted:
-        log.info("[round3] MODIFICATION ACCEPTED - Final votes will be on modified insight")
+        log.info("round3.modification_accepted")
         modified_insight = proposed_modification
         refinement_record = RefinementRecord(
-            from_version=1,  # Will be updated by caller with actual version
+            from_version=1,
             to_version=2,
             original_insight=chunk_insight,
             refined_insight=proposed_modification,
@@ -163,21 +160,15 @@ async def run_round3(
             majority_response=majority_response,
             round2=round2,
             minority_llm=minority_llm,
-            gemini_browser=gemini_browser,
-            chatgpt_browser=chatgpt_browser,
-            claude_reviewer=claude_reviewer,
-            deliberation_minority_argument=minority_argument,
-            deliberation_majority_response=majority_response,
+            executors=executors,
             modified_insight=modified_insight,
             modification_accepted=modification_accepted,
         )
     except Exception as e:
-        # Check for quota exhaustion - build partial round and re-raise
         if GeminiQuotaExhausted and isinstance(e, GeminiQuotaExhausted):
-            log.error(f"[round3] Quota exhausted during final votes")
+            log.error("round3.quota_exhausted")
             final_responses = getattr(e, 'partial_responses', {})
             mind_changes = getattr(e, 'mind_changes', [])
-            # Build partial round for saving
             partial_round = ReviewRound(
                 round_number=3,
                 mode="deliberation",
@@ -201,13 +192,11 @@ async def run_round3(
     if len(unique_ratings) == 1:
         outcome = "resolved"
         is_disputed = False
-        log.info(f"[round3] Resolved to unanimous: {final_ratings[0]}")
-        if modified_insight:
-            log.info("[round3] Unanimous on MODIFIED insight!")
+        log.info("round3.resolved", rating=final_ratings[0], modified=bool(modified_insight))
     else:
         outcome = "disputed"
         is_disputed = True
-        log.info(f"[round3] Still disputed: {final_ratings}")
+        log.info("round3.disputed", ratings=final_ratings)
 
     review_round = ReviewRound(
         round_number=3,
@@ -240,16 +229,9 @@ async def _get_minority_argument(
     minority_count: int,
     minority_reasoning: str,
     minority_llm: str,
-    gemini_browser,
-    chatgpt_browser,
-    claude_reviewer: Optional[ClaudeReviewer],
+    executors: dict[str, LLMExecutor],
 ) -> Optional[dict]:
-    """Get the minority's strongest argument and optional modification proposal.
-
-    Returns:
-        Dict with keys: strongest_argument, proposed_modification, modification_rationale
-        Or None if failed.
-    """
+    """Get the minority's strongest argument and optional modification proposal."""
     prompt = build_round3_minority_prompt(
         chunk_insight=chunk_insight,
         majority_rating=majority_rating,
@@ -261,9 +243,7 @@ async def _get_minority_argument(
     )
 
     try:
-        response_text = await _send_to_llm(
-            minority_llm, prompt, gemini_browser, chatgpt_browser, claude_reviewer
-        )
+        response_text = await send_to_llm(minority_llm, prompt, executors, thinking_mode="deep")
         parsed = parse_round3_response(response_text, is_minority=True)
         return {
             "strongest_argument": parsed.get("strongest_argument", ""),
@@ -271,7 +251,7 @@ async def _get_minority_argument(
             "modification_rationale": parsed.get("modification_rationale", ""),
         }
     except Exception as e:
-        log.error(f"[round3] Error getting minority argument: {e}")
+        log.error("round3.minority_argument_error", error=str(e))
         return None
 
 
@@ -282,16 +262,9 @@ async def _get_majority_response(
     majority_llms: list[str],
     proposed_modification: str,
     modification_rationale: str,
-    gemini_browser,
-    chatgpt_browser,
-    claude_reviewer: Optional[ClaudeReviewer],
+    executors: dict[str, LLMExecutor],
 ) -> Optional[dict]:
-    """Get the majority's response to the minority argument and modification proposal.
-
-    Returns:
-        Dict with keys: response_to_argument, accept_modification, modification_assessment
-        Or None if failed.
-    """
+    """Get the majority's response to the minority argument and modification proposal."""
     prompt = build_round3_majority_response_prompt(
         chunk_insight=chunk_insight,
         majority_rating=majority_rating,
@@ -302,10 +275,10 @@ async def _get_majority_response(
 
     # Get response from first available majority LLM
     for llm in majority_llms:
+        if llm not in executors:
+            continue
         try:
-            response_text = await _send_to_llm(
-                llm, prompt, gemini_browser, chatgpt_browser, claude_reviewer
-            )
+            response_text = await send_to_llm(llm, prompt, executors, thinking_mode="deep")
             parsed = parse_round3_response(response_text, is_minority=False)
             return {
                 "response_to_argument": parsed.get("response_to_argument", ""),
@@ -313,7 +286,7 @@ async def _get_majority_response(
                 "modification_assessment": parsed.get("modification_assessment", ""),
             }
         except Exception as e:
-            log.warning(f"[round3] Error getting majority response from {llm}: {e}")
+            log.warning("round3.majority_response_error", llm=llm, error=str(e))
             continue
 
     return None
@@ -325,25 +298,14 @@ async def _get_final_votes(
     majority_response: str,
     round2: ReviewRound,
     minority_llm: str,
-    gemini_browser,
-    chatgpt_browser,
-    claude_reviewer: Optional[ClaudeReviewer],
-    deliberation_minority_argument: str = "",
-    deliberation_majority_response: str = "",
+    executors: dict[str, LLMExecutor],
     modified_insight: Optional[str] = None,
     modification_accepted: bool = False,
 ) -> tuple[dict[str, ReviewResponse], list[MindChange]]:
-    """Get final votes from all reviewers after deliberation.
+    """Get final votes from all reviewers after deliberation."""
+    all_llms = [llm for llm in round2.responses.keys() if llm in executors]
 
-    Args:
-        modified_insight: If modification was accepted, the new insight text
-        modification_accepted: Whether a modification was accepted by majority
-    """
-
-    # Build prompts for each LLM
     tasks = []
-    all_llms = list(round2.responses.keys())
-
     for llm in all_llms:
         is_minority = (llm == minority_llm)
         prompt = build_round3_final_prompt(
@@ -354,39 +316,28 @@ async def _get_final_votes(
             modified_insight=modified_insight or "",
             modification_accepted=modification_accepted,
         )
-
-        # Determine which browser/API to use
-        if llm == "gemini" and gemini_browser:
-            tasks.append((llm, is_minority, _final_vote(llm, prompt, gemini_browser, None, None, is_minority, deliberation_minority_argument, deliberation_majority_response)))
-        elif llm == "chatgpt" and chatgpt_browser:
-            tasks.append((llm, is_minority, _final_vote(llm, prompt, None, chatgpt_browser, None, is_minority, deliberation_minority_argument, deliberation_majority_response)))
-        elif llm == "claude" and claude_reviewer:
-            tasks.append((llm, is_minority, _final_vote(llm, prompt, None, None, claude_reviewer, is_minority, deliberation_minority_argument, deliberation_majority_response)))
-        else:
-            log.warning(f"[round3] {llm} not available for final vote")
+        tasks.append((llm, is_minority, _final_vote_with_executor(
+            executors[llm], prompt, is_minority, minority_argument, majority_response
+        )))
 
     # Execute in parallel
     results = await asyncio.gather(*[t[2] for t in tasks], return_exceptions=True)
 
     responses = {}
     mind_changes = []
-
-    quota_exhausted_exception = None  # Track quota exhaustion for later re-raise
+    quota_exhausted_exception = None
 
     for (llm, is_minority, _), result in zip(tasks, results):
         if isinstance(result, Exception):
-            # Check for Gemini quota exhaustion - special handling
             if GeminiQuotaExhausted and isinstance(result, GeminiQuotaExhausted):
-                log.error(f"[round3] Gemini Deep Think quota exhausted: {result}")
+                log.error("round3.vote_quota_exhausted", llm=llm)
                 quota_exhausted_exception = result
-                # Carry forward Round 2 response
-                if llm in round2.responses:
-                    responses[llm] = round2.responses[llm]
             else:
-                log.error(f"[round3] Final vote failed for {llm}: {result}")
-                # Carry forward Round 2 response
-                if llm in round2.responses:
-                    responses[llm] = round2.responses[llm]
+                log.error("round3.vote_failed", llm=llm, error=str(result))
+
+            # Carry forward Round 2 response
+            if llm in round2.responses:
+                responses[llm] = round2.responses[llm]
         else:
             responses[llm] = result
 
@@ -396,20 +347,20 @@ async def _get_final_votes(
                 r3_rating = result.rating
 
                 if r2_rating != r3_rating:
-                    reason_suffix = " (on modified insight)" if modification_accepted else ""
-                    log.info(f"[round3] {llm} changed mind: {r2_rating} -> {r3_rating}{reason_suffix}")
+                    suffix = " (on modified insight)" if modification_accepted else ""
+                    log.info("round3.mind_changed", llm=llm, from_rating=r2_rating,
+                             to_rating=r3_rating, modified=modification_accepted)
                     stance = result.final_stance or ("conceded" if is_minority else "persuaded")
                     mind_changes.append(MindChange(
                         llm=llm,
                         round_number=3,
                         from_rating=r2_rating,
                         to_rating=r3_rating,
-                        reason=f"After deliberation{reason_suffix}: {stance}",
+                        reason=f"After deliberation{suffix}: {stance}",
                     ))
 
-    # If quota was exhausted, re-raise AFTER collecting other LLM results
     if quota_exhausted_exception:
-        log.warning(f"[round3] Re-raising quota exhaustion after collecting other LLM results")
+        log.warning("round3.reraise_quota_exhaustion")
         quota_exhausted_exception.partial_responses = responses
         quota_exhausted_exception.mind_changes = mind_changes
         raise quota_exhausted_exception
@@ -417,32 +368,23 @@ async def _get_final_votes(
     return responses, mind_changes
 
 
-async def _final_vote(
-    llm: str,
+async def _final_vote_with_executor(
+    executor: LLMExecutor,
     prompt: str,
-    gemini_browser,
-    chatgpt_browser,
-    claude_reviewer: Optional[ClaudeReviewer],
-    is_minority: bool = False,
-    deliberation_minority_argument: str = "",
-    deliberation_majority_response: str = "",
+    is_minority: bool,
+    minority_argument: str,
+    majority_response: str,
 ) -> ReviewResponse:
-    """Get a final vote from a single LLM."""
-    response_text = await _send_to_llm(
-        llm, prompt, gemini_browser, chatgpt_browser, claude_reviewer
-    )
+    """Get a final vote from a single LLM using its executor."""
+    response_text = await executor.send(prompt, thinking_mode="deep")
     parsed = parse_round3_response(response_text, is_minority=is_minority)
 
-    # Store the deliberation exchange in the appropriate fields
-    # Minority stores their strongest argument, majority stores their response
-    strongest_arg = deliberation_minority_argument if is_minority else None
-    response_arg = deliberation_majority_response if not is_minority else None
-
-    # Get reasoning from parsed response (REASON: or ONE_SENTENCE_JUSTIFICATION:)
+    strongest_arg = minority_argument if is_minority else None
+    response_arg = majority_response if not is_minority else None
     reasoning = parsed.get("reasoning", "") or parsed.get("reason", "") or parsed.get("justification", "")
 
     return ReviewResponse(
-        llm=llm,
+        llm=executor.name,
         mode="deliberation",
         rating=parsed["rating"],
         mathematical_verification="",
@@ -454,35 +396,3 @@ async def _final_vote(
         response_to_argument=response_arg,
         final_stance=parsed.get("final_stance"),
     )
-
-
-async def _send_to_llm(
-    llm: str,
-    prompt: str,
-    gemini_browser,
-    chatgpt_browser,
-    claude_reviewer: Optional[ClaudeReviewer],
-) -> str:
-    """Send a prompt to the specified LLM and get response.
-
-    Round 3 is the final deliberation round for split decisions.
-    We use the most powerful reasoning modes for all LLMs:
-    - Gemini: Deep Think mode
-    - ChatGPT: Thinking mode
-    - Claude: Extended thinking
-    """
-    if llm == "gemini" and gemini_browser:
-        # Start fresh chat to ensure clean state
-        await gemini_browser.start_new_chat()
-        # Use Deep Think for final deliberation - this is the most critical round
-        return await gemini_browser.send_message(prompt, use_deep_think=True)
-    elif llm == "chatgpt" and chatgpt_browser:
-        # Start fresh chat to ensure clean state
-        await chatgpt_browser.start_new_chat()
-        # Use Thinking mode for deliberation
-        return await chatgpt_browser.send_message(prompt, use_thinking_mode=True)
-    elif llm == "claude" and claude_reviewer:
-        # Use extended thinking for final deliberation
-        return await claude_reviewer.send_message(prompt, extended_thinking=True)
-    else:
-        raise ValueError(f"LLM {llm} not available")

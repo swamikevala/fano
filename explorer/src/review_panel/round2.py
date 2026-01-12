@@ -18,6 +18,7 @@ from shared.logging import get_logger
 from .models import ReviewResponse, ReviewRound, MindChange, VerificationResult
 from .prompts import build_round2_prompt, parse_round2_response
 from .claude_api import ClaudeReviewer
+from .llm_executor import LLMExecutor, create_executors
 
 # Import quota exception for special handling
 try:
@@ -72,123 +73,66 @@ async def run_round2(
     Returns:
         Tuple of (ReviewRound, list of MindChanges)
     """
-    log.info("[round2] Starting deep analysis")
+    log.info("round2.started")
     if accepted_modification:
-        log.info(f"[round2] Reviewing MODIFIED insight (proposed by {modification_source})")
+        log.info("round2.reviewing_modified", source=modification_source)
 
     # Extract Round 1 responses for the prompt
-    gemini_r1 = round1.responses.get("gemini", _empty_response("gemini"))
-    chatgpt_r1 = round1.responses.get("chatgpt", _empty_response("chatgpt"))
-    claude_r1 = round1.responses.get("claude", _empty_response("claude"))
+    r1_responses = {
+        "gemini": round1.responses.get("gemini", _empty_response("gemini")),
+        "chatgpt": round1.responses.get("chatgpt", _empty_response("chatgpt")),
+        "claude": round1.responses.get("claude", _empty_response("claude")),
+    }
 
-    # Run all deep analyses in parallel
-    tasks = []
+    # Create executors for available LLMs
+    executors = create_executors(gemini_browser, chatgpt_browser, claude_reviewer)
 
-    # Gemini Deep Think
-    if gemini_browser:
-        prompt = build_round2_prompt(
-            chunk_insight=chunk_insight,
-            blessed_axioms_summary=blessed_axioms_summary,
-            gemini_response=_to_dict(gemini_r1),
-            chatgpt_response=_to_dict(chatgpt_r1),
-            claude_response=_to_dict(claude_r1),
-            this_llm="gemini",
-            this_llm_round1_rating=_get_rating(gemini_r1),
-            math_verification=math_verification,
-            accepted_modification=accepted_modification,
-            modification_source=modification_source,
-        )
-        tasks.append(("gemini", _deep_review_gemini(gemini_browser, prompt)))
-    else:
-        log.warning("[round2] Gemini browser not available")
-
-    # ChatGPT Pro/o1
-    if chatgpt_browser:
-        prompt = build_round2_prompt(
-            chunk_insight=chunk_insight,
-            blessed_axioms_summary=blessed_axioms_summary,
-            gemini_response=_to_dict(gemini_r1),
-            chatgpt_response=_to_dict(chatgpt_r1),
-            claude_response=_to_dict(claude_r1),
-            this_llm="chatgpt",
-            this_llm_round1_rating=_get_rating(chatgpt_r1),
-            math_verification=math_verification,
-            accepted_modification=accepted_modification,
-            modification_source=modification_source,
-        )
-        tasks.append(("chatgpt", _deep_review_chatgpt(chatgpt_browser, prompt)))
-    else:
-        log.warning("[round2] ChatGPT browser not available")
-
-    # Claude Extended Thinking
-    if claude_reviewer and claude_reviewer.is_available():
-        prompt = build_round2_prompt(
-            chunk_insight=chunk_insight,
-            blessed_axioms_summary=blessed_axioms_summary,
-            gemini_response=_to_dict(gemini_r1),
-            chatgpt_response=_to_dict(chatgpt_r1),
-            claude_response=_to_dict(claude_r1),
-            this_llm="claude",
-            this_llm_round1_rating=_get_rating(claude_r1),
-            math_verification=math_verification,
-            accepted_modification=accepted_modification,
-            modification_source=modification_source,
-        )
-        tasks.append(("claude", _deep_review_claude(claude_reviewer, prompt)))
-    else:
-        log.warning("[round2] Claude API not available")
-
-    if not tasks:
+    if not executors:
         raise RuntimeError("No review models available for Round 2")
 
-    # Execute all reviews in parallel
-    task_names = [t[0] for t in tasks]
-    task_coros = [t[1] for t in tasks]
+    # Build prompts for each LLM (they see different "this_llm" values)
+    prompts = {}
+    for llm_name in executors.keys():
+        prompts[llm_name] = build_round2_prompt(
+            chunk_insight=chunk_insight,
+            blessed_axioms_summary=blessed_axioms_summary,
+            gemini_response=_to_dict(r1_responses["gemini"]),
+            chatgpt_response=_to_dict(r1_responses["chatgpt"]),
+            claude_response=_to_dict(r1_responses["claude"]),
+            this_llm=llm_name,
+            this_llm_round1_rating=_get_rating(r1_responses[llm_name]),
+            math_verification=math_verification,
+            accepted_modification=accepted_modification,
+            modification_source=modification_source,
+        )
 
-    log.info(f"[round2] Running deep analysis: {task_names}")
-    results = await asyncio.gather(*task_coros, return_exceptions=True)
+    # Run all deep analyses in parallel with "deep" thinking mode
+    log.info("round2.parallel_reviews", llms=list(executors.keys()))
+
+    tasks = [
+        _deep_review_with_executor(executors[name], prompts[name])
+        for name in executors.keys()
+    ]
+    task_names = list(executors.keys())
+
+    results = await asyncio.gather(*tasks, return_exceptions=True)
 
     # Collect responses and track mind changes
     responses = {}
     mind_changes = []
-    quota_exhausted_exception = None  # Track quota exhaustion for later re-raise
+    quota_exhausted_exception = None
 
     for name, result in zip(task_names, results):
         if isinstance(result, Exception):
             # Check for Gemini quota exhaustion - special handling
             if GeminiQuotaExhausted and isinstance(result, GeminiQuotaExhausted):
-                log.error(f"[round2] Gemini Deep Think quota exhausted: {result}")
+                log.error("round2.quota_exhausted", llm=name, error=str(result))
                 quota_exhausted_exception = result
-                # Carry forward Round 1 response so we have something
-                if name in round1.responses:
-                    responses[name] = round1.responses[name]
-                else:
-                    responses[name] = ReviewResponse(
-                        llm=name,
-                        mode="deep",
-                        rating="?",
-                        mathematical_verification="Gemini Deep Think quota exhausted",
-                        structural_analysis="Gemini Deep Think quota exhausted",
-                        naturalness_assessment="Gemini Deep Think quota exhausted",
-                        reasoning=f"Quota exhausted: {str(result)}",
-                        confidence="low",
-                    )
             else:
-                log.error(f"[round2] {name} failed: {result}")
-                # Carry forward Round 1 response on failure
-                if name in round1.responses:
-                    responses[name] = round1.responses[name]
-                else:
-                    responses[name] = ReviewResponse(
-                        llm=name,
-                        mode="deep",
-                        rating="?",
-                        mathematical_verification="Deep review failed",
-                        structural_analysis="Deep review failed",
-                        naturalness_assessment="Deep review failed",
-                        reasoning=f"Error during deep review: {str(result)}",
-                        confidence="low",
-                    )
+                log.error("round2.review_failed", llm=name, error=str(result))
+
+            # Carry forward Round 1 response or create failure
+            responses[name] = _carry_forward_or_fail(name, round1, result)
         else:
             responses[name] = result
 
@@ -198,7 +142,7 @@ async def run_round2(
                 r2_rating = result.rating
 
                 if r1_rating != r2_rating:
-                    log.info(f"[round2] {name} changed mind: {r1_rating} -> {r2_rating}")
+                    log.info("round2.mind_changed", llm=name, from_rating=r1_rating, to_rating=r2_rating)
                     mind_changes.append(MindChange(
                         llm=name,
                         round_number=2,
@@ -211,24 +155,24 @@ async def run_round2(
     ratings = [r.rating for r in responses.values()]
     unique_ratings = set(ratings)
 
-    # Check for ABANDON votes (unanimous = early exit)
+    # Check for ABANDON votes
     abandon_count = ratings.count("ABANDON")
     if abandon_count == len(ratings) and abandon_count >= 2:
         outcome = "abandoned"
-        log.info(f"[round2] ABANDONED unanimously ({abandon_count} votes)")
+        log.info("round2.abandoned", abandon_count=abandon_count)
     elif len(unique_ratings) == 1:
         outcome = "unanimous"
-        log.info(f"[round2] Unanimous after deep analysis: {ratings[0]}")
+        log.info("round2.unanimous", rating=ratings[0])
     else:
         outcome = "split"
-        log.info(f"[round2] Still split after deep analysis: {ratings}")
+        log.info("round2.split", ratings=ratings)
 
     # Log any modifications proposed
     modifications = [(name, r.proposed_modification) for name, r in responses.items()
                      if r.proposed_modification]
     if modifications:
         for name, mod in modifications:
-            log.info(f"[round2] {name} proposed modification: {mod[:100]}...")
+            log.info("round2.modification_proposed", llm=name, preview=mod[:100])
 
     review_round = ReviewRound(
         round_number=2,
@@ -239,15 +183,39 @@ async def run_round2(
     )
 
     # If quota was exhausted, re-raise AFTER creating the round
-    # so the caller can save partial progress before handling the error
     if quota_exhausted_exception:
-        log.warning(f"[round2] Re-raising quota exhaustion after collecting other LLM results")
-        # Attach the round to the exception so caller can save it
+        log.warning("round2.reraise_quota_exhaustion")
         quota_exhausted_exception.partial_round = review_round
         quota_exhausted_exception.mind_changes = mind_changes
         raise quota_exhausted_exception
 
     return review_round, mind_changes
+
+
+async def _deep_review_with_executor(
+    executor: LLMExecutor,
+    prompt: str,
+) -> ReviewResponse:
+    """
+    Get deep review from an LLM using its executor.
+
+    Args:
+        executor: The LLM executor to use
+        prompt: The review prompt
+
+    Returns:
+        ReviewResponse from the LLM
+    """
+    log.info("round2.sending", llm=executor.name, thinking_mode="deep")
+
+    try:
+        response_text = await executor.send(prompt, thinking_mode="deep")
+        parsed = parse_round2_response(response_text)
+        return _build_deep_response(executor.name, parsed)
+
+    except Exception as e:
+        log.error("round2.error", llm=executor.name, error=str(e))
+        raise
 
 
 def _empty_response(llm: str) -> dict:
@@ -261,11 +229,11 @@ def _empty_response(llm: str) -> dict:
     }
 
 
-def _build_deep_response(llm: str, mode: str, parsed: dict) -> ReviewResponse:
+def _build_deep_response(llm: str, parsed: dict) -> ReviewResponse:
     """Build a ReviewResponse from parsed deep review data."""
     return ReviewResponse(
         llm=llm,
-        mode=mode,
+        mode="deep",
         rating=parsed["rating"],
         mathematical_verification=parsed.get("mathematical_verification", ""),
         structural_analysis=parsed.get("structural_analysis", ""),
@@ -279,73 +247,18 @@ def _build_deep_response(llm: str, mode: str, parsed: dict) -> ReviewResponse:
     )
 
 
-async def _deep_review_gemini(gemini_browser, prompt: str) -> ReviewResponse:
-    """Get deep review from Gemini using Deep Think mode."""
-    log.info("[round2] Sending to Gemini (Deep Think mode)")
+def _carry_forward_or_fail(llm: str, round1: ReviewRound, error: Exception) -> ReviewResponse:
+    """Carry forward Round 1 response or create failure response."""
+    if llm in round1.responses:
+        return round1.responses[llm]
 
-    try:
-        # Start fresh chat first to ensure clean state
-        await gemini_browser.start_new_chat()
-
-        # Enable Deep Think mode (this will handle confirmation and setup new chat)
-        await gemini_browser.enable_deep_think()
-
-        # Send the prompt and get response
-        response_text = await gemini_browser.send_message(prompt)
-
-        # Parse the response
-        parsed = parse_round2_response(response_text)
-
-        return _build_deep_response("gemini", "deep_think", parsed)
-
-    except Exception as e:
-        log.error(f"[round2] Gemini Deep Think error: {e}")
-        raise
-
-
-async def _deep_review_chatgpt(chatgpt_browser, prompt: str) -> ReviewResponse:
-    """Get deep review from ChatGPT using Pro/o1 mode."""
-    log.info("[round2] Sending to ChatGPT (Pro mode)")
-
-    try:
-        # Start fresh chat first to ensure clean state
-        await chatgpt_browser.start_new_chat()
-
-        # Try to enable Pro mode if available
-        try:
-            await chatgpt_browser.enable_pro_mode()
-        except Exception as e:
-            log.warning(f"[round2] Could not enable Pro mode: {e}")
-
-        # Send the prompt and get response
-        response_text = await chatgpt_browser.send_message(prompt)
-
-        # Parse the response
-        parsed = parse_round2_response(response_text)
-
-        return _build_deep_response("chatgpt", "pro", parsed)
-
-    except Exception as e:
-        log.error(f"[round2] ChatGPT Pro error: {e}")
-        raise
-
-
-async def _deep_review_claude(claude_reviewer: ClaudeReviewer, prompt: str) -> ReviewResponse:
-    """Get deep review from Claude using Extended Thinking."""
-    log.info("[round2] Sending to Claude (Extended Thinking)")
-
-    try:
-        # Use extended thinking for deep analysis
-        response_text = await claude_reviewer.send_message(
-            prompt,
-            extended_thinking=True,
-        )
-
-        # Parse the response
-        parsed = parse_round2_response(response_text)
-
-        return _build_deep_response("claude", "extended_thinking", parsed)
-
-    except Exception as e:
-        log.error(f"[round2] Claude Extended Thinking error: {e}")
-        raise
+    return ReviewResponse(
+        llm=llm,
+        mode="deep",
+        rating="?",
+        mathematical_verification="Deep review failed",
+        structural_analysis="Deep review failed",
+        naturalness_assessment="Deep review failed",
+        reasoning=f"Error during deep review: {str(error)}",
+        confidence="low",
+    )

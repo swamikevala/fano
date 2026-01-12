@@ -24,6 +24,7 @@ from .prompts import (
     parse_round4_final_vote_response,
 )
 from .claude_api import ClaudeReviewer
+from .llm_executor import LLMExecutor, create_executors
 
 log = get_logger("explorer", "review_panel.round4")
 
@@ -53,7 +54,13 @@ async def run_round4(
         - refinement_record: Record of the modification if one was accepted, else None
         - is_intractable: True if no LLM could propose a valid fix
     """
-    log.info("[round4] Starting modification-focused review")
+    log.info("round4.started")
+
+    # Create executors for available LLMs
+    executors = create_executors(gemini_browser, chatgpt_browser, claude_reviewer)
+
+    if not executors:
+        raise RuntimeError("No LLMs available for Round 4")
 
     # Build summaries of previous rounds
     round1 = next((r for r in review_rounds if r.round_number == 1), None)
@@ -69,7 +76,7 @@ async def run_round4(
     final_ratings = {llm: r.rating for llm, r in final_round.responses.items()} if final_round else {}
 
     # Phase 1: Get modification proposals from all LLMs
-    log.info("[round4] Phase 1: Getting modification proposals")
+    log.info("round4.phase1_proposals", llms=list(executors.keys()))
 
     prompt = build_round4_modification_prompt(
         chunk_insight=chunk_insight,
@@ -79,42 +86,32 @@ async def run_round4(
         final_ratings=final_ratings,
     )
 
-    # Run all proposals in parallel
-    tasks = []
-    if gemini_browser:
-        tasks.append(("gemini", _get_modification_proposal(gemini_browser, prompt, "gemini")))
-    if chatgpt_browser:
-        tasks.append(("chatgpt", _get_modification_proposal(chatgpt_browser, prompt, "chatgpt")))
-    if claude_reviewer and claude_reviewer.is_available():
-        tasks.append(("claude", _get_modification_proposal_claude(claude_reviewer, prompt)))
+    # Run all proposals in parallel with deep thinking
+    tasks = [
+        (name, _get_modification_proposal(executor, prompt))
+        for name, executor in executors.items()
+    ]
 
-    if not tasks:
-        raise RuntimeError("No LLMs available for Round 4")
-
-    task_names = [t[0] for t in tasks]
-    task_coros = [t[1] for t in tasks]
-
-    log.info(f"[round4] Running modification proposals: {task_names}")
-    results = await asyncio.gather(*task_coros, return_exceptions=True)
+    results = await asyncio.gather(*[t[1] for t in tasks], return_exceptions=True)
 
     # Collect proposals
     proposals = {}
-    for name, result in zip(task_names, results):
+    for (name, _), result in zip(tasks, results):
         if isinstance(result, Exception):
-            log.error(f"[round4] {name} proposal failed: {result}")
+            log.error("round4.proposal_failed", llm=name, error=str(result))
         else:
             proposals[name] = result
             if result.get("can_be_fixed"):
-                log.info(f"[round4] {name} proposed a fix (expected rating: {result.get('expected_rating')})")
+                log.info("round4.proposal_fix", llm=name, expected_rating=result.get('expected_rating'))
             else:
-                log.info(f"[round4] {name} says insight cannot be fixed")
+                log.info("round4.proposal_no_fix", llm=name)
 
     # Select best modification using priority logic
     best_mod, mod_source, mod_rationale = _select_best_modification(proposals)
 
     if not best_mod:
         # No valid modification proposed - mark as intractable
-        log.info("[round4] No valid modifications proposed - insight is intractable")
+        log.info("round4.intractable")
 
         # Build response round with diagnoses
         responses = {}
@@ -122,7 +119,7 @@ async def run_round4(
             responses[name] = ReviewResponse(
                 llm=name,
                 mode="modification_focus",
-                rating="?",  # Can't rate without modification
+                rating="?",
                 mathematical_verification="",
                 structural_analysis="",
                 naturalness_assessment="",
@@ -143,7 +140,7 @@ async def run_round4(
         return review_round, None, None, True
 
     # Phase 2: Get final votes on the modified insight
-    log.info(f"[round4] Phase 2: Getting final votes on modification from {mod_source}")
+    log.info("round4.phase2_votes", modification_source=mod_source)
 
     vote_prompt = build_round4_final_vote_prompt(
         original_insight=chunk_insight,
@@ -153,26 +150,19 @@ async def run_round4(
         round3_summary=round3_summary,
     )
 
-    # Run all votes in parallel
-    vote_tasks = []
-    if gemini_browser:
-        vote_tasks.append(("gemini", _get_final_vote(gemini_browser, vote_prompt, "gemini")))
-    if chatgpt_browser:
-        vote_tasks.append(("chatgpt", _get_final_vote(chatgpt_browser, vote_prompt, "chatgpt")))
-    if claude_reviewer and claude_reviewer.is_available():
-        vote_tasks.append(("claude", _get_final_vote_claude(claude_reviewer, vote_prompt)))
+    # Run all votes in parallel with standard mode
+    vote_tasks = [
+        (name, _get_final_vote(executor, vote_prompt))
+        for name, executor in executors.items()
+    ]
 
-    vote_names = [t[0] for t in vote_tasks]
-    vote_coros = [t[1] for t in vote_tasks]
-
-    log.info(f"[round4] Running final votes: {vote_names}")
-    vote_results = await asyncio.gather(*vote_coros, return_exceptions=True)
+    vote_results = await asyncio.gather(*[t[1] for t in vote_tasks], return_exceptions=True)
 
     # Build responses
     responses = {}
-    for name, result in zip(vote_names, vote_results):
+    for (name, _), result in zip(vote_tasks, vote_results):
         if isinstance(result, Exception):
-            log.error(f"[round4] {name} vote failed: {result}")
+            log.error("round4.vote_failed", llm=name, error=str(result))
             responses[name] = ReviewResponse(
                 llm=name,
                 mode="final_vote",
@@ -194,7 +184,8 @@ async def run_round4(
                 reasoning=result["reasoning"],
                 confidence=result["confidence"],
             )
-            log.info(f"[round4] {name} voted {result['rating']} (resolves: {result.get('resolves_dispute', '?')})")
+            log.info("round4.vote", llm=name, rating=result['rating'],
+                     resolves=result.get('resolves_dispute', '?'))
 
     # Determine outcome
     ratings = [r.rating for r in responses.values()]
@@ -202,23 +193,22 @@ async def run_round4(
 
     if len(unique_ratings) == 1:
         outcome = "resolved"
-        log.info(f"[round4] Unanimous on modified insight: {ratings[0]}")
+        log.info("round4.resolved", rating=ratings[0])
     else:
-        # Check for majority
         rating_counts = {r: ratings.count(r) for r in unique_ratings}
         max_count = max(rating_counts.values())
         if max_count >= 2:
             outcome = "majority"
             majority_rating = [r for r, c in rating_counts.items() if c == max_count][0]
-            log.info(f"[round4] Majority on modified insight: {majority_rating} ({max_count}/{len(ratings)})")
+            log.info("round4.majority", rating=majority_rating, count=max_count, total=len(ratings))
         else:
             outcome = "still_disputed"
-            log.info(f"[round4] Still disputed after modification: {ratings}")
+            log.info("round4.still_disputed", ratings=ratings)
 
     # Create refinement record
     refinement_record = RefinementRecord(
-        from_version=1,  # Will be updated by caller
-        to_version=2,    # Will be updated by caller
+        from_version=1,
+        to_version=2,
         original_insight=chunk_insight,
         refined_insight=best_mod,
         changes_made=[mod_rationale] if mod_rationale else ["Modification proposed in Round 4"],
@@ -252,7 +242,6 @@ def _select_best_modification(proposals: dict) -> Tuple[Optional[str], Optional[
     Returns:
         Tuple of (modification, source, rationale) or (None, None, None)
     """
-    # Priority order for Round 4 (all using deep modes)
     priority = ["gemini", "chatgpt", "claude"]
 
     # First pass: prefer modifications with expected_rating of Profound
@@ -261,7 +250,7 @@ def _select_best_modification(proposals: dict) -> Tuple[Optional[str], Optional[
             p = proposals[llm]
             if p.get("can_be_fixed") and p.get("proposed_modification"):
                 if p.get("expected_rating") == "⚡":
-                    log.info(f"[round4] Accepting Profound modification from {llm}")
+                    log.info("round4.accept_profound", llm=llm)
                     return p["proposed_modification"], llm, p.get("modification_rationale", "")
 
     # Second pass: accept any valid modification
@@ -269,92 +258,32 @@ def _select_best_modification(proposals: dict) -> Tuple[Optional[str], Optional[
         if llm in proposals:
             p = proposals[llm]
             if p.get("can_be_fixed") and p.get("proposed_modification"):
-                log.info(f"[round4] Accepting modification from {llm} (expected: {p.get('expected_rating')})")
+                log.info("round4.accept_modification", llm=llm, expected=p.get('expected_rating'))
                 return p["proposed_modification"], llm, p.get("modification_rationale", "")
 
     return None, None, None
 
 
-async def _get_modification_proposal(browser, prompt: str, llm_name: str) -> dict:
-    """Get modification proposal from Gemini or ChatGPT."""
-    log.info(f"[round4] Getting modification proposal from {llm_name}")
+async def _get_modification_proposal(executor: LLMExecutor, prompt: str) -> dict:
+    """Get modification proposal from an LLM using its executor."""
+    log.info("round4.getting_proposal", llm=executor.name)
 
     try:
-        # Start fresh chat
-        await browser.start_new_chat()
-
-        # Enable deep thinking mode
-        if llm_name == "gemini":
-            await browser.enable_deep_think()
-        elif llm_name == "chatgpt":
-            try:
-                await browser.enable_pro_mode()
-            except Exception:
-                pass  # Pro mode may not be available
-
-        # Send prompt and get response
-        response_text = await browser.send_message(prompt)
-
-        # Parse response
+        response_text = await executor.send(prompt, thinking_mode="deep")
         return parse_round4_modification_response(response_text)
-
     except Exception as e:
-        log.error(f"[round4] {llm_name} modification proposal failed: {e}")
+        log.error("round4.proposal_error", llm=executor.name, error=str(e))
         raise
 
 
-async def _get_modification_proposal_claude(claude_reviewer: ClaudeReviewer, prompt: str) -> dict:
-    """Get modification proposal from Claude."""
-    log.info("[round4] Getting modification proposal from Claude")
+async def _get_final_vote(executor: LLMExecutor, prompt: str) -> dict:
+    """Get final vote from an LLM using its executor."""
+    log.info("round4.getting_vote", llm=executor.name)
 
     try:
-        # Use extended thinking for deep analysis
-        response_text = await claude_reviewer.send_message(
-            prompt,
-            extended_thinking=True,
-        )
-
-        # Parse response
-        return parse_round4_modification_response(response_text)
-
-    except Exception as e:
-        log.error(f"[round4] Claude modification proposal failed: {e}")
-        raise
-
-
-async def _get_final_vote(browser, prompt: str, llm_name: str) -> dict:
-    """Get final vote from Gemini or ChatGPT."""
-    log.info(f"[round4] Getting final vote from {llm_name}")
-
-    try:
-        # Start fresh chat (don't need deep mode for simple vote)
-        await browser.start_new_chat()
-
-        # Send prompt and get response
-        response_text = await browser.send_message(prompt)
-
-        # Parse response
+        # Use standard mode for simple vote
+        response_text = await executor.send(prompt, thinking_mode="standard")
         return parse_round4_final_vote_response(response_text)
-
     except Exception as e:
-        log.error(f"[round4] {llm_name} final vote failed: {e}")
-        raise
-
-
-async def _get_final_vote_claude(claude_reviewer: ClaudeReviewer, prompt: str) -> dict:
-    """Get final vote from Claude."""
-    log.info("[round4] Getting final vote from Claude")
-
-    try:
-        # Standard mode for simple vote
-        response_text = await claude_reviewer.send_message(
-            prompt,
-            extended_thinking=False,
-        )
-
-        # Parse response
-        return parse_round4_final_vote_response(response_text)
-
-    except Exception as e:
-        log.error(f"[round4] Claude final vote failed: {e}")
+        log.error("round4.vote_error", llm=executor.name, error=str(e))
         raise

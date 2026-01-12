@@ -14,6 +14,7 @@ from shared.logging import get_logger
 from .models import ReviewResponse, ReviewRound
 from .prompts import build_round1_prompt, parse_round1_response
 from .claude_api import ClaudeReviewer
+from .llm_executor import LLMExecutor, create_executors
 
 log = get_logger("explorer", "review_panel.round1")
 
@@ -46,7 +47,7 @@ async def run_round1(
     Returns:
         ReviewRound with all responses
     """
-    log.info("[round1] Starting independent review")
+    log.info("round1.started")
 
     # Build the prompt
     prompt = build_round1_prompt(
@@ -57,53 +58,37 @@ async def run_round1(
         blessed_axioms_summary=blessed_axioms_summary,
     )
 
-    # Run all reviews in parallel
-    tasks = []
+    # Create executors for available LLMs
+    executors = create_executors(gemini_browser, chatgpt_browser, claude_reviewer)
 
-    # Gemini review
-    if gemini_browser:
-        tasks.append(("gemini", _review_with_gemini(gemini_browser, prompt)))
-    else:
-        log.warning("[round1] Gemini browser not available")
-
-    # ChatGPT review
-    if chatgpt_browser:
-        tasks.append(("chatgpt", _review_with_chatgpt(chatgpt_browser, prompt)))
-    else:
-        log.warning("[round1] ChatGPT browser not available")
-
-    # Claude review
-    if claude_reviewer and claude_reviewer.is_available():
-        tasks.append(("claude", _review_with_claude(claude_reviewer, prompt)))
-    else:
-        log.warning("[round1] Claude API not available")
-
-    if not tasks:
+    if not executors:
         raise RuntimeError("No review models available for Round 1")
 
-    # Execute all reviews in parallel
-    task_names = [t[0] for t in tasks]
-    task_coros = [t[1] for t in tasks]
+    # Determine thinking modes for Round 1
+    # Gemini: standard, ChatGPT: thinking, Claude: standard
+    thinking_modes = {
+        "gemini": "standard",
+        "chatgpt": "thinking",
+        "claude": "standard",
+    }
 
-    log.info(f"[round1] Running parallel reviews: {task_names}")
-    results = await asyncio.gather(*task_coros, return_exceptions=True)
+    # Run all reviews in parallel
+    log.info("round1.parallel_reviews", llms=list(executors.keys()))
+
+    tasks = [
+        _review_with_executor(executor, prompt, thinking_modes.get(name, "standard"))
+        for name, executor in executors.items()
+    ]
+    task_names = list(executors.keys())
+
+    results = await asyncio.gather(*tasks, return_exceptions=True)
 
     # Collect responses
     responses = {}
     for name, result in zip(task_names, results):
         if isinstance(result, Exception):
-            log.error(f"[round1] {name} failed: {result}")
-            # Create a failure response
-            responses[name] = ReviewResponse(
-                llm=name,
-                mode="standard",
-                rating="?",
-                mathematical_verification="Review failed",
-                structural_analysis="Review failed",
-                naturalness_assessment="Review failed",
-                reasoning=f"Error during review: {str(result)}",
-                confidence="low",
-            )
+            log.error("round1.review_failed", llm=name, error=str(result))
+            responses[name] = _create_failure_response(name, result)
         else:
             responses[name] = result
 
@@ -115,20 +100,20 @@ async def run_round1(
     abandon_count = ratings.count("ABANDON")
     if abandon_count == len(ratings) and abandon_count >= 2:
         outcome = "abandoned"
-        log.info(f"[round1] ABANDONED unanimously ({abandon_count} votes)")
+        log.info("round1.abandoned", abandon_count=abandon_count)
     elif len(unique_ratings) == 1:
         outcome = "unanimous"
-        log.info(f"[round1] Unanimous: {ratings[0]}")
+        log.info("round1.unanimous", rating=ratings[0])
     else:
         outcome = "split"
-        log.info(f"[round1] Split: {ratings}")
+        log.info("round1.split", ratings=ratings)
 
     # Log any modifications proposed
     modifications = [(name, r.proposed_modification) for name, r in responses.items()
                      if r.proposed_modification]
     if modifications:
         for name, mod in modifications:
-            log.info(f"[round1] {name} proposed modification: {mod[:100]}...")
+            log.info("round1.modification_proposed", llm=name, preview=mod[:100])
 
     return ReviewRound(
         round_number=1,
@@ -137,6 +122,34 @@ async def run_round1(
         outcome=outcome,
         timestamp=datetime.now(),
     )
+
+
+async def _review_with_executor(
+    executor: LLMExecutor,
+    prompt: str,
+    thinking_mode: str,
+) -> ReviewResponse:
+    """
+    Get review from an LLM using its executor.
+
+    Args:
+        executor: The LLM executor to use
+        prompt: The review prompt
+        thinking_mode: The thinking mode to use
+
+    Returns:
+        ReviewResponse from the LLM
+    """
+    log.info("round1.sending", llm=executor.name, thinking_mode=thinking_mode)
+
+    try:
+        response_text = await executor.send(prompt, thinking_mode=thinking_mode)
+        parsed = parse_round1_response(response_text)
+        return _build_response(executor.name, thinking_mode, parsed)
+
+    except Exception as e:
+        log.error("round1.error", llm=executor.name, error=str(e))
+        raise
 
 
 def _build_response(llm: str, mode: str, parsed: dict) -> ReviewResponse:
@@ -155,64 +168,15 @@ def _build_response(llm: str, mode: str, parsed: dict) -> ReviewResponse:
     )
 
 
-async def _review_with_gemini(gemini_browser, prompt: str) -> ReviewResponse:
-    """Get review from Gemini using browser automation."""
-    log.info("[round1] Sending to Gemini (standard mode)")
-
-    try:
-        # Start fresh chat to reset any Deep Think state and clear old content
-        await gemini_browser.start_new_chat()
-
-        # Send the prompt and get response
-        response_text = await gemini_browser.send_message(prompt)
-
-        # Parse the response
-        parsed = parse_round1_response(response_text)
-
-        return _build_response("gemini", "standard", parsed)
-
-    except Exception as e:
-        log.error(f"[round1] Gemini error: {e}")
-        raise
-
-
-async def _review_with_chatgpt(chatgpt_browser, prompt: str) -> ReviewResponse:
-    """Get review from ChatGPT using browser automation."""
-    log.info("[round1] Sending to ChatGPT (Thinking mode)")
-
-    try:
-        # Start fresh chat to clear old content
-        await chatgpt_browser.start_new_chat()
-
-        # Send the prompt with Thinking mode enabled (not Pro - save Pro for Round 2)
-        response_text = await chatgpt_browser.send_message(prompt, use_thinking_mode=True)
-
-        # Parse the response
-        parsed = parse_round1_response(response_text)
-
-        return _build_response("chatgpt", "thinking", parsed)
-
-    except Exception as e:
-        log.error(f"[round1] ChatGPT error: {e}")
-        raise
-
-
-async def _review_with_claude(claude_reviewer: ClaudeReviewer, prompt: str) -> ReviewResponse:
-    """Get review from Claude using API."""
-    log.info("[round1] Sending to Claude (standard mode)")
-
-    try:
-        # Send the prompt (no extended thinking for Round 1)
-        response_text = await claude_reviewer.send_message(
-            prompt,
-            extended_thinking=False,
-        )
-
-        # Parse the response
-        parsed = parse_round1_response(response_text)
-
-        return _build_response("claude", "standard", parsed)
-
-    except Exception as e:
-        log.error(f"[round1] Claude error: {e}")
-        raise
+def _create_failure_response(llm: str, error: Exception) -> ReviewResponse:
+    """Create a failure response for an LLM that errored."""
+    return ReviewResponse(
+        llm=llm,
+        mode="standard",
+        rating="?",
+        mathematical_verification="Review failed",
+        structural_analysis="Review failed",
+        naturalness_assessment="Review failed",
+        reasoning=f"Error during review: {str(error)}",
+        confidence="low",
+    )
