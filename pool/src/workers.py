@@ -528,6 +528,8 @@ class GeminiWorker(BaseWorker):
                 deep_mode_used = await self._try_enable_deep_mode()
 
             # Capture chat URL before sending message
+            if self.browser.page is None:
+                raise RuntimeError("Browser page not available - connection may have been lost")
             chat_url = self.browser.page.url
 
             # Set up URL update callback - browser will call this when URL changes
@@ -697,6 +699,8 @@ class ChatGPTWorker(BaseWorker):
                 await self.browser.enable_thinking_mode()
 
             # Capture chat URL before sending message
+            if self.browser.page is None:
+                raise RuntimeError("Browser page not available - connection may have been lost")
             chat_url = self.browser.page.url
 
             # Set up URL update callback - browser will call this when URL changes
@@ -866,6 +870,8 @@ class ClaudeWorker(BaseWorker):
                 await self.browser.enable_extended_thinking()
 
             # Capture chat URL before sending message
+            if self.browser.page is None:
+                raise RuntimeError("Browser page not available - connection may have been lost")
             chat_url = self.browser.page.url
 
             # Set up URL update callback - browser will call this when URL changes
