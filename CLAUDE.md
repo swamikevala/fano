@@ -126,6 +126,39 @@ When you see the same pattern repeated 3+ times, extract it:
 - Similar async workflows → shared utility function
 - Similar LLM interactions → executor/strategy pattern
 
+## Testing Requirements
+
+When modifying code, include appropriate tests:
+
+- **New features**: Add tests covering the happy path and edge cases
+- **Bug fixes**: Add a test that would have caught the bug
+- **Refactoring**: Ensure existing tests still pass; add tests if coverage gaps exist
+
+Place tests in a `tests/` directory mirroring the source structure:
+```
+tests/
+├── explorer/
+│   └── test_chunking.py
+├── documenter/
+│   └── test_document.py
+└── shared/
+    └── test_deduplication.py
+```
+
+Run tests before committing:
+```bash
+pytest
+```
+
+If no test infrastructure exists yet, create it. Don't skip tests because "there aren't any tests in this project."
+
+## Secrets
+
+Never hardcode API keys, tokens, or credentials in code. These belong in:
+- `.env` files (never committed)
+- Environment variables
+- Config files excluded from git
+
 ## Common Commands
 
 ```bash
@@ -143,17 +176,26 @@ python documenter/main.py
 
 ```
 fano/
-├── control/          # Web UI and API server
+├── control/              # Web UI and API server
 │   ├── server.py
 │   └── templates/
-├── documenter/       # Document generation
-│   ├── main.py
-│   ├── document/     # Generated content
-│   └── formatting.py # Math/markdown fixing
-├── explorer/         # Insight discovery
+├── documenter/           # Document generation
+│   ├── main.py           # Orchestrator entry point
+│   ├── session.py        # Session lifecycle management
+│   ├── planning.py       # Work planning logic
+│   ├── opportunity_processor.py  # Insight evaluation pipeline
+│   ├── comments.py       # Comment handling
+│   └── document/         # Generated content
+├── explorer/             # Insight discovery
+│   ├── fano_explorer.py  # CLI entry point
 │   └── src/
-├── shared/           # Common utilities
-│   ├── logging.py
+│       ├── commands/     # CLI command implementations
+│       ├── browser/      # LLM browser automation
+│       ├── review_panel/ # Multi-LLM review system
+│       └── chunking/     # Insight extraction
+├── shared/               # Common utilities
+│   ├── logging/          # Structured logging package
+│   ├── deduplication/    # Content deduplication package
 │   └── llm.py
-└── pool/             # Browser automation
+└── pool/                 # Browser pool service
 ```
