@@ -7,17 +7,19 @@ The orchestrator is responsible for:
 - Judging when a thread is mature enough to synthesize
 - Creating chunks from mature threads
 - Managing rate limits and model selection
+
+This is a lightweight coordinator that delegates to specialized modules:
+- LLMManager: LLM connection and communication
+- ThreadManager: Thread loading, selection, and spawning
+- ExplorationEngine: Exploration and critique operations
+- SynthesisEngine: Chunk synthesis from threads
+- InsightProcessor: Insight extraction and automated review
+- BlessedStore: Blessed insights management
 """
 
 import asyncio
-import json
 import logging
-import random
-import re
-import urllib.error
-import urllib.request
 import yaml
-from datetime import datetime
 from pathlib import Path
 from typing import Optional
 from dotenv import load_dotenv
@@ -25,31 +27,26 @@ from dotenv import load_dotenv
 # Load environment variables from .env file
 load_dotenv()
 
-# Import from LLM library
-from llm import LLMClient, GeminiAdapter, ChatGPTAdapter, PoolUnavailableError
-
-# Keep browser imports for backwards compatibility and rate tracking
-from explorer.src.browser import GeminiQuotaExhausted
-from explorer.src.browser import (
-    rate_tracker,
-    deep_mode_tracker,
-    select_model,
-    should_use_deep_mode,
-    get_deep_mode_status,
-)
-from explorer.src.models import (
-    ExplorationThread, ThreadStatus, ExchangeRole,
-    Chunk, ChunkStatus, ChunkFeedback,
-    AxiomStore, BlessedInsight,
-)
+from explorer.src.models import AxiomStore, ThreadStatus
 from explorer.src.storage.db import Database
+from explorer.src.storage import ExplorerPaths
 from explorer.src.chunking import (
-    AtomicExtractor, AtomicInsight, InsightStatus,
-    get_dedup_checker, DeduplicationChecker,
-    PanelExtractor, get_panel_extractor,
+    AtomicExtractor,
+    PanelExtractor,
+    get_dedup_checker,
 )
 from explorer.src.review_panel import AutomatedReviewer
-from explorer.src.augmentation import get_augmenter, Augmenter
+from explorer.src.augmentation import get_augmenter
+
+# Import orchestration modules
+from explorer.src.orchestration import (
+    LLMManager,
+    ThreadManager,
+    ExplorationEngine,
+    SynthesisEngine,
+    InsightProcessor,
+    BlessedStore,
+)
 
 # Setup logging with UTF-8 encoding for Windows compatibility
 logging.basicConfig(
@@ -72,40 +69,57 @@ with open(CONFIG_PATH, encoding="utf-8") as f:
 class Orchestrator:
     """
     The brain of the exploration system.
+
+    A lightweight coordinator that delegates to specialized modules
+    for each concern (LLM management, threading, exploration, etc.).
     """
-    
+
     def __init__(self):
-        self.data_dir = Path(__file__).parent.parent / "data"
-        self.db = Database(self.data_dir / "fano_explorer.db")
-        self.axioms = AxiomStore(self.data_dir)
+        # Initialize paths
+        self.paths = ExplorerPaths(Path(__file__).parent.parent / "data")
 
-        # LLM client (unified interface to pool + APIs)
-        self.llm_client: Optional[LLMClient] = None
-        self.chatgpt: Optional[ChatGPTAdapter] = None
-        self.gemini: Optional[GeminiAdapter] = None
+        # Core data stores
+        self.db = Database(self.paths.database_file)
+        self.axioms = AxiomStore(self.paths.data_dir)
 
+        # Configuration
+        self.config = CONFIG
+        self.orchestration_config = CONFIG["orchestration"]
         self.running = False
-        self.config = CONFIG["orchestration"]
 
-        # Atomic chunking extractors
-        self.extractor = AtomicExtractor(data_dir=self.data_dir, config=CONFIG)
-        self.panel_extractor = PanelExtractor(data_dir=self.data_dir, config=CONFIG)
+        # Initialize LLM manager
+        self.llm_manager = LLMManager(CONFIG, self.paths)
 
-        # Use panel extraction by default (can be overridden in config)
-        chunking_config = CONFIG.get("chunking", {})
-        self.use_panel_extraction = chunking_config.get("use_panel_extraction", True)
+        # Initialize thread manager
+        self.thread_manager = ThreadManager(
+            self.orchestration_config,
+            self.paths,
+            self.axioms,
+        )
 
-        # Automated reviewer (initialized after browsers connect)
+        # Initialize exploration engine
+        self.exploration_engine = ExplorationEngine(
+            CONFIG,
+            self.paths,
+            self.axioms,
+            self.thread_manager.get_context_for_seeds,
+        )
+
+        # Initialize synthesis engine
+        self.synthesis_engine = SynthesisEngine(CONFIG, self.paths)
+
+        # These will be initialized after LLM connection
         self.reviewer: Optional[AutomatedReviewer] = None
+        self.blessed_store: Optional[BlessedStore] = None
+        self.insight_processor: Optional[InsightProcessor] = None
 
-        # Augmenter for blessed insights (initialized after reviewer)
-        self.augmenter: Optional[Augmenter] = None
+        # Extractors (needed before full initialization)
+        self.extractor = AtomicExtractor(data_dir=self.paths.data_dir, config=CONFIG)
+        self.panel_extractor = PanelExtractor(data_dir=self.paths.data_dir, config=CONFIG)
 
-        # Deduplication checker (initialized after reviewer, uses same Claude instance)
-        self.dedup_checker: Optional[DeduplicationChecker] = None
-        
     async def run(self, process_backlog_first: bool = True):
-        """Main exploration loop.
+        """
+        Main exploration loop.
 
         Args:
             process_backlog_first: If True, process any unextracted threads before
@@ -115,15 +129,17 @@ class Orchestrator:
         logger.info("Starting exploration loop")
         logger.info("Review UI available at: http://localhost:8765")
 
-        # Connect to browsers
-        await self._connect_models()
+        # Connect to LLMs and initialize components
+        await self._connect_and_initialize()
 
         try:
             # Check for any recovered responses from pool restart
-            await self._check_recovered_responses()
+            await self.llm_manager.check_recovered_responses(
+                self.thread_manager.load_thread_by_id
+            )
 
             # Check for new seeds and prioritize them
-            await self._check_and_spawn_for_new_seeds()
+            await self.thread_manager.check_and_spawn_for_new_seeds()
 
             # Process backlog of unextracted threads first
             if process_backlog_first:
@@ -131,10 +147,10 @@ class Orchestrator:
 
             while self.running:
                 await self._exploration_cycle()
-                await asyncio.sleep(self.config["poll_interval"])
+                await asyncio.sleep(self.orchestration_config["poll_interval"])
         finally:
-            await self._disconnect_models()
-    
+            await self.llm_manager.disconnect()
+
     def stop(self):
         """Signal the orchestrator to stop."""
         self.running = False
@@ -143,7 +159,83 @@ class Orchestrator:
     async def cleanup(self):
         """Clean up resources (called after interrupt)."""
         logger.info("Cleaning up...")
-        await self._disconnect_models()
+        await self.llm_manager.disconnect()
+
+    async def _connect_and_initialize(self):
+        """Connect to LLMs and initialize dependent components."""
+        # Connect to LLMs
+        await self.llm_manager.connect()
+
+        # Initialize reviewer if enabled
+        if CONFIG.get("review_panel", {}).get("enabled", False):
+            try:
+                self.reviewer = AutomatedReviewer(
+                    gemini_browser=self.llm_manager.gemini,
+                    chatgpt_browser=self.llm_manager.chatgpt,
+                    config=CONFIG,
+                    data_dir=self.paths.data_dir,
+                )
+                logger.info("Initialized automated review panel")
+
+                # Initialize augmenter
+                augmenter = None
+                if CONFIG.get("augmentation", {}).get("enabled", False):
+                    augmenter = get_augmenter(
+                        claude_reviewer=self.reviewer.claude_reviewer,
+                        config=CONFIG,
+                        data_dir=self.paths.data_dir,
+                    )
+                    if augmenter:
+                        logger.info("Initialized augmenter for blessed insights")
+
+                # Initialize deduplication checker
+                dedup_checker = None
+                if CONFIG.get("deduplication", {}).get("enabled", True):
+                    dedup_checker = get_dedup_checker(
+                        claude_reviewer=self.reviewer.claude_reviewer,
+                        config=CONFIG,
+                    )
+
+                # Initialize blessed store
+                self.blessed_store = BlessedStore(
+                    CONFIG,
+                    self.paths,
+                    self.axioms,
+                    augmenter=augmenter,
+                    dedup_checker=dedup_checker,
+                )
+
+                # Load existing blessed insights into dedup checker
+                if dedup_checker:
+                    count = self.blessed_store.load_blessed_into_dedup()
+                    logger.info(f"Initialized deduplication checker with {count} known insights")
+
+                # Initialize insight processor
+                self.insight_processor = InsightProcessor(
+                    CONFIG,
+                    self.paths,
+                    self.extractor,
+                    self.panel_extractor,
+                    reviewer=self.reviewer,
+                    dedup_checker=dedup_checker,
+                )
+
+            except Exception as e:
+                logger.warning(f"Could not initialize review panel: {e}")
+                self.reviewer = None
+
+        # Create minimal blessed store if reviewer not available
+        if self.blessed_store is None:
+            self.blessed_store = BlessedStore(CONFIG, self.paths, self.axioms)
+
+        # Create minimal insight processor if reviewer not available
+        if self.insight_processor is None:
+            self.insight_processor = InsightProcessor(
+                CONFIG,
+                self.paths,
+                self.extractor,
+                self.panel_extractor,
+            )
 
     async def process_backlog(self):
         """
@@ -157,14 +249,15 @@ class Orchestrator:
         """
         logger.info("[backlog] Scanning for unprocessed threads...")
 
-        threads_dir = self.data_dir / "explorations"
-        if not threads_dir.exists():
+        if not self.paths.explorations_dir.exists():
             logger.info("[backlog] No explorations directory found")
             return
 
         # Find all threads needing extraction
+        from explorer.src.models import ExplorationThread
+
         unprocessed = []
-        for filepath in threads_dir.glob("*.json"):
+        for filepath in self.paths.explorations_dir.glob("*.json"):
             try:
                 thread = ExplorationThread.load(filepath)
 
@@ -183,7 +276,7 @@ class Orchestrator:
         logger.info(f"[backlog] Found {len(unprocessed)} threads to process")
 
         # Get an available model for extraction
-        model_name, model = self._get_backlog_model()
+        model_name, model = self.llm_manager.get_backlog_model()
         if not model:
             logger.warning("[backlog] No model available for extraction")
             return
@@ -193,7 +286,13 @@ class Orchestrator:
             logger.info(f"[backlog] Processing {i}/{len(unprocessed)}: {thread.id}")
 
             try:
-                await self._extract_and_review(thread, model_name, model)
+                await self.insight_processor.extract_and_review(
+                    thread,
+                    model_name,
+                    model,
+                    self.llm_manager,
+                    self.blessed_store,
+                )
             except Exception as e:
                 logger.error(f"[backlog] Failed to process {thread.id}: {e}")
 
@@ -203,1216 +302,60 @@ class Orchestrator:
 
         logger.info(f"[backlog] Completed processing {len(unprocessed)} threads")
 
-    async def _check_recovered_responses(self):
-        """
-        Check for any recovered responses from pool restart.
-
-        When the pool restarts while an LLM was generating a response,
-        it attempts to recover the response by navigating back to the chat.
-        Those recovered responses are stored and can be retrieved here.
-        """
-        if not self.llm_client:
-            return
-
-        try:
-            # Get pool config
-            pool_config = CONFIG.get("llm", {}).get("pool", {})
-            pool_host = pool_config.get("host", "127.0.0.1")
-            pool_port = pool_config.get("port", 9000)
-
-            # Query pool for recovered responses
-            url = f"http://{pool_host}:{pool_port}/recovered"
-            with urllib.request.urlopen(url, timeout=5) as resp:
-                data = json.loads(resp.read().decode())
-
-            responses = data.get("responses", [])
-            if not responses:
-                return
-
-            logger.info(f"[recovery] Found {len(responses)} recovered responses from pool")
-
-            for item in responses:
-                request_id = item.get("request_id")
-                thread_id = item.get("thread_id")
-                response_text = item.get("response", "")
-                backend = item.get("backend")
-                prompt = item.get("prompt", "")
-
-                logger.info(f"[recovery] Processing recovered response from {backend}",
-                           extra={"request_id": request_id, "thread_id": thread_id,
-                                  "response_length": len(response_text)})
-
-                # Try to find the associated thread and add the response
-                if thread_id:
-                    try:
-                        thread = self._load_thread_by_id(thread_id)
-                        if thread:
-                            # Add the recovered response to the thread
-                            from models import Exchange
-                            thread.add_exchange(Exchange(
-                                role=ExchangeRole.LLM,
-                                content=response_text,
-                                model=backend,
-                                timestamp=datetime.now(),
-                            ))
-                            thread.save(self.data_dir / "explorations")
-                            logger.info(f"[recovery] Added recovered response to thread {thread_id}")
-                    except Exception as e:
-                        logger.warning(f"[recovery] Could not add response to thread {thread_id}: {e}")
-
-                # Clear the recovered response from pool
-                try:
-                    clear_url = f"http://{pool_host}:{pool_port}/recovered/{request_id}"
-                    req = urllib.request.Request(clear_url, method="DELETE")
-                    urllib.request.urlopen(req, timeout=5)
-                    logger.info(f"[recovery] Cleared recovered response {request_id}")
-                except Exception as e:
-                    logger.warning(f"[recovery] Could not clear recovered response {request_id}: {e}")
-
-        except urllib.error.URLError:
-            # Pool not running or not reachable - that's fine
-            pass
-        except Exception as e:
-            logger.warning(f"[recovery] Error checking for recovered responses: {e}")
-
-    def _load_thread_by_id(self, thread_id: str) -> Optional[ExplorationThread]:
-        """Load a thread by its ID (short or full)."""
-        threads_dir = self.data_dir / "explorations"
-        if not threads_dir.exists():
-            return None
-
-        # Try to find matching thread file
-        for filepath in threads_dir.glob("*.json"):
-            if thread_id in filepath.stem:
-                try:
-                    return ExplorationThread.load(filepath)
-                except Exception:
-                    pass
-        return None
-
-    def _get_backlog_model(self) -> tuple[Optional[str], Optional[object]]:
-        """Get an available model for backlog processing."""
-        if self.gemini and rate_tracker.is_available("gemini"):
-            return ("gemini", self.gemini)
-        if self.chatgpt and rate_tracker.is_available("chatgpt"):
-            return ("chatgpt", self.chatgpt)
-        return (None, None)
-
-    async def _connect_models(self):
-        """Connect to LLMs via LLM library (pool for browsers, direct for APIs)."""
-        # Initialize LLM client
-        self.llm_client = LLMClient()
-
-        # Check if pool service is available (for browser-based LLMs)
-        pool_available = await self.llm_client.is_pool_available()
-        if not pool_available:
-            logger.warning("Pool service not available. Start it with: cd pool && python browser_pool.py start")
-            logger.warning("Browser-based LLMs (Gemini, ChatGPT) will not be available.")
-
-        # Create adapters (they use the client internally)
-        if pool_available:
-            try:
-                self.chatgpt = ChatGPTAdapter(self.llm_client)
-                await self.chatgpt.connect()
-                logger.info("Connected to ChatGPT (via pool)")
-            except Exception as e:
-                logger.warning(f"Could not connect to ChatGPT: {e}")
-                self.chatgpt = None
-
-            try:
-                self.gemini = GeminiAdapter(self.llm_client)
-                await self.gemini.connect()
-                logger.info("Connected to Gemini (via pool)")
-            except Exception as e:
-                logger.warning(f"Could not connect to Gemini: {e}")
-                self.gemini = None
-        else:
-            self.chatgpt = None
-            self.gemini = None
-
-        # Initialize the automated reviewer with connected browsers
-        if CONFIG.get("review_panel", {}).get("enabled", False):
-            try:
-                self.reviewer = AutomatedReviewer(
-                    gemini_browser=self.gemini,
-                    chatgpt_browser=self.chatgpt,
-                    config=CONFIG,
-                    data_dir=self.data_dir,
-                )
-                logger.info("Initialized automated review panel")
-
-                # Initialize augmenter (uses reviewer's Claude instance)
-                if CONFIG.get("augmentation", {}).get("enabled", False):
-                    self.augmenter = get_augmenter(
-                        claude_reviewer=self.reviewer.claude_reviewer,
-                        config=CONFIG,
-                        data_dir=self.data_dir,
-                    )
-                    if self.augmenter:
-                        logger.info("Initialized augmenter for blessed insights")
-
-                # Initialize deduplication checker (uses reviewer's Claude instance)
-                if CONFIG.get("deduplication", {}).get("enabled", True):
-                    self.dedup_checker = get_dedup_checker(
-                        claude_reviewer=self.reviewer.claude_reviewer,
-                        config=CONFIG,
-                    )
-                    # Load existing blessed insights into the checker
-                    blessed_insights = self._get_blessed_insights()
-                    self.dedup_checker.load_known_insights(blessed_insights)
-                    logger.info(f"Initialized deduplication checker with {len(blessed_insights)} known insights")
-
-            except Exception as e:
-                logger.warning(f"Could not initialize review panel: {e}")
-                self.reviewer = None
-    
-    async def _disconnect_models(self):
-        """Disconnect from LLM interfaces."""
-        if self.chatgpt:
-            await self.chatgpt.disconnect()
-        if self.gemini:
-            await self.gemini.disconnect()
-        if self.llm_client:
-            await self.llm_client.close()
-    
-    def _get_available_models(self, check_rate_limits: bool = True) -> dict[str, object]:
-        """
-        Get available models as a dict.
-
-        Args:
-            check_rate_limits: If True, exclude rate-limited models. If False, return all connected models.
-        """
-        models = {}
-        if self.chatgpt and (not check_rate_limits or rate_tracker.is_available("chatgpt")):
-            models["chatgpt"] = self.chatgpt
-        if self.gemini and (not check_rate_limits or rate_tracker.is_available("gemini")):
-            models["gemini"] = self.gemini
-        return models
-
     async def _exploration_cycle(self):
         """Single cycle of the exploration loop."""
-        available_models = self._get_available_models()
-        logger.info(f"Available models: {list(available_models.keys())} (gemini={self.gemini is not None})")
+        available_models = self.llm_manager.get_available_models()
+        logger.info(
+            f"Available models: {list(available_models.keys())} "
+            f"(gemini={self.llm_manager.gemini is not None})"
+        )
 
         if not available_models:
             logger.info("All models rate-limited, waiting...")
-            await asyncio.sleep(self.config["backoff_base"])
+            await asyncio.sleep(self.orchestration_config["backoff_base"])
             return
 
         # Get or create a thread to work on
-        thread = self._select_thread()
+        thread = self.thread_manager.select_thread()
 
         if thread is None:
             # Spawn a new thread
-            thread = self._spawn_new_thread()
+            thread = self.thread_manager.spawn_new_thread()
             logger.info(f"Spawned new thread: {thread.topic[:60]}...")
 
-        # Perform work on the thread using weighted model selection
+        # Perform work on the thread
         if thread.needs_exploration:
-            model_name = select_model("exploration", available_models)
+            model_name = self.llm_manager.select_model_for_task("exploration", available_models)
             if model_name:
                 model = available_models[model_name]
-                await self._do_exploration(thread, model_name, model)
+                await self.exploration_engine.do_exploration(
+                    thread, model_name, model, self.llm_manager
+                )
         elif thread.needs_critique:
-            # _do_critique handles its own model selection with critique weights
+            # Use first available model (critique engine does its own selection)
             model_name = list(available_models.keys())[0]
             model = available_models[model_name]
-            await self._do_critique(thread, model_name, model)
-        
+            await self.exploration_engine.do_critique(
+                thread, model_name, model, self.llm_manager
+            )
+
         # Check if thread is ready for synthesis
-        if self._is_chunk_ready(thread):
-            await self._synthesize_chunk(thread)
-        
+        if self.synthesis_engine.is_chunk_ready(thread):
+            await self.synthesis_engine.synthesize_chunk(
+                thread,
+                self.llm_manager,
+                extract_and_review_fn=self._extract_and_review_wrapper,
+            )
+
         # Save thread state
-        thread.save(self.data_dir)
-    
-    def _select_thread(self) -> Optional[ExplorationThread]:
-        """Select an active thread to work on."""
-        threads = self._load_active_threads()
-        
-        if not threads:
-            return None
-        
-        # Prioritize threads that need work
-        for thread in threads:
-            if thread.needs_exploration or thread.needs_critique:
-                return thread
-        
-        return threads[0] if threads else None
-    
-    def _load_active_threads(self) -> list[ExplorationThread]:
-        """Load all active exploration threads."""
-        threads_dir = self.data_dir / "explorations"
-        threads = []
-        
-        if threads_dir.exists():
-            for filepath in threads_dir.glob("*.json"):
-                thread = ExplorationThread.load(filepath)
-                if thread.status == ThreadStatus.ACTIVE:
-                    threads.append(thread)
-        
-        return threads[:self.config["max_active_threads"]]
-    
-    async def _check_and_spawn_for_new_seeds(self):
-        """
-        Check if there are new seeds that haven't been explored yet.
-        If so, spawn a new thread prioritizing those seeds.
-        """
-        logger.info("[seeds] Checking for new/unexplored seeds...")
+        thread.save(self.paths.data_dir)
 
-        # Get all current seeds
-        all_seeds = self.axioms.get_seed_aphorisms()
-        if not all_seeds:
-            logger.info("[seeds] No seeds found")
-            return
-
-        all_seed_ids = {s.id for s in all_seeds}
-
-        # Find which seeds have already been explored (in any thread)
-        explored_seed_ids = set()
-        threads_dir = self.data_dir / "explorations"
-        if threads_dir.exists():
-            for filepath in threads_dir.glob("*.json"):
-                try:
-                    thread = ExplorationThread.load(filepath)
-                    explored_seed_ids.update(thread.seed_axioms or [])
-                except Exception:
-                    pass
-
-        # Find new seeds
-        new_seed_ids = all_seed_ids - explored_seed_ids
-
-        if not new_seed_ids:
-            logger.info(f"[seeds] All {len(all_seed_ids)} seeds have been explored")
-            return
-
-        new_seeds = [s for s in all_seeds if s.id in new_seed_ids]
-        logger.info(f"[seeds] Found {len(new_seeds)} NEW seeds to explore:")
-        for seed in new_seeds:
-            logger.info(f"[seeds]   - {seed.id}: {seed.text[:60]}...")
-
-        # Spawn a new thread specifically for these seeds
-        thread = self._spawn_thread_for_seeds(new_seeds)
-        logger.info(f"[seeds] Spawned new thread {thread.id} for new seeds")
-
-    def _spawn_thread_for_seeds(self, seeds: list) -> ExplorationThread:
-        """Create a new exploration thread for specific seeds."""
-        seed_ids = [s.id for s in seeds]
-        topic = self._generate_topic(seeds)
-
-        thread = ExplorationThread.create_new(
-            topic=topic,
-            seed_axioms=seed_ids,
-            target_numbers=[],
+    async def _extract_and_review_wrapper(self, thread, model_name, model):
+        """Wrapper for insight processor extract_and_review."""
+        await self.insight_processor.extract_and_review(
+            thread,
+            model_name,
+            model,
+            self.llm_manager,
+            self.blessed_store,
         )
-
-        thread.save(self.data_dir)
-        return thread
-
-    def _get_context_for_seeds(self, seed_ids: list[str]) -> str:
-        """Get exploration context for specific seed IDs only."""
-        all_seeds = self.axioms.get_seed_aphorisms()
-        filtered_seeds = [s for s in all_seeds if s.id in seed_ids]
-
-        if not filtered_seeds:
-            return self.axioms.get_context_for_exploration()
-
-        lines = []
-        lines.append("=== SEED APHORISMS ===")
-        lines.append("These are the foundational conjectures to explore, verify, and build upon:\n")
-
-        for seed in filtered_seeds:
-            confidence_marker = {"high": "⚡", "medium": "?", "low": "○"}.get(seed.confidence, "?")
-            lines.append(f"{confidence_marker} {seed.text}")
-            if seed.tags:
-                lines.append(f"   [Tags: {', '.join(seed.tags)}]")
-            if seed.notes:
-                lines.append(f"   Note: {seed.notes}")
-        lines.append("")
-
-        return "\n".join(lines)
-
-    def _spawn_new_thread(self) -> ExplorationThread:
-        """Create a new exploration thread based on seed aphorisms."""
-
-        # Get seed aphorisms
-        seeds = self.axioms.get_seed_aphorisms()
-
-        # Use seed IDs and tags
-        seed_ids = [s.id for s in seeds] if seeds else []
-
-        # Generate topic from seeds
-        topic = self._generate_topic(seeds)
-
-        thread = ExplorationThread.create_new(
-            topic=topic,
-            seed_axioms=seed_ids,
-            target_numbers=[],  # No longer using hardcoded target numbers
-        )
-
-        thread.save(self.data_dir)
-        return thread
-
-    def _generate_topic(self, seeds: list) -> str:
-        """Generate a topic description from seed aphorisms."""
-        if not seeds:
-            return "Open exploration of seed aphorisms and their mathematical structures"
-
-        # Collect all unique tags from seeds
-        all_tags = set()
-        for seed in seeds:
-            all_tags.update(seed.tags)
-
-        if all_tags:
-            tag_list = ", ".join(sorted(all_tags)[:5])  # Top 5 tags
-            return f"Exploring connections between: {tag_list}"
-
-        # Fallback: use first seed's text (truncated)
-        first_seed = seeds[0].text[:80]
-        return f"Exploring: {first_seed}..."
-    
-    async def _do_exploration(self, thread: ExplorationThread, model_name: str, model):
-        """Perform an exploration step."""
-        prompt = self._build_exploration_prompt(thread)
-
-        # Determine if we should use deep mode
-        use_deep = should_use_deep_mode(model_name, thread, "exploration")
-
-        mode_str = " [DEEP]" if use_deep else ""
-        logger.info(f"Exploring [{thread.id}] with {model_name}{mode_str}")
-
-        try:
-            await model.start_new_chat()
-
-            # Pass deep mode flag and thread_id to send_message
-            # ChatGPT: use Pro mode for deep, Thinking mode for standard
-            if model_name == "chatgpt":
-                response = await model.send_message(
-                    prompt,
-                    use_pro_mode=use_deep,
-                    use_thinking_mode=not use_deep,
-                    thread_id=thread.id,
-                )
-            else:
-                response = await model.send_message(prompt, use_deep_think=use_deep, thread_id=thread.id)
-
-            # Check if deep mode was actually used and record it
-            deep_mode_used = getattr(model, 'last_deep_mode_used', False)
-            if deep_mode_used:
-                mode_key = "gemini_deep_think" if model_name == "gemini" else "chatgpt_pro"
-                deep_mode_tracker.record_usage(mode_key)
-
-            # Extract only structured sections, stripping preamble and recaps
-            clean_response = self._extract_structured_response(
-                response, ['NEW_INSIGHTS', 'CONNECTIONS', 'QUESTIONS']
-            )
-
-            thread.add_exchange(
-                role=ExchangeRole.EXPLORER,
-                model=model_name,
-                prompt=prompt,
-                response=clean_response,
-                deep_mode_used=deep_mode_used,
-            )
-
-            logger.info(f"Exploration complete, {len(response)} -> {len(clean_response)} chars" + (" [DEEP]" if deep_mode_used else ""))
-
-        except Exception as e:
-            logger.error(f"Exploration failed: {e}")
-    
-    async def _do_critique(self, thread: ExplorationThread, model_name: str, model):
-        """Perform a critique step."""
-        prompt = self._build_critique_prompt(thread)
-
-        # Use weighted selection for critique (prefers ChatGPT)
-        available_models = self._get_available_models(check_rate_limits=False)
-        selected = select_model("critique", available_models)
-        if selected:
-            critique_model_name = selected
-            critique_model = available_models[selected]
-        else:
-            # Fallback to original model
-            critique_model_name, critique_model = model_name, model
-
-        # Determine if we should use deep mode
-        use_deep = should_use_deep_mode(critique_model_name, thread, "critique")
-
-        mode_str = " [DEEP]" if use_deep else ""
-        logger.info(f"Critiquing [{thread.id}] with {critique_model_name}{mode_str}")
-
-        try:
-            await critique_model.start_new_chat()
-
-            # Pass deep mode flag and thread_id to send_message
-            # ChatGPT: use Pro mode for deep, Thinking mode for standard
-            if critique_model_name == "chatgpt":
-                response = await critique_model.send_message(
-                    prompt,
-                    use_pro_mode=use_deep,
-                    use_thinking_mode=not use_deep,
-                    thread_id=thread.id,
-                )
-            else:
-                response = await critique_model.send_message(prompt, use_deep_think=use_deep, thread_id=thread.id)
-
-            # Check if deep mode was actually used and record it
-            deep_mode_used = getattr(critique_model, 'last_deep_mode_used', False)
-            if deep_mode_used:
-                mode_key = "gemini_deep_think" if critique_model_name == "gemini" else "chatgpt_pro"
-                deep_mode_tracker.record_usage(mode_key)
-
-            # Extract only structured sections, stripping preamble and recaps
-            clean_response = self._extract_structured_response(
-                response, ['CRITICAL_ISSUES', 'PROMISING_DIRECTIONS', 'PROBING_QUESTIONS']
-            )
-
-            thread.add_exchange(
-                role=ExchangeRole.CRITIC,
-                model=critique_model_name,
-                prompt=prompt,
-                response=clean_response,
-                deep_mode_used=deep_mode_used,
-            )
-
-            logger.info(f"Critique complete, {len(response)} -> {len(clean_response)} chars" + (" [DEEP]" if deep_mode_used else ""))
-
-        except Exception as e:
-            logger.error(f"Critique failed: {e}")
-    
-    def _get_other_model(self, current: str) -> Optional[tuple[str, object]]:
-        """Get a different model than the current one."""
-        if current == "chatgpt" and self.gemini and rate_tracker.is_available("gemini"):
-            return ("gemini", self.gemini)
-        if current == "gemini" and self.chatgpt and rate_tracker.is_available("chatgpt"):
-            return ("chatgpt", self.chatgpt)
-        return None
-    
-    def _build_exploration_prompt(self, thread: ExplorationThread) -> str:
-        """Build the prompt for exploration based on seed aphorisms."""
-        # If thread has specific seeds, focus on those; otherwise use all
-        if thread.seed_axioms:
-            context = self._get_context_for_seeds(thread.seed_axioms)
-        else:
-            context = self.axioms.get_context_for_exploration()
-        date_prefix = datetime.now().strftime("[FANO %m-%d]")
-
-        prompt_parts = [
-            f"{date_prefix} You are exploring and developing the following seed aphorisms.",
-            "",
-            "Your goal is to:",
-            "1. Verify or refine each conjecture through rigorous mathematical analysis",
-            "2. Find deeper structures that explain WHY these connections exist",
-            "3. Discover new connections that feel NATURAL and INEVITABLE (not forced)",
-            "",
-            "The criterion for a good direction: does it feel DISCOVERED rather than INVENTED?",
-            "",
-            context,
-        ]
-
-        if thread.exchanges:
-            prompt_parts.append("=== PREVIOUS EXPLORATION ===")
-            prompt_parts.append(thread.get_context_for_prompt())
-            prompt_parts.append("")
-            prompt_parts.append("Build on this exploration. Go deeper. Find the structure.")
-        else:
-            prompt_parts.append("Begin your exploration. Examine these seed aphorisms mathematically.")
-            prompt_parts.append("What structures and patterns emerge? What can you verify or develop?")
-
-        # Add anti-bloat instructions with structured format
-        prompt_parts.extend([
-            "",
-            "=== RESPONSE FORMAT ===",
-            "IMPORTANT: Do not summarize or recap previous discussion.",
-            "State only NEW insights. Assume full context is available.",
-            "Skip any preamble - go straight to the sections.",
-            "",
-            "You MUST structure your response EXACTLY as:",
-            "",
-            "[NEW_INSIGHTS]",
-            "- (bullet points of genuinely new ideas or mathematical structures)",
-            "",
-            "[CONNECTIONS]",
-            "- (new connections discovered between domains)",
-            "",
-            "[QUESTIONS]",
-            "- (open questions worth exploring next)",
-        ])
-
-        return "\n".join(prompt_parts)
-    
-    def _build_critique_prompt(self, thread: ExplorationThread) -> str:
-        """Build the prompt for critique."""
-        context = thread.get_context_for_prompt()
-        date_prefix = datetime.now().strftime("[FANO %m-%d]")
-
-        prompt = f"""{date_prefix} You are a rigorous mathematical critic. Review the following exploration:
-
-{context}
-
-Your task:
-1. Identify any FORCING or AD HOC assumptions
-2. Point out where the structure feels ARBITRARY rather than INEVITABLE
-3. Ask probing questions that would deepen the exploration
-4. Note what's working well and feels NATURAL
-5. Suggest alternative angles if something feels stuck
-
-The core question: Does this feel DISCOVERED or INVENTED?
-
-Signs of discovery (good):
-- "It couldn't be any other way"
-- "This explains WHY, not just THAT"
-- "Multiple independent paths led here"
-- "The numbers fall out naturally"
-
-Signs of invention (bad):
-- "We need to assume this for it to work"
-- "It matches, but we don't know why"
-- "This was chosen to make the numbers fit"
-- "It feels clever but arbitrary"
-
-Be constructive but rigorous. The goal is truth, not validation.
-Push toward depth, not toward any particular application.
-
-=== RESPONSE FORMAT ===
-IMPORTANT: Do not summarize or recap previous discussion.
-State only NEW critiques and questions. Assume full context is available.
-
-Structure your response as:
-[CRITICAL_ISSUES]
-(Genuine problems with the reasoning - be specific)
-
-[PROMISING_DIRECTIONS]
-(What's working and worth pursuing deeper)
-
-[PROBING_QUESTIONS]
-(Questions that would test or deepen the ideas)"""
-
-        return prompt
-    
-    def _is_chunk_ready(self, thread: ExplorationThread) -> bool:
-        """Determine if a thread is ready to be synthesized into a chunk."""
-        
-        # Minimum exchanges
-        if thread.exchange_count < self.config["min_exchanges_for_chunk"]:
-            return False
-        
-        # Maximum exchanges (force synthesis)
-        if thread.exchange_count >= self.config["max_exchanges_per_thread"]:
-            return True
-        
-        # Count critique rounds
-        critique_count = sum(1 for e in thread.exchanges if e.role == ExchangeRole.CRITIC)
-        if critique_count < CONFIG["synthesis"]["min_critiques"]:
-            return False
-        
-        # Check for profundity signals in recent exchanges
-        recent_text = " ".join(e.response for e in thread.exchanges[-4:])
-        profundity_score = self._calculate_profundity(recent_text)
-        
-        # Ready if high profundity
-        if profundity_score > 0.6:
-            return True
-        
-        return False
-    
-    def _calculate_profundity(self, text: str) -> float:
-        """Calculate a profundity score based on signal words."""
-        text_lower = text.lower()
-        
-        profundity_signals = CONFIG["synthesis"]["profundity_signals"]
-        doubt_signals = CONFIG["synthesis"]["doubt_signals"]
-        
-        prof_count = sum(1 for sig in profundity_signals if sig in text_lower)
-        doubt_count = sum(1 for sig in doubt_signals if sig in text_lower)
-        
-        # Normalize
-        score = (prof_count - doubt_count) / max(len(profundity_signals), 1)
-        return max(0, min(1, (score + 1) / 2))  # Scale to 0-1
-    
-    async def _synthesize_chunk(self, thread: ExplorationThread):
-        """Synthesize a thread into a reviewable chunk."""
-        # Use weighted selection for synthesis (balanced)
-        available_models = self._get_available_models(check_rate_limits=False)
-        model_name = select_model("synthesis", available_models)
-        if not model_name:
-            logger.warning("No model available for synthesis")
-            return
-
-        model = available_models[model_name]
-
-        # Always use deep mode for synthesis
-        use_deep = should_use_deep_mode(model_name, thread, "synthesis")
-
-        mode_str = " [DEEP]" if use_deep else ""
-        logger.info(f"Synthesizing chunk from thread [{thread.id}] with {model_name}{mode_str}")
-
-        # Build synthesis prompt
-        synthesis_prompt = self._build_synthesis_prompt(thread)
-
-        try:
-            await model.start_new_chat()
-
-            # Pass deep mode flag and thread_id to send_message
-            # ChatGPT: use Pro mode for deep, Thinking mode for standard
-            if model_name == "chatgpt":
-                response = await model.send_message(
-                    synthesis_prompt,
-                    use_pro_mode=use_deep,
-                    use_thinking_mode=not use_deep,
-                    thread_id=thread.id,
-                )
-            else:
-                response = await model.send_message(synthesis_prompt, use_deep_think=use_deep, thread_id=thread.id)
-
-            # Check if deep mode was actually used and record it
-            deep_mode_used = getattr(model, 'last_deep_mode_used', False)
-            if deep_mode_used:
-                mode_key = "gemini_deep_think" if model_name == "gemini" else "chatgpt_pro"
-                deep_mode_tracker.record_usage(mode_key)
-            elif use_deep:
-                logger.warning(f"Deep mode requested but not available")
-            
-            # Parse the synthesis response
-            title, summary, content = self._parse_synthesis(response, thread)
-            
-            # Calculate profundity
-            profundity = self._calculate_profundity(content)
-            critique_count = sum(1 for e in thread.exchanges if e.role == ExchangeRole.CRITIC)
-            
-            # Create chunk
-            chunk = Chunk.create_from_thread(
-                thread_id=thread.id,
-                title=title,
-                content=content,
-                summary=summary,
-                target_numbers=thread.target_numbers,
-                profundity_score=profundity,
-                critique_rounds=critique_count,
-            )
-            
-            # Save chunk
-            chunk.save(self.data_dir)
-
-            # Mark thread as chunk-ready
-            thread.status = ThreadStatus.CHUNK_READY
-            thread.save(self.data_dir)
-
-            logger.info(f"Created chunk [{chunk.id}]: {chunk.title}")
-
-            # Atomic extraction and review (if enabled)
-            if CONFIG.get("chunking", {}).get("mode") == "atomic":
-                await self._extract_and_review(thread, model_name, model)
-
-        except Exception as e:
-            logger.error(f"Synthesis failed: {e}")
-    
-    def _build_synthesis_prompt(self, thread: ExplorationThread) -> str:
-        """Build prompt for chunk synthesis."""
-        context = thread.get_context_for_prompt(max_exchanges=10)
-        date_prefix = datetime.now().strftime("[FANO %m-%d]")
-
-        return f"""{date_prefix} You are a mathematical writer. Synthesize the following exploration into a clear, well-structured write-up.
-
-{context}
-
-Write a synthesis that:
-1. Opens with a clear TITLE (single line)
-2. Follows with a one-sentence SUMMARY
-3. Then provides the full CONTENT explaining the mathematical structure discovered
-
-The write-up should:
-- Be clear and readable
-- Preserve the mathematical rigor
-- Highlight what feels INEVITABLE vs what remains speculative
-- Explicitly show how the structure explains the target numbers
-
-Format:
-TITLE: [Your title here]
-SUMMARY: [One sentence summary]
-CONTENT:
-[Full write-up in markdown]"""
-    
-    def _parse_synthesis(self, response: str, thread: ExplorationThread) -> tuple[str, str, str]:
-        """Parse synthesis response into title, summary, content."""
-
-        # Try to extract structured parts
-        title_match = re.search(r'TITLE:\s*(.+?)(?:\n|SUMMARY:)', response, re.DOTALL)
-        summary_match = re.search(r'SUMMARY:\s*(.+?)(?:\n|CONTENT:)', response, re.DOTALL)
-        content_match = re.search(r'CONTENT:\s*(.+)', response, re.DOTALL)
-
-        title = title_match.group(1).strip() if title_match else f"Exploration {thread.id}"
-        summary = summary_match.group(1).strip() if summary_match else "Mathematical exploration synthesis"
-        content = content_match.group(1).strip() if content_match else response
-
-        return title, summary, content
-
-    def _extract_structured_response(self, response: str, sections: list[str]) -> str:
-        """
-        Extract only the structured sections from a response, stripping preamble.
-
-        Args:
-            response: Full LLM response text
-            sections: List of section names to extract (e.g. ['NEW_INSIGHTS', 'CONNECTIONS'])
-
-        Returns:
-            Cleaned response with only the structured sections
-        """
-        # Build pattern to find all sections
-        section_pattern = r'\[(' + '|'.join(sections) + r')\]'
-
-        # Find the first section marker - everything before it is preamble
-        first_match = re.search(section_pattern, response)
-        if not first_match:
-            # No structured sections found, return original (but log warning)
-            logger.warning("No structured sections found in response, keeping original")
-            return response
-
-        # Extract from first section onwards
-        structured_part = response[first_match.start():]
-
-        # Clean up: remove any trailing content after the last section's content
-        # by keeping only content up to any obvious sign-off phrases
-        signoff_patterns = [
-            r'\n\nLet me know',
-            r'\n\nWould you like',
-            r'\n\nShall I',
-            r'\n\nI hope this',
-            r'\n\nIn summary,',  # Catch summary attempts
-            r'\n\nTo summarize,',
-            r'\n\nOverall,',
-        ]
-        for pattern in signoff_patterns:
-            match = re.search(pattern, structured_part, re.IGNORECASE)
-            if match:
-                structured_part = structured_part[:match.start()]
-
-        return structured_part.strip()
-
-    async def _extract_insights(
-        self,
-        thread: ExplorationThread,
-        model_name: str,
-        model,
-    ) -> Optional[list[AtomicInsight]]:
-        """
-        Extract and deduplicate insights from a thread.
-
-        Returns:
-            List of unique insights, or None if extraction failed/empty.
-        """
-        # Get Claude reviewer for extraction
-        claude_reviewer = None
-        if self.reviewer:
-            claude_reviewer = self.reviewer.claude_reviewer
-
-        # Get blessed insights for dependency context
-        blessed_insights = self._get_blessed_insights()
-
-        # Choose extraction method based on config
-        if self.use_panel_extraction:
-            logger.info(f"[{thread.id}] Starting PANEL extraction (all 3 LLMs)")
-            insights = await self.panel_extractor.extract_from_thread(
-                thread=thread,
-                gemini=self.gemini,
-                chatgpt=self.chatgpt,
-                claude_reviewer=claude_reviewer,
-                blessed_insights=blessed_insights,
-            )
-        else:
-            author = "Claude Opus" if claude_reviewer and claude_reviewer.is_available() else model_name
-            logger.info(f"[{thread.id}] Starting single-LLM extraction with {author}")
-            insights = await self.extractor.extract_from_thread(
-                thread=thread,
-                claude_reviewer=claude_reviewer,
-                fallback_model=model,
-                fallback_model_name=model_name,
-                blessed_insights=blessed_insights,
-            )
-
-        if not insights:
-            # Check if extraction_note indicates an error
-            if thread.extraction_note and "failed" in thread.extraction_note.lower():
-                logger.warning(f"[{thread.id}] Extraction failed, will retry: {thread.extraction_note}")
-                return None
-            logger.info(f"[{thread.id}] No insights extracted")
-            thread.extraction_note = "No insights met extraction criteria"
-            return None
-
-        logger.info(f"[{thread.id}] Extracted {len(insights)} atomic insights")
-
-        # Deduplicate insights against known blessed insights
-        if self.dedup_checker:
-            unique_insights = []
-            duplicate_count = 0
-
-            for insight in insights:
-                is_dup, dup_of_id = await self.dedup_checker.is_duplicate(
-                    new_text=insight.insight,
-                    new_id=insight.id,
-                )
-                if is_dup:
-                    logger.info(f"[{thread.id}] Skipping duplicate insight [{insight.id}] (similar to {dup_of_id})")
-                    duplicate_count += 1
-                else:
-                    unique_insights.append(insight)
-                    self.dedup_checker.add_known_insight(insight.id, insight.insight)
-
-            if duplicate_count > 0:
-                logger.info(f"[{thread.id}] Filtered out {duplicate_count} duplicate insights")
-
-            insights = unique_insights
-
-        if not insights:
-            logger.info(f"[{thread.id}] All insights were duplicates")
-            thread.extraction_note = "All insights were duplicates of existing ones"
-            return None
-
-        return insights
-
-    async def _save_and_review_insights(
-        self,
-        thread: ExplorationThread,
-        insights: list[AtomicInsight],
-    ):
-        """Save insights to disk and run automated review if enabled."""
-        chunks_dir = self.data_dir / "chunks"
-        chunks_dir.mkdir(parents=True, exist_ok=True)
-
-        for insight in insights:
-            await asyncio.to_thread(insight.save, chunks_dir)
-
-        # Run automated review if enabled
-        if self.reviewer and CONFIG.get("review_panel", {}).get("enabled", False):
-            blessed_summary = self._get_blessed_summary()
-            await self._review_insights(insights, blessed_summary)
-
-        # Mark thread as extracted
-        thread.chunks_extracted = True
-        await asyncio.to_thread(thread.save, self.data_dir)
-        logger.info(f"[{thread.id}] Extraction and review complete")
-
-    async def _extract_and_review(
-        self,
-        thread: ExplorationThread,
-        model_name: str,
-        model,
-    ):
-        """
-        Extract atomic insights from a thread and run automated review.
-
-        Claude Opus is the primary extraction author (best at precise articulation).
-        Falls back to browser LLMs if Claude is unavailable.
-        """
-        if thread.chunks_extracted:
-            logger.info(f"[{thread.id}] Already extracted, skipping")
-            return
-
-        # Check if insights already exist for this thread (from previous interrupted run)
-        existing_insights = self._get_existing_insights_for_thread(thread.id)
-        if existing_insights:
-            logger.info(f"[{thread.id}] Found {len(existing_insights)} existing insights, skipping extraction")
-            if self.reviewer and CONFIG.get("review_panel", {}).get("enabled", False):
-                unreviewed = [i for i in existing_insights if not getattr(i, 'reviewed_at', None)]
-                if unreviewed:
-                    logger.info(f"[{thread.id}] Running review on {len(unreviewed)} unreviewed insights")
-                    blessed_summary = self._get_blessed_summary()
-                    await self._review_insights(unreviewed, blessed_summary)
-            thread.chunks_extracted = True
-            thread.extraction_note = f"Resumed with {len(existing_insights)} existing insights"
-            thread.save(self.data_dir)
-            return
-
-        try:
-            insights = await self._extract_insights(thread, model_name, model)
-
-            if not insights:
-                thread.chunks_extracted = True
-                thread.save(self.data_dir)
-                return
-
-            await self._save_and_review_insights(thread, insights)
-
-        except Exception as e:
-            logger.error(f"[{thread.id}] Extraction failed: {e}")
-            thread.extraction_note = f"Extraction error: {str(e)}"
-            await asyncio.to_thread(thread.save, self.data_dir)
-
-    async def _review_insights(
-        self,
-        insights: list[AtomicInsight],
-        blessed_summary: str,
-    ):
-        """
-        Run automated review on extracted insights using priority-based selection.
-
-        Always processes the highest priority item next. If a higher priority
-        item appears (via UI), pauses the current review and switches to it.
-
-        Args:
-            insights: List of AtomicInsight to review (used for initial save only)
-            blessed_summary: Summary of blessed axioms for context
-        """
-        logger.info(f"Starting priority-based review of {len(insights)} insights")
-
-        chunks_dir = self.data_dir / "chunks"
-
-        # Process insights by priority until none remain
-        processed_ids = set()
-        max_iterations = len(insights) * 3  # Safety limit to prevent infinite loops
-
-        for iteration in range(max_iterations):
-            # Get the highest priority pending insight
-            insight_id, priority, rounds_completed = self.reviewer.get_highest_priority_pending()
-
-            if not insight_id:
-                logger.info("No more pending insights to review")
-                break
-
-            if insight_id in processed_ids:
-                # Already tried this one, may be stuck - skip for now
-                logger.warning(f"[{insight_id}] Already processed, skipping to avoid loop")
-                break
-
-            # Load the insight
-            insight = self._load_insight_by_id(insight_id)
-            if not insight:
-                logger.warning(f"[{insight_id}] Could not load insight, skipping")
-                processed_ids.add(insight_id)
-                continue
-
-            try:
-                logger.info(f"Reviewing [{insight.id}] priority={priority} (rounds_completed={rounds_completed})")
-
-                review = await self.reviewer.review_insight(
-                    chunk_id=insight.id,
-                    insight_text=insight.insight,
-                    confidence=insight.confidence,
-                    tags=insight.tags,
-                    dependencies=insight.depends_on,
-                    blessed_axioms_summary=blessed_summary,
-                    priority=priority,
-                    check_priority_switches=True,
-                )
-
-                # Check if review was paused for higher priority item
-                if review.is_paused:
-                    logger.info(f"[{insight.id}] Paused for higher priority item {review.paused_for_id}")
-                    # Don't mark as processed - we'll come back to it
-                    continue
-
-                # Review completed - mark as processed
-                processed_ids.add(insight.id)
-
-                # Get outcome action
-                action = self.reviewer.get_outcome_action(review)
-                logger.info(f"[{insight.id}] Review outcome: {review.final_rating} ({action})")
-
-                # Apply rating to insight
-                insight.rating = review.final_rating
-                insight.is_disputed = review.is_disputed
-                insight.reviewed_at = review.reviewed_at
-
-                # If the insight was modified during deliberation, update the text
-                if review.final_insight_text and review.final_insight_text != insight.insight:
-                    logger.info(f"[{insight.id}] Using modified insight text from deliberation")
-                    insight.insight = review.final_insight_text
-
-                # Update status based on rating
-                if review.final_rating == "⚡":
-                    insight.status = InsightStatus.BLESSED
-                    # Build review summary for augmentation context
-                    review_summary = self._build_review_summary(review)
-                    # Add to blessed insights and augment
-                    await self._bless_insight(insight, review_summary)
-                elif review.final_rating == "✗":
-                    insight.status = InsightStatus.REJECTED
-                else:
-                    insight.status = InsightStatus.INTERESTING
-
-                # Save updated insight
-                await asyncio.to_thread(insight.save, chunks_dir)
-
-            except GeminiQuotaExhausted as e:
-                # Gemini Deep Think quota exhausted - stop processing
-                logger.error(f"[{insight.id}] Gemini Deep Think quota exhausted")
-                print(f"\n{'='*60}")
-                print(f"⚠️  GEMINI DEEP THINK QUOTA EXHAUSTED")
-                print(f"{'='*60}")
-                print(f"\nDeep Think mode is unavailable until: {e.resume_time}")
-                print(f"\nReviews require Gemini Deep Think for quality analysis.")
-                print(f"Progress has been saved and can be resumed later.")
-                print(f"\nPlease wait until {e.resume_time} before running reviews again.")
-                print(f"{'='*60}\n")
-
-                # Save the insight in its current state (pending)
-                insight.status = InsightStatus.PENDING
-                await asyncio.to_thread(insight.save, chunks_dir)
-
-                # Exit the review loop - don't process any more items
-                break
-
-            except Exception as e:
-                logger.error(f"[{insight.id}] Review failed: {e}")
-                insight.status = InsightStatus.PENDING
-                await asyncio.to_thread(insight.save, chunks_dir)
-                processed_ids.add(insight.id)  # Don't retry failed items in this batch
-
-    def _load_insight_by_id(self, insight_id: str) -> AtomicInsight:
-        """Load an insight by ID from any status directory."""
-        for status in ["pending", "blessed", "interesting", "rejected"]:
-            path = self.data_dir / "chunks" / "insights" / status / f"{insight_id}.json"
-            if path.exists():
-                return AtomicInsight.load(path)
-        return None
-
-    def _get_blessed_summary(self) -> str:
-        """Get a summary of blessed axioms/insights for prompts."""
-        # Use the axiom store's context method
-        return self.axioms.get_context_for_exploration()
-
-    def _build_review_summary(self, review) -> str:
-        """
-        Build a summary of reviewer findings for augmentation context.
-
-        Extracts key points that reviewers found compelling, which helps
-        the augmenter understand what makes this insight worth illustrating.
-        """
-        parts = []
-
-        if not review.rounds:
-            return ""
-
-        # Get final round (most relevant reasoning)
-        final_round = review.rounds[-1]
-
-        for llm, resp in final_round.responses.items():
-            if resp.rating == "⚡":  # Only include endorsements
-                parts.append(f"{llm.title()} found compelling:")
-                if resp.naturalness_assessment:
-                    parts.append(f"  - Naturalness: {resp.naturalness_assessment}")
-                if resp.structural_analysis:
-                    parts.append(f"  - Structure: {resp.structural_analysis}")
-                if resp.reasoning:
-                    parts.append(f"  - Reasoning: {resp.reasoning}")
-
-        # Note if there were mind changes
-        if review.mind_changes:
-            for mc in review.mind_changes:
-                if mc.to_rating == "⚡":
-                    parts.append(f"{mc.llm.title()} changed to bless because: {mc.reason}")
-
-        return "\n".join(parts)
-
-    def _get_blessed_insights(self) -> list[dict]:
-        """Get list of blessed insights for dependency matching."""
-        blessed = []
-
-        # Load seed aphorisms first (user-provided starting points)
-        seeds = self.axioms.get_seed_aphorisms()
-        for seed in seeds:
-            blessed.append({
-                "id": seed.id,
-                "text": seed.text,
-                "tags": seed.tags,
-                "is_seed": True,
-            })
-
-        # Load from blessed_insights.json if exists
-        blessed_file = self.data_dir / "blessed_insights.json"
-        if blessed_file.exists():
-            import json
-            with open(blessed_file, encoding="utf-8") as f:
-                data = json.load(f)
-                blessed.extend(data.get("insights", []))
-
-        # Also include insights with BLESSED status from insights directory
-        blessed_dir = self.data_dir / "chunks" / "insights" / "blessed"
-        if blessed_dir.exists():
-            for filepath in blessed_dir.glob("*.json"):
-                try:
-                    insight = AtomicInsight.load(filepath)
-                    blessed.append({
-                        "id": insight.id,
-                        "text": insight.insight,
-                        "tags": insight.tags,
-                    })
-                except Exception:
-                    pass
-
-        return blessed
-
-    def _get_existing_insights_for_thread(self, thread_id: str) -> list[AtomicInsight]:
-        """
-        Find any insights that were already extracted for this thread.
-        Checks pending, reviewing, and blessed directories.
-        """
-        existing = []
-        chunks_dir = self.data_dir / "chunks"
-
-        # Check all subdirectories where insights might be
-        subdirs = ["pending", "reviewing", "insights/blessed", "insights/rejected"]
-
-        for subdir in subdirs:
-            search_dir = chunks_dir / subdir
-            if not search_dir.exists():
-                continue
-
-            for filepath in search_dir.glob("*.json"):
-                try:
-                    insight = AtomicInsight.load(filepath)
-                    if insight.source_thread_id == thread_id:
-                        existing.append(insight)
-                except Exception:
-                    pass
-
-        return existing
-
-    async def _bless_insight(self, insight: AtomicInsight, review_summary: str = ""):
-        """Add an insight to the blessed insights store and augment it."""
-        import json
-
-        blessed_file = self.data_dir / "blessed_insights.json"
-
-        # Load existing
-        if blessed_file.exists():
-            with open(blessed_file, encoding="utf-8") as f:
-                data = json.load(f)
-        else:
-            data = {"insights": []}
-
-        # Add new insight
-        data["insights"].append({
-            "id": insight.id,
-            "text": insight.insight,
-            "confidence": insight.confidence,
-            "tags": insight.tags,
-            "depends_on": insight.depends_on,
-            "source_thread_id": insight.source_thread_id,
-            "blessed_at": datetime.now().isoformat(),
-        })
-
-        # Save
-        with open(blessed_file, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
-
-        logger.info(f"Blessed insight [{insight.id}] added to axiom store")
-
-        # Add to deduplication checker for future duplicate detection
-        if self.dedup_checker:
-            self.dedup_checker.add_known_insight(insight.id, insight.insight)
-
-        # Augment the blessed insight (generate diagrams, tables, proofs, code)
-        if self.augmenter:
-            try:
-                augmented = await self.augmenter.augment_insight(
-                    insight_id=insight.id,
-                    insight_text=insight.insight,
-                    tags=insight.tags,
-                    dependencies=insight.depends_on,
-                    review_summary=review_summary,
-                )
-                aug_count = len(augmented.augmentations)
-                if aug_count > 0:
-                    logger.info(f"[{insight.id}] Generated {aug_count} augmentations")
-            except Exception as e:
-                logger.warning(f"[{insight.id}] Augmentation failed: {e}")
