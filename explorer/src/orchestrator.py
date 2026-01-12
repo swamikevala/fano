@@ -95,6 +95,7 @@ class Orchestrator:
             self.paths,
             self.axioms,
             self.thread_manager.get_context_for_seeds,
+            self.thread_manager.get_focused_context,
         )
 
         # Initialize synthesis engine

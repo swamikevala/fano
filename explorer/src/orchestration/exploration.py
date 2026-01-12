@@ -37,6 +37,7 @@ class ExplorationEngine:
         paths: ExplorerPaths,
         axioms: AxiomStore,
         get_context_for_seeds_fn,
+        get_focused_context_fn=None,
     ):
         """
         Initialize exploration engine.
@@ -46,11 +47,13 @@ class ExplorationEngine:
             paths: ExplorerPaths instance
             axioms: AxiomStore for context
             get_context_for_seeds_fn: Function to get context for specific seeds
+            get_focused_context_fn: Function to get focused context for single-seed threads
         """
         self.config = config
         self.paths = paths
         self.axioms = axioms
         self.get_context_for_seeds = get_context_for_seeds_fn
+        self.get_focused_context = get_focused_context_fn
 
     async def do_exploration(
         self,
@@ -164,8 +167,14 @@ class ExplorationEngine:
 
     def _build_exploration_prompt(self, thread: ExplorationThread) -> str:
         """Build the prompt for exploration based on seed aphorisms."""
-        # If thread has specific seeds, focus on those; otherwise use all
-        if thread.seed_axioms:
+        # Check if this is a focused single-seed thread
+        is_focused = thread.primary_question_id or thread.related_conjecture_ids
+
+        if is_focused and self.get_focused_context:
+            # Use focused context for single-seed exploration
+            context = self.get_focused_context(thread)
+        elif thread.seed_axioms:
+            # Legacy: use context for all seeds in the thread
             context = self.get_context_for_seeds(thread.seed_axioms)
         else:
             context = self.axioms.get_context_for_exploration()

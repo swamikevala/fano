@@ -84,6 +84,11 @@ class ExplorationThread:
     # Atomic chunking fields
     chunks_extracted: bool = False  # True after atomic extraction complete
     extraction_note: Optional[str] = None  # Note if no insights found
+
+    # Focused exploration fields (single-question per thread)
+    primary_question_id: Optional[str] = None  # The single question this thread explores
+    related_conjecture_ids: list[str] = field(default_factory=list)  # Conjectures with matching tags
+    priority: int = 5  # Inherited from primary question (1-10, higher = more important)
     
     @property
     def exchange_count(self) -> int:
@@ -162,6 +167,9 @@ class ExplorationThread:
             "notes": self.notes,
             "chunks_extracted": self.chunks_extracted,
             "extraction_note": self.extraction_note,
+            "primary_question_id": self.primary_question_id,
+            "related_conjecture_ids": self.related_conjecture_ids,
+            "priority": self.priority,
         }
     
     @classmethod
@@ -178,6 +186,9 @@ class ExplorationThread:
             notes=data.get("notes", ""),
             chunks_extracted=data.get("chunks_extracted", False),
             extraction_note=data.get("extraction_note"),
+            primary_question_id=data.get("primary_question_id"),
+            related_conjecture_ids=data.get("related_conjecture_ids", []),
+            priority=data.get("priority", 5),
         )
     
     def save(self, base_dir: Path):

@@ -107,20 +107,49 @@ class ThreadManager:
 
     def spawn_new_thread(self) -> ExplorationThread:
         """
-        Create a new exploration thread based on all seed aphorisms.
+        Create a new exploration thread focused on a single seed.
+
+        The thread will focus on ONE question or conjecture, with axioms
+        always included as foundational context.
 
         Returns:
             Newly created thread.
         """
-        seeds = self.axioms.get_seed_aphorisms()
-        seed_ids = [s.id for s in seeds] if seeds else []
-        topic = self._generate_topic(seeds)
+        # Select the single seed to focus on
+        focus_seed = self.select_next_seed()
 
-        thread = ExplorationThread.create_new(
-            topic=topic,
-            seed_axioms=seed_ids,
-            target_numbers=[],
-        )
+        # Get axiom IDs (always included as foundational context)
+        axioms = self.axioms.get_axioms()
+        axiom_ids = [a.id for a in axioms]
+
+        if focus_seed is None:
+            # No seeds to explore - create a general exploration thread
+            log.warning("[seeds] No seeds available, creating general thread")
+            thread = ExplorationThread.create_new(
+                topic="Open mathematical exploration",
+                seed_axioms=axiom_ids,
+                target_numbers=[],
+            )
+        else:
+            # Create focused thread
+            topic = self._generate_topic([focus_seed])
+
+            thread = ExplorationThread.create_new(
+                topic=topic,
+                seed_axioms=axiom_ids,  # Only axioms as foundational context
+                target_numbers=[],
+            )
+
+            # Set the focused exploration fields
+            if focus_seed.type == "question":
+                thread.primary_question_id = focus_seed.id
+            else:
+                thread.related_conjecture_ids = [focus_seed.id]
+            thread.priority = focus_seed.priority
+
+            log.info(
+                f"[seeds] Created focused thread {thread.id} for {focus_seed.type}: {focus_seed.id}"
+            )
 
         thread.save(self.paths.data_dir)
         return thread
@@ -193,6 +222,76 @@ class ThreadManager:
 
         return thread
 
+    def get_explored_seed_ids(self) -> set[str]:
+        """
+        Get IDs of seeds that have already been explored in existing threads.
+
+        Checks both primary_question_id and related_conjecture_ids fields
+        to find seeds that have dedicated exploration threads.
+
+        Returns:
+            Set of seed IDs that have been explored.
+        """
+        explored = set()
+
+        if not self.paths.explorations_dir.exists():
+            return explored
+
+        for filepath in self.paths.explorations_dir.glob("*.json"):
+            try:
+                thread = ExplorationThread.load(filepath)
+                # Collect from focused exploration fields
+                if thread.primary_question_id:
+                    explored.add(thread.primary_question_id)
+                if thread.related_conjecture_ids:
+                    explored.update(thread.related_conjecture_ids)
+            except Exception:
+                pass
+
+        return explored
+
+    def select_next_seed(self):
+        """
+        Select the next unexplored seed to focus on.
+
+        Priority order:
+        1. Unexplored questions (by priority, highest first)
+        2. Unexplored conjectures (by priority, highest first)
+        3. If all explored, return highest-priority seed for re-exploration
+
+        Returns:
+            SeedAphorism to focus on, or None if no seeds exist.
+        """
+        # Get questions and conjectures (not axioms - those are always context)
+        questions = self.axioms.get_questions()
+        conjectures = self.axioms.get_conjectures()
+
+        if not questions and not conjectures:
+            return None
+
+        explored = self.get_explored_seed_ids()
+
+        # Try unexplored questions first (already sorted by priority)
+        for q in questions:
+            if q.id not in explored:
+                log.info(f"[seeds] Selected unexplored question: {q.id} (P{q.priority})")
+                return q
+
+        # Then unexplored conjectures
+        for c in conjectures:
+            if c.id not in explored:
+                log.info(f"[seeds] Selected unexplored conjecture: {c.id} (P{c.priority})")
+                return c
+
+        # All explored - return highest priority for re-exploration
+        all_seeds = questions + conjectures
+        all_seeds.sort(key=lambda s: s.priority, reverse=True)
+        if all_seeds:
+            log.info(f"[seeds] All seeds explored, re-exploring: {all_seeds[0].id}")
+            return all_seeds[0]
+
+        return None
+
     def get_context_for_seeds(self, seed_ids: list[str]) -> str:
         """
         Get exploration context for specific seed IDs only.
@@ -223,6 +322,80 @@ class ThreadManager:
             if seed.notes:
                 lines.append(f"   Note: {seed.notes}")
         lines.append("")
+
+        return "\n".join(lines)
+
+    def get_focused_context(self, thread: ExplorationThread) -> str:
+        """
+        Build exploration context for a single-seed focused thread.
+
+        Includes:
+        - Axioms as foundational facts (from thread.seed_axioms)
+        - The single focus seed (from primary_question_id or related_conjecture_ids)
+
+        Args:
+            thread: The exploration thread with focused seed info.
+
+        Returns:
+            Formatted context string optimized for single-seed exploration.
+        """
+        lines = []
+
+        # 1. AXIOMS - Foundational facts (always included)
+        axioms = self.axioms.get_axioms()
+        if axioms:
+            lines.append("=== FOUNDATIONAL AXIOMS ===")
+            lines.append("These are established facts. Take them as given:\n")
+            for axiom in axioms:
+                lines.append(f"• {axiom.text}")
+                if axiom.notes:
+                    lines.append(f"   Note: {axiom.notes}")
+            lines.append("")
+
+        # 2. FOCUS SEED - The single seed to explore deeply
+        focus_seed = None
+        seed_type = None
+
+        if thread.primary_question_id:
+            focus_seed = self.axioms.get_seed_by_id(thread.primary_question_id)
+            seed_type = "QUESTION"
+        elif thread.related_conjecture_ids:
+            focus_seed = self.axioms.get_seed_by_id(thread.related_conjecture_ids[0])
+            seed_type = "CONJECTURE"
+
+        if focus_seed:
+            lines.append(f"=== YOUR FOCUS: {seed_type} ===")
+            lines.append("Explore this single seed DEEPLY. Do not spread thin across many topics.\n")
+
+            if seed_type == "QUESTION":
+                lines.append(f"❓ {focus_seed.text}")
+            else:
+                confidence_marker = {"high": "⚡", "medium": "?", "low": "○"}.get(
+                    focus_seed.confidence, "?"
+                )
+                lines.append(f"{confidence_marker} {focus_seed.text}")
+
+            if focus_seed.tags:
+                lines.append(f"   [Tags: {', '.join(focus_seed.tags)}]")
+            if focus_seed.notes:
+                lines.append(f"   Context: {focus_seed.notes}")
+            lines.append("")
+
+            lines.append("Your task:")
+            if seed_type == "QUESTION":
+                lines.append("- Investigate this question thoroughly")
+                lines.append("- Use the axioms above as your foundation")
+                lines.append("- Develop a clear, well-reasoned answer")
+            else:
+                lines.append("- Verify or refute this conjecture")
+                lines.append("- Find the deeper structure that explains WHY")
+                lines.append("- Use the axioms above as your foundation")
+            lines.append("")
+        else:
+            # Fallback if no focus seed found
+            lines.append("=== EXPLORATION ===")
+            lines.append("Explore mathematical structures based on the axioms above.")
+            lines.append("")
 
         return "\n".join(lines)
 
