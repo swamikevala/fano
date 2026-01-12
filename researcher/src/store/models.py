@@ -114,16 +114,19 @@ class Source:
         )
 
     @classmethod
-    def create(cls, url: str, domain: str, title: str, content_hash: str,
-               content_type: str = "html") -> "Source":
+    def create(cls, url: str, title: str = "", content_hash: str = "",
+               content_type: str = "html", trust_score: int = 0,
+               trust_tier: SourceTier = SourceTier.UNKNOWN) -> "Source":
         """Create a new source with default values."""
+        from urllib.parse import urlparse
+        domain = urlparse(url).netloc.lower()
         return cls(
             id=str(uuid.uuid4())[:12],
             url=url,
             domain=domain,
-            title=title,
-            trust_score=0,
-            trust_tier=SourceTier.UNKNOWN,
+            title=title or url,
+            trust_score=trust_score,
+            trust_tier=trust_tier,
             evaluation_reasoning="",
             evaluated_at=None,
             content_hash=content_hash,
@@ -211,7 +214,8 @@ class Finding:
 
     @classmethod
     def create(cls, source_id: str, finding_type: FindingType, summary: str,
-               original_quote: str, domain: str, extraction_model: str,
+               original_quote: str = "", domain: str = "",
+               extraction_model: str = "unknown",
                source_location: str = "", confidence: float = 0.5) -> "Finding":
         """Create a new finding."""
         return cls(
