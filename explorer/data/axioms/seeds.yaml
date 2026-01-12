@@ -57,7 +57,7 @@ seeds:
     source: "Prior explorations"
 
   - text: "There are 72 major nadis. 18-21 of these correspond to the physical dimensions of life. The remaining 51 are pathways into other dimensions of existence. How does our fano geometry derive this?"
-  - type: "question"
+    type: "question"
     priority: 8
 
   - text: "The 12 tangential fano triangles (corresponding to a particular fano point) correspond to the 12 musical notes, explaining why there is only one Sa and one Pa, and why the other 5 notes come in pairs, and moreover why the pairs of Re, Ga, Dha, Ni are termed as shuddh and komal (natural and flat), whereas the Ma pair is termed as shuddh and tivra (natural and sharp)"
@@ -86,6 +86,7 @@ seeds:
     priority: 5
 
   - text: "Do the Sanskrit names of the 14 major nadis encode information about the mathematical structure corresponding to that nadi, based on the phonemes in their names and the petal-letter, chakra-bija-mantra correspondence?"
+    type: "question"
     priority: 5
 
   - text: "how are the 113th and 114th 'out-of-the-body' chakras most naturally modelled with the existing mathematical framework for the 112 'in-the-body' chakras?"
@@ -109,5 +110,9 @@ seeds:
     priority: 9
 
   - text: "The 7 chakras correspond to the 7 musical swaras (S,R,G,M,P,D,N) - but which chakra corresponds to which swara? Ma seems to naturally correspond to the distinguished point/line. In music R,G,D,N all come in pairs, and S, P come as singletones which are more fundamental in nature. Which chakra point/lines do they correspond to (once symmetry has been broken byb choosing Ma)"
+    type: "question"
+    priority: 9
+
+  - text: "How does the following statement relate to, and of what significance is it to our exploration: 'affine geometry emerges as the geometry obtained from projective geometry by selecting a line and considering only those transformations that map that line to itself; the line can then be thought of as lying ‘at infinity’ and safely ignored.'"
     type: "question"
     priority: 9
