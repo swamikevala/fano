@@ -286,27 +286,95 @@ class BaseWorker:
         log.info("pool.worker.recovery.attempting",
                  backend=self.backend_name,
                  request_id=active.get("request_id"),
+                 thread_id=active.get("thread_id"),
                  chat_url=chat_url)
 
         try:
             # Navigate back to the chat
             await self.browser.page.goto(chat_url)
             await self.browser.page.wait_for_load_state("networkidle")
-            await asyncio.sleep(2)  # Let page settle
+            await asyncio.sleep(5)  # Give page more time to settle
 
-            # Check if response is ready or still generating
-            if hasattr(self.browser, 'is_generating') and await self.browser.is_generating():
-                log.info("pool.worker.recovery.still_generating", backend=self.backend_name)
-                # Still generating - wait for it
-                response_text = await self.browser._wait_for_response()
-            elif hasattr(self.browser, 'try_get_response'):
-                response_text = await self.browser.try_get_response()
-                if not response_text:
-                    log.warning("pool.worker.recovery.no_response", backend=self.backend_name)
-                    self.state.clear_active_work(self.backend_name)
-                    return None
-            else:
-                log.warning("pool.worker.recovery.no_method", backend=self.backend_name)
+            response_text = None
+
+            # Exponential backoff delays: 3, 6, 12, 24, 48 seconds
+            backoff_delays = [3, 6, 12, 24, 48]
+            max_attempts = 5
+
+            # Try multiple times to detect state and get response
+            # Page might need time to fully render after navigation
+            for attempt in range(max_attempts):
+                log.info("pool.worker.recovery.check_attempt",
+                         backend=self.backend_name,
+                         attempt=attempt + 1,
+                         max_attempts=max_attempts)
+
+                # Try scrolling the page to trigger lazy-loaded content
+                try:
+                    await self.browser.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                    await asyncio.sleep(1)
+                    await self.browser.page.evaluate("window.scrollTo(0, 0)")
+                    await asyncio.sleep(1)
+                except Exception:
+                    pass  # Best effort scroll
+
+                # Check if still generating
+                is_generating = False
+                if hasattr(self.browser, 'is_generating'):
+                    is_generating = await self.browser.is_generating()
+
+                if is_generating:
+                    log.info("pool.worker.recovery.still_generating", backend=self.backend_name)
+                    # Still generating - wait for it to complete
+                    response_text = await self.browser._wait_for_response()
+                    break
+
+                # Try to get existing response
+                if hasattr(self.browser, 'try_get_response'):
+                    response_text = await self.browser.try_get_response()
+                    if response_text:
+                        log.info("pool.worker.recovery.found_response",
+                                 backend=self.backend_name,
+                                 response_length=len(response_text))
+                        break
+
+                # Neither generating nor response found - wait with exponential backoff
+                if attempt < max_attempts - 1:
+                    delay = backoff_delays[attempt]
+                    log.info("pool.worker.recovery.waiting_retry",
+                            backend=self.backend_name,
+                            delay_seconds=delay)
+                    await asyncio.sleep(delay)
+
+            # If still no response after retries, try waiting anyway as last resort
+            # (the page might be in a state where indicators aren't visible but generation is happening)
+            if not response_text:
+                log.info("pool.worker.recovery.last_resort_wait", backend=self.backend_name)
+                try:
+                    # Wait with a longer timeout for last resort (chats can take 30+ min)
+                    response_text = await asyncio.wait_for(
+                        self.browser._wait_for_response(),
+                        timeout=1800  # 30 minute timeout for last resort
+                    )
+                except asyncio.TimeoutError:
+                    log.warning("pool.worker.recovery.timeout", backend=self.backend_name)
+                    response_text = None
+
+            if not response_text:
+                log.warning("pool.worker.recovery.no_response", backend=self.backend_name)
+
+                # Save a debug screenshot on failure
+                try:
+                    screenshot_path = Path(__file__).parent.parent / "debug" / f"recovery_fail_{self.backend_name}_{int(time.time())}.png"
+                    screenshot_path.parent.mkdir(parents=True, exist_ok=True)
+                    await self.browser.page.screenshot(path=str(screenshot_path))
+                    log.info("pool.worker.recovery.screenshot_saved",
+                            backend=self.backend_name,
+                            path=str(screenshot_path))
+                except Exception as e:
+                    log.warning("pool.worker.recovery.screenshot_failed",
+                               error=str(e))
+
                 self.state.clear_active_work(self.backend_name)
                 return None
 
@@ -326,6 +394,7 @@ class BaseWorker:
             log.info("pool.worker.recovery.success",
                      backend=self.backend_name,
                      request_id=active.get("request_id"),
+                     thread_id=active.get("thread_id"),
                      response_length=len(response_text))
 
             return SendResponse(
@@ -335,6 +404,7 @@ class BaseWorker:
                 metadata=ResponseMetadata(
                     backend=self.backend_name,
                     deep_mode_used=active.get("options", {}).get("deep_mode", False),
+                    response_time_seconds=0.0,  # Unknown for recovered responses
                 ),
             )
 

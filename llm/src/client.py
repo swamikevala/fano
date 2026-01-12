@@ -133,6 +133,81 @@ class LLMClient:
         except aiohttp.ClientError as e:
             raise PoolUnavailableError(f"Could not connect to pool: {e}")
 
+    async def _poll_for_recovered(
+        self,
+        thread_id: str,
+        timeout_seconds: int = 60,
+        poll_interval: float = 3.0,
+    ) -> Optional[LLMResponse]:
+        """
+        Poll for a recovered response by thread_id.
+
+        Args:
+            thread_id: Thread ID to look for in recovered responses
+            timeout_seconds: How long to poll before giving up
+            poll_interval: Seconds between poll attempts
+
+        Returns:
+            LLMResponse if recovered response found, None otherwise
+        """
+        import time
+        start_time = time.time()
+
+        while time.time() - start_time < timeout_seconds:
+            try:
+                session = await self._get_http_session()
+                async with session.get(
+                    f"{self.pool_url}/recovered",
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        responses = data.get("responses", [])
+
+                        # Find response matching our thread_id
+                        for item in responses:
+                            if item.get("thread_id") == thread_id:
+                                log.info("llm.pool.recovered_found",
+                                        thread_id=thread_id,
+                                        request_id=item.get("request_id"))
+
+                                # Clear the recovered response
+                                request_id = item.get("request_id")
+                                try:
+                                    async with session.delete(
+                                        f"{self.pool_url}/recovered/{request_id}",
+                                        timeout=aiohttp.ClientTimeout(total=5),
+                                    ):
+                                        pass
+                                except Exception:
+                                    pass  # Best effort cleanup
+
+                                return LLMResponse(
+                                    success=True,
+                                    text=item.get("response", ""),
+                                    backend=item.get("backend"),
+                                    deep_mode_used=item.get("options", {}).get("deep_mode", False),
+                                )
+
+            except Exception as e:
+                log.debug("llm.pool.poll_attempt_failed", error=str(e))
+
+            await asyncio.sleep(poll_interval)
+
+        return None
+
+    async def _wait_for_pool(self, timeout_seconds: int = 30) -> bool:
+        """Wait for pool to become available."""
+        import time
+        start_time = time.time()
+
+        while time.time() - start_time < timeout_seconds:
+            if await self.is_pool_available():
+                return True
+            await asyncio.sleep(2)
+
+        return False
+
     async def _send_via_pool(
         self,
         backend: str,
@@ -141,6 +216,7 @@ class LLMClient:
         new_chat: bool,
         timeout_seconds: int,
         priority: str,
+        thread_id: Optional[str] = None,
     ) -> LLMResponse:
         """Send request via pool service (for browser backends)."""
         request_data = {
@@ -152,28 +228,66 @@ class LLMClient:
                 "timeout_seconds": timeout_seconds,
                 "priority": priority,
             },
+            "thread_id": thread_id,
         }
 
-        try:
-            session = await self._get_http_session()
-            async with session.post(
-                f"{self.pool_url}/send",
-                json=request_data,
-                timeout=aiohttp.ClientTimeout(total=timeout_seconds + 30),
-            ) as resp:
-                data = await resp.json()
-                return LLMResponse.from_pool_response(data)
+        max_retries = 2
+        retry_delay = 5
 
-        except aiohttp.ClientError as e:
-            log.error("llm.pool.request_failed", backend=backend, error=str(e))
-            raise PoolUnavailableError(f"Could not connect to pool: {e}")
+        for attempt in range(max_retries + 1):
+            try:
+                session = await self._get_http_session()
+                async with session.post(
+                    f"{self.pool_url}/send",
+                    json=request_data,
+                    timeout=aiohttp.ClientTimeout(total=timeout_seconds + 30),
+                ) as resp:
+                    data = await resp.json()
+                    return LLMResponse.from_pool_response(data)
 
-        except asyncio.TimeoutError:
-            return LLMResponse(
-                success=False,
-                error="timeout",
-                message=f"Request timed out after {timeout_seconds} seconds",
-            )
+            except aiohttp.ClientError as e:
+                log.warning("llm.pool.connection_error",
+                           backend=backend,
+                           attempt=attempt + 1,
+                           max_retries=max_retries,
+                           error=str(e))
+
+                # On connection error, the pool may have restarted
+                # Wait for it to come back and check for recovered responses
+                if thread_id:
+                    log.info("llm.pool.waiting_for_recovery", thread_id=thread_id)
+
+                    # Wait for pool to come back up
+                    if await self._wait_for_pool(timeout_seconds=30):
+                        # Poll for recovered response
+                        recovered = await self._poll_for_recovered(
+                            thread_id,
+                            timeout_seconds=60,
+                            poll_interval=3.0,
+                        )
+                        if recovered:
+                            log.info("llm.pool.recovered_success", thread_id=thread_id)
+                            return recovered
+
+                # If no recovery found or no thread_id, retry if attempts remain
+                if attempt < max_retries:
+                    log.info("llm.pool.retry_attempt",
+                            attempt=attempt + 1,
+                            delay=retry_delay)
+                    await asyncio.sleep(retry_delay)
+                    retry_delay *= 2  # Exponential backoff
+                    continue
+
+                # Out of retries
+                log.error("llm.pool.request_failed", backend=backend, error=str(e))
+                raise PoolUnavailableError(f"Could not connect to pool after {max_retries + 1} attempts: {e}")
+
+            except asyncio.TimeoutError:
+                return LLMResponse(
+                    success=False,
+                    error="timeout",
+                    message=f"Request timed out after {timeout_seconds} seconds",
+                )
 
     # --- Direct API Methods ---
 
@@ -306,6 +420,7 @@ class LLMClient:
         timeout_seconds: int = 300,
         priority: str = "normal",
         model: Optional[str] = None,
+        thread_id: Optional[str] = None,
     ) -> LLMResponse:
         """
         Send a prompt to an LLM backend.
@@ -320,6 +435,7 @@ class LLMClient:
             timeout_seconds: Request timeout
             priority: Request priority (browser backends only)
             model: Specific model to use (API backends only)
+            thread_id: Thread ID for recovery correlation (browser backends only)
 
         Returns:
             LLMResponse with the result
@@ -329,7 +445,7 @@ class LLMClient:
         if backend in BROWSER_BACKENDS:
             # Route to pool service
             return await self._send_via_pool(
-                backend, prompt, deep_mode, new_chat, timeout_seconds, priority
+                backend, prompt, deep_mode, new_chat, timeout_seconds, priority, thread_id
             )
 
         elif backend == "claude":

@@ -450,7 +450,7 @@ class ChatGPTInterface(BaseLLMInterface):
     async def _wait_for_response(self, timeout: int = None) -> str:
         """Wait for ChatGPT to finish responding and extract text."""
         if timeout is None:
-            timeout = self.config.get("response_timeout", 600)  # Pro mode can be slow
+            timeout = self.config.get("response_timeout", 3600)  # Pro mode / deep thinking can take 30+ min
 
         print(f"[chatgpt] Waiting for response (timeout: {timeout}s)...")
 

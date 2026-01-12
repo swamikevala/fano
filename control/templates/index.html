@@ -192,6 +192,7 @@
 
         .status-running { background: var(--success); color: #000; }
         .status-stopped { background: var(--text-dim); color: #fff; }
+        .status-loading { background: var(--accent); color: var(--text-dim); }
 
         /* Buttons */
         .btn {
@@ -1248,13 +1249,13 @@
                     <div class="card">
                         <div class="card-header">
                             <span class="card-title">Pool Service</span>
-                            <span id="pool-status" class="status-badge status-stopped">Stopped</span>
+                            <span id="pool-status" class="status-badge status-loading">...</span>
                         </div>
                         <p style="color: var(--text-dim); margin-bottom: 1rem;">
                             Manages browser connections to Gemini and ChatGPT
                         </p>
                         <div class="btn-group">
-                            <button id="pool-start" class="btn btn-primary" onclick="startComponent('pool')">Start Pool</button>
+                            <button id="pool-start" class="btn btn-primary" onclick="startComponent('pool')" disabled>Start Pool</button>
                             <button id="pool-stop" class="btn btn-danger" onclick="stopComponent('pool')" disabled>Stop</button>
                         </div>
 
@@ -1271,13 +1272,13 @@
                     <div class="card">
                         <div class="card-header">
                             <span class="card-title">Explorer</span>
-                            <span id="explorer-status" class="status-badge status-stopped">Stopped</span>
+                            <span id="explorer-status" class="status-badge status-loading">...</span>
                         </div>
                         <p style="color: var(--text-dim); margin-bottom: 1rem;">
                             Autonomous exploration of mathematical connections
                         </p>
                         <div class="btn-group">
-                            <button id="explorer-start" class="btn btn-primary" onclick="startExplorer('start')">Start Exploration</button>
+                            <button id="explorer-start" class="btn btn-primary" onclick="startExplorer('start')" disabled>Start Exploration</button>
                             <button id="explorer-stop" class="btn btn-danger" onclick="stopComponent('explorer')" disabled>Stop</button>
                         </div>
 
@@ -1302,13 +1303,13 @@
                     <div class="card">
                         <div class="card-header">
                             <span class="card-title">Documenter</span>
-                            <span id="documenter-status" class="status-badge status-stopped">Stopped</span>
+                            <span id="documenter-status" class="status-badge status-loading">...</span>
                         </div>
                         <p style="color: var(--text-dim); margin-bottom: 1rem;">
                             Growing the living mathematical document
                         </p>
                         <div class="btn-group">
-                            <button id="documenter-start" class="btn btn-primary" onclick="startComponent('documenter')">Start Documenter</button>
+                            <button id="documenter-start" class="btn btn-primary" onclick="startComponent('documenter')" disabled>Start Documenter</button>
                             <button id="documenter-stop" class="btn btn-danger" onclick="stopComponent('documenter')" disabled>Stop</button>
                             <button class="btn btn-secondary" onclick="showPage('document')">View Document</button>
                         </div>
@@ -1795,10 +1796,10 @@
             const stopBtn = document.getElementById(`${component}-stop`);
 
             if (running) {
-                statusEl.textContent = external ? 'Running (external)' : 'Running';
+                statusEl.textContent = 'Running';
                 statusEl.className = 'status-badge status-running';
                 startBtn.disabled = true;
-                stopBtn.disabled = external;
+                stopBtn.disabled = false;
             } else {
                 statusEl.textContent = 'Stopped';
                 statusEl.className = 'status-badge status-stopped';

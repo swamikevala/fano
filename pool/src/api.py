@@ -68,6 +68,11 @@ class BrowserPool:
         """Start all workers and connect to backends."""
         log.info("pool.service.lifecycle", action="starting", backends=list(self.workers.keys()))
 
+        # Restore any pending queue items from before restart
+        restored = self.queues.restore_pending()
+        if restored:
+            log.info("pool.service.queue_restored", restored=restored)
+
         for name, worker in self.workers.items():
             try:
                 await worker.connect()
@@ -427,6 +432,48 @@ def create_app(config: dict) -> FastAPI:
             return {"status": "cleared", "request_id": request_id}
         else:
             raise HTTPException(status_code=404, detail=f"No recovered response with id: {request_id}")
+
+    @app.get("/recovery/status")
+    async def recovery_status():
+        """
+        Get detailed recovery status for monitoring.
+
+        Returns information about:
+        - Active work per backend (with age and thread_id)
+        - Pending queue items per backend
+        - Count of recovered responses awaiting pickup
+        """
+        from .state import MAX_ACTIVE_WORK_AGE_SECONDS
+
+        result = {
+            "backends": {},
+            "pending_queue": pool.queues.get_depths(),
+            "recovered_responses_count": len(pool.state.get_recovered_responses()),
+            "max_active_work_age_seconds": MAX_ACTIVE_WORK_AGE_SECONDS,
+        }
+
+        for backend in ["gemini", "chatgpt", "claude"]:
+            # Get active work without staleness check to see all work
+            active = pool.state.get_active_work(backend, check_staleness=False)
+
+            if active:
+                started_at = active.get("started_at", 0)
+                age_seconds = time.time() - started_at
+                result["backends"][backend] = {
+                    "has_active_work": True,
+                    "request_id": active.get("request_id"),
+                    "thread_id": active.get("thread_id"),
+                    "chat_url": active.get("chat_url"),
+                    "age_seconds": round(age_seconds),
+                    "is_stale": age_seconds > MAX_ACTIVE_WORK_AGE_SECONDS,
+                    "deep_mode": active.get("options", {}).get("deep_mode", False),
+                }
+            else:
+                result["backends"][backend] = {
+                    "has_active_work": False,
+                }
+
+        return result
 
     @app.post("/shutdown")
     async def shutdown_endpoint():

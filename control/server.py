@@ -1177,15 +1177,31 @@ def create_app() -> Flask:
 
             # Start new server process (detached on Windows)
             server_script = Path(__file__).resolve()
+
+            # Wait a bit more for the Flask server to fully release the port
+            time.sleep(1)
+
             if sys.platform == "win32":
                 # Windows: use CREATE_NEW_PROCESS_GROUP and DETACHED_PROCESS
+                # Don't use close_fds=True on Windows as it can cause issues with detached processes
                 DETACHED_PROCESS = 0x00000008
                 CREATE_NEW_PROCESS_GROUP = 0x00000200
+
+                # Redirect output to a log file so we can debug startup failures
+                log_dir = Path(__file__).parent.parent / "logs"
+                log_dir.mkdir(exist_ok=True)
+                restart_log = log_dir / "server_restart.log"
+
+                # Open file without context manager - child process will inherit handle
+                log_file = open(restart_log, "w")
                 subprocess.Popen(
                     [sys.executable, str(server_script)],
                     creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP,
-                    close_fds=True,
+                    stdout=log_file,
+                    stderr=subprocess.STDOUT,
+                    cwd=str(server_script.parent),
                 )
+                # Don't close log_file - child process needs it
             else:
                 # Unix: use nohup-like behavior
                 subprocess.Popen(

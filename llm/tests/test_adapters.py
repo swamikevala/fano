@@ -80,6 +80,7 @@ class TestBrowserAdapter:
             "Test prompt",
             deep_mode=False,
             new_chat=True,
+            thread_id=None,
         )
 
     @pytest.mark.asyncio
@@ -101,6 +102,7 @@ class TestBrowserAdapter:
             "Test",
             deep_mode=True,
             new_chat=True,
+            thread_id=None,
         )
 
     @pytest.mark.asyncio
@@ -120,6 +122,7 @@ class TestBrowserAdapter:
             "Test",
             deep_mode=True,
             new_chat=True,
+            thread_id=None,
         )
 
     @pytest.mark.asyncio

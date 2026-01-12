@@ -22,6 +22,10 @@ BACKEND_MODE_KEY = {
     "chatgpt": "pro_mode",
 }
 
+# Maximum age (in seconds) for active work to be considered valid for recovery
+# Work older than this is considered stale and will be auto-cleared
+MAX_ACTIVE_WORK_AGE_SECONDS = 7200  # 2 hours
+
 
 class StateManager:
     """
@@ -200,12 +204,42 @@ class StateManager:
             if had_work:
                 log.info("pool.state.active_work_cleared", backend=backend)
 
-    def get_active_work(self, backend: str) -> Optional[dict]:
-        """Get active work for a backend, if any."""
+    def get_active_work(self, backend: str, check_staleness: bool = True) -> Optional[dict]:
+        """
+        Get active work for a backend, if any.
+
+        Args:
+            backend: Backend name
+            check_staleness: If True, auto-clear and return None if work is stale
+
+        Returns:
+            Active work dict or None
+        """
         with self._lock:
             if backend not in self._state:
                 return None
-            return self._state[backend].get("active_work")
+
+            active_work = self._state[backend].get("active_work")
+            if not active_work:
+                return None
+
+            # Check staleness if enabled
+            if check_staleness:
+                started_at = active_work.get("started_at", 0)
+                age_seconds = time.time() - started_at
+
+                if age_seconds > MAX_ACTIVE_WORK_AGE_SECONDS:
+                    log.warning("pool.state.active_work_stale",
+                               backend=backend,
+                               request_id=active_work.get("request_id"),
+                               age_seconds=round(age_seconds),
+                               max_age_seconds=MAX_ACTIVE_WORK_AGE_SECONDS)
+                    # Auto-clear stale work
+                    self._state[backend]["active_work"] = None
+                    self._save()
+                    return None
+
+            return active_work
 
     # --- Recovered Responses ---
 

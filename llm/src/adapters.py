@@ -67,6 +67,7 @@ class BrowserAdapter:
         use_deep_think: bool = False,
         use_pro_mode: bool = False,
         use_thinking_mode: bool = False,
+        thread_id: Optional[str] = None,
     ) -> str:
         """
         Send message to LLM.
@@ -76,6 +77,7 @@ class BrowserAdapter:
             use_deep_think: Use Gemini Deep Think mode
             use_pro_mode: Use ChatGPT Pro mode
             use_thinking_mode: Use ChatGPT Thinking mode (ignored if pro_mode)
+            thread_id: Thread ID for recovery correlation
 
         Returns:
             Response text
@@ -88,6 +90,7 @@ class BrowserAdapter:
             prompt,
             deep_mode=deep_mode,
             new_chat=True,  # Each send starts fresh
+            thread_id=thread_id,
         )
 
         # Track whether deep mode was actually used

@@ -586,16 +586,17 @@ class Orchestrator:
         try:
             await model.start_new_chat()
 
-            # Pass deep mode flag to send_message
+            # Pass deep mode flag and thread_id to send_message
             # ChatGPT: use Pro mode for deep, Thinking mode for standard
             if model_name == "chatgpt":
                 response = await model.send_message(
                     prompt,
                     use_pro_mode=use_deep,
-                    use_thinking_mode=not use_deep
+                    use_thinking_mode=not use_deep,
+                    thread_id=thread.id,
                 )
             else:
-                response = await model.send_message(prompt, use_deep_think=use_deep)
+                response = await model.send_message(prompt, use_deep_think=use_deep, thread_id=thread.id)
 
             # Check if deep mode was actually used and record it
             deep_mode_used = getattr(model, 'last_deep_mode_used', False)
@@ -644,16 +645,17 @@ class Orchestrator:
         try:
             await critique_model.start_new_chat()
 
-            # Pass deep mode flag to send_message
+            # Pass deep mode flag and thread_id to send_message
             # ChatGPT: use Pro mode for deep, Thinking mode for standard
             if critique_model_name == "chatgpt":
                 response = await critique_model.send_message(
                     prompt,
                     use_pro_mode=use_deep,
-                    use_thinking_mode=not use_deep
+                    use_thinking_mode=not use_deep,
+                    thread_id=thread.id,
                 )
             else:
-                response = await critique_model.send_message(prompt, use_deep_think=use_deep)
+                response = await critique_model.send_message(prompt, use_deep_think=use_deep, thread_id=thread.id)
 
             # Check if deep mode was actually used and record it
             deep_mode_used = getattr(critique_model, 'last_deep_mode_used', False)
@@ -852,16 +854,17 @@ Structure your response as:
         try:
             await model.start_new_chat()
 
-            # Pass deep mode flag to send_message
+            # Pass deep mode flag and thread_id to send_message
             # ChatGPT: use Pro mode for deep, Thinking mode for standard
             if model_name == "chatgpt":
                 response = await model.send_message(
                     synthesis_prompt,
                     use_pro_mode=use_deep,
-                    use_thinking_mode=not use_deep
+                    use_thinking_mode=not use_deep,
+                    thread_id=thread.id,
                 )
             else:
-                response = await model.send_message(synthesis_prompt, use_deep_think=use_deep)
+                response = await model.send_message(synthesis_prompt, use_deep_think=use_deep, thread_id=thread.id)
 
             # Check if deep mode was actually used and record it
             deep_mode_used = getattr(model, 'last_deep_mode_used', False)
