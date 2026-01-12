@@ -1862,6 +1862,7 @@
                 }
             }
 
+            document.getElementById('explorer-threads').textContent = data.stats.explorer.threads || 0;
             document.getElementById('explorer-blessed').textContent = data.stats.explorer.blessed;
             document.getElementById('documenter-sections').textContent = data.stats.documenter.sections;
             document.getElementById('documenter-calls').textContent = data.stats.documenter.consensus_calls;

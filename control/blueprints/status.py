@@ -69,6 +69,20 @@ def get_stats() -> dict:
     if blessed_dir.exists():
         stats["explorer"]["blessed"] = len(list(blessed_dir.glob("*.json")))
 
+    # Count active exploration threads
+    explorations_dir = FANO_ROOT / "explorer" / "data" / "explorations"
+    if explorations_dir.exists():
+        active_count = 0
+        for f in explorations_dir.glob("*.json"):
+            try:
+                with open(f, "r", encoding="utf-8") as fp:
+                    data = json.load(fp)
+                    if data.get("status") == "active":
+                        active_count += 1
+            except Exception:
+                pass
+        stats["explorer"]["threads"] = active_count
+
     # Get researcher stats
     try:
         from researcher.src import ResearcherAPI
