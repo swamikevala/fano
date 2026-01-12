@@ -195,7 +195,15 @@ async def get_browser_context(model: str, playwright_instance=None):
         viewport={"width": viewport_width, "height": viewport_height},
         ignore_https_errors=disable_ssl,  # Also ignore at Playwright level
     )
-    
+
+    # Grant clipboard permissions for copy-based text extraction
+    # This preserves LaTeX/markdown formatting better than inner_text()
+    try:
+        await browser.grant_permissions(['clipboard-read', 'clipboard-write'])
+        log.debug("browser.clipboard.permissions_granted", model=model)
+    except Exception as e:
+        log.warning("browser.clipboard.permissions_failed", model=model, error=str(e))
+
     return browser, playwright_instance
 
 
@@ -549,3 +557,98 @@ class BaseLLMInterface:
     async def is_generating(self) -> bool:
         """Check if the LLM is currently generating a response."""
         raise NotImplementedError
+
+    def get_copy_button_selectors(self) -> list[str]:
+        """
+        Get copy button selectors for this LLM interface.
+
+        Override in subclasses to provide platform-specific selectors.
+
+        Returns:
+            List of CSS selectors to try for finding the copy button.
+        """
+        return []
+
+    async def _extract_via_clipboard(self, response_element) -> Optional[str]:
+        """
+        Extract response text via clipboard (preserves LaTeX formatting).
+
+        Clicks the copy button on the response to capture properly formatted
+        text including LaTeX delimiters, code blocks, and special characters.
+
+        Args:
+            response_element: Playwright locator for the response element.
+
+        Returns:
+            Text content if successful, None if clipboard extraction fails.
+        """
+        copy_selectors = self.get_copy_button_selectors()
+        if not copy_selectors:
+            log.debug("browser.clipboard.no_selectors", model=self.model_name)
+            return None
+
+        try:
+            # Hover over response to reveal copy button (some UIs hide until hover)
+            await response_element.hover()
+            await asyncio.sleep(0.3)
+
+            # Try each selector
+            for selector in copy_selectors:
+                try:
+                    # Look for copy button near/within response element
+                    copy_btn = response_element.locator(selector).first
+                    if await copy_btn.count() == 0:
+                        # Try finding button in parent/sibling areas
+                        copy_btn = self.page.locator(selector).last
+                        if await copy_btn.count() == 0:
+                            continue
+
+                    if await copy_btn.is_visible(timeout=1000):
+                        await copy_btn.click()
+                        await asyncio.sleep(0.2)
+
+                        # Read clipboard
+                        text = await self.page.evaluate("navigator.clipboard.readText()")
+                        if text and text.strip():
+                            log.info(
+                                "browser.clipboard.extract_success",
+                                model=self.model_name,
+                                text_length=len(text),
+                                selector=selector,
+                            )
+                            return text.strip()
+                except Exception:
+                    continue
+
+            log.debug("browser.clipboard.no_button_found", model=self.model_name)
+            return None
+
+        except Exception as e:
+            log.warning(
+                "browser.clipboard.extract_failed",
+                model=self.model_name,
+                error=str(e),
+            )
+            return None
+
+    async def _extract_response_text(self, response_element) -> str:
+        """
+        Extract response text with clipboard-first strategy and fallback.
+
+        Tries clipboard extraction first (preserves LaTeX/markdown formatting),
+        then falls back to inner_text() if clipboard fails.
+
+        Args:
+            response_element: Playwright locator for the response element.
+
+        Returns:
+            Response text (via clipboard if possible, otherwise inner_text).
+        """
+        # Try clipboard first
+        clipboard_text = await self._extract_via_clipboard(response_element)
+        if clipboard_text:
+            return clipboard_text
+
+        # Fallback to inner_text
+        log.info("browser.clipboard.fallback_used", model=self.model_name)
+        return await response_element.inner_text()

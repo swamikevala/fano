@@ -1,5 +1,15 @@
 # Fano Explorer Configuration
 
+# Response extraction settings
+# Uses clipboard-based extraction to preserve LaTeX/markdown formatting
+extraction:
+  # Enable clipboard-based extraction (falls back to inner_text if disabled/fails)
+  clipboard_enabled: true
+  # How long to wait after clicking copy button (ms)
+  clipboard_timeout_ms: 500
+  # How long to hover before clicking copy button (ms)
+  hover_delay_ms: 300
+
 # Browser settings
 browser:
   # Path to Chrome executable (leave empty for auto-detect)
@@ -23,6 +33,10 @@ models:
       input: "textarea[data-id='root']"
       send: "button[data-testid='send-button']"
       response: "div[data-message-author-role='assistant']"
+      copy:
+        - 'button[data-testid="copy-turn-action-button"]'
+        - 'button[aria-label="Copy"]'
+        - 'button[aria-label="Copy response"]'
       rate_limit_patterns:
         - "You've reached the limit"
         - "Usage cap reached"
@@ -36,6 +50,10 @@ models:
       input: "rich-textarea"
       send: "button.send-button"
       response: "message-content"
+      copy:
+        - 'button[aria-label="Copy"]'
+        - 'button[aria-label="Copy to clipboard"]'
+        - 'button[mattooltip="Copy"]'
       deep_think_toggle: "button[aria-label='Deep Think']"
       rate_limit_patterns:
         - "unavailable"
@@ -66,6 +84,10 @@ models:
         - "[data-testid='message-content']"
         - "div[data-is-streaming]"
         - ".font-claude-message"
+      copy:
+        - 'button[aria-label="Copy response"]'
+        - 'button[aria-label="Copy"]'
+        - 'button[data-testid="copy-button"]'
       extended_thinking_toggle:
         - "[data-testid='extended-thinking-toggle']"
         - "button[aria-label*='thinking']"

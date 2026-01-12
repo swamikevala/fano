@@ -33,6 +33,15 @@ class ChatGPTInterface(BaseLLMInterface):
         self.last_deep_mode_used = False
         self._current_mode = "default"  # "default", "thinking", "pro"
 
+    def get_copy_button_selectors(self) -> list[str]:
+        """ChatGPT copy button selectors."""
+        return [
+            'button[data-testid="copy-turn-action-button"]',
+            'button[aria-label="Copy"]',
+            'button[aria-label="Copy response"]',
+            'button:has(svg path[d*="M16 1H4"])',  # Copy icon path
+        ]
+
     async def connect(self):
         """Connect to ChatGPT."""
         await super().connect()
@@ -547,8 +556,9 @@ class ChatGPTInterface(BaseLLMInterface):
                 if messages:
                     # Get the last message
                     last_msg = messages[-1]
+                    # Use inner_text for stability check (fast)
                     current_response = await last_msg.inner_text()
-                    
+
                     # Check if response is stable (hasn't changed)
                     if current_response == last_response and current_response:
                         stable_count += 1
@@ -558,7 +568,8 @@ class ChatGPTInterface(BaseLLMInterface):
                                 "button[aria-label='Stop generating'], button[aria-label='Stop streaming']"
                             )
                             if not streaming:
-                                return current_response.strip()
+                                # Use clipboard extraction for final response (preserves LaTeX)
+                                return await self._extract_response_text(last_msg)
                     else:
                         stable_count = 0
                         last_response = current_response
@@ -711,7 +722,8 @@ class ChatGPTInterface(BaseLLMInterface):
                 messages = await self.page.query_selector_all(selector)
                 if messages:
                     last_msg = messages[-1]
-                    response = await last_msg.inner_text()
+                    # Use clipboard extraction for better LaTeX preservation
+                    response = await self._extract_response_text(last_msg)
                     if response and len(response) > 10:
                         log.info("browser.chatgpt.try_get_response", status="found", chars=len(response))
                         return response.strip()

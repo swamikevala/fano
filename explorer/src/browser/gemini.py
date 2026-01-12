@@ -31,6 +31,16 @@ class GeminiInterface(BaseLLMInterface):
         self.last_deep_mode_used = False
         self._response_in_progress = False  # Guard against concurrent operations
         self._deep_think_confirmation_done = False  # Track if we've handled confirmation
+
+    def get_copy_button_selectors(self) -> list[str]:
+        """Gemini copy button selectors."""
+        return [
+            'button[aria-label="Copy"]',
+            'button[aria-label="Copy to clipboard"]',
+            'button[mattooltip="Copy"]',
+            'button.copy-button',
+            'button:has(mat-icon:text("content_copy"))',
+        ]
     
     async def connect(self):
         """Connect to Gemini."""
@@ -788,6 +798,18 @@ class GeminiInterface(BaseLLMInterface):
 
                         if not final_check_processing:
                             elapsed = (datetime.now() - start_time).seconds
+                            # Use clipboard extraction for final response (preserves LaTeX)
+                            for selector in response_selectors:
+                                try:
+                                    messages = await self.page.query_selector_all(selector)
+                                    if messages:
+                                        last_msg = messages[-1]
+                                        final_response = await self._extract_response_text(last_msg)
+                                        log.info(f"[gemini] Response complete ({elapsed}s, {len(final_response)} chars)")
+                                        return final_response
+                                except Exception:
+                                    continue
+                            # Fallback if extraction fails
                             log.info(f"[gemini] Response complete ({elapsed}s, {len(current_response)} chars)")
                             return current_response.strip()
                         else:
@@ -962,7 +984,8 @@ class GeminiInterface(BaseLLMInterface):
                 messages = await self.page.query_selector_all(selector)
                 if messages:
                     last_msg = messages[-1]
-                    response = await last_msg.inner_text()
+                    # Use clipboard extraction for better LaTeX preservation
+                    response = await self._extract_response_text(last_msg)
                     if response and len(response) > 10:
                         log.info(f"[gemini] try_get_response: found response ({len(response)} chars)")
                         return response.strip()
