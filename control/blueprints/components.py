@@ -115,19 +115,23 @@ def api_server_restart():
         if sys.platform == "win32":
             # Windows: use CREATE_NEW_PROCESS_GROUP and DETACHED_PROCESS
             # Note: close_fds must NOT be used with DETACHED_PROCESS on Windows
+            # Run as module (-m control.server) to handle relative imports
             DETACHED_PROCESS = 0x00000008
             CREATE_NEW_PROCESS_GROUP = 0x00000200
             log_file = open(restart_log, "w")
             subprocess.Popen(
-                [sys.executable, str(server_script)],
+                [sys.executable, "-m", "control.server"],
+                cwd=str(FANO_ROOT),
                 creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP,
                 stdout=log_file,
                 stderr=subprocess.STDOUT,
             )
         else:
             # Unix: use nohup-like behavior
+            # Run as module (-m control.server) to handle relative imports
             subprocess.Popen(
-                [sys.executable, str(server_script)],
+                [sys.executable, "-m", "control.server"],
+                cwd=str(FANO_ROOT),
                 start_new_session=True,
                 close_fds=True,
             )

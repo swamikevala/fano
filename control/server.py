@@ -47,6 +47,7 @@ class StatusLogFilter(logging.Filter):
         "/health",
         "/api/documenter/activity",
         "/api/explorer/stats",
+        "/api/pool/activity",
     ]
 
     def filter(self, record: logging.LogRecord) -> bool:

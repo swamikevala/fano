@@ -16,6 +16,8 @@ from shared.logging import get_logger, set_session_id
 # Import browser modules from explorer - now available via proper package structure
 from explorer.src.browser.gemini import GeminiInterface
 from explorer.src.browser.chatgpt import ChatGPTInterface
+from explorer.src.browser.claude import ClaudeInterface
+from explorer.src.browser.base import AuthenticationRequired
 from .models import SendRequest, SendResponse, ResponseMetadata, Backend
 from .state import StateManager
 from .queue import RequestQueue, QueuedRequest
@@ -439,9 +441,21 @@ class GeminiWorker(BaseWorker):
             # Check for and recover any in-progress work from before restart
             await self.check_and_recover_work()
 
-        except Exception as e:
-            log.exception(e, "pool.worker.connection_failed", {"backend": self.backend_name})
+        except AuthenticationRequired as e:
+            # Genuine auth failure - mark as needing auth
+            log.warning("pool.worker.auth_required", backend=self.backend_name, message=str(e))
             self.state.mark_authenticated(self.backend_name, False)
+            raise
+
+        except Exception as e:
+            # Connection issue - don't change auth state, just log and raise
+            print(f"[gemini] Connection failed: {type(e).__name__}: {e}")
+            log.warning("pool.worker.connection_failed",
+                       backend=self.backend_name,
+                       error=str(e),
+                       error_type=type(e).__name__,
+                       auth_state_unchanged=True)
+            # Don't mark as unauthenticated - might just be transient
             raise
 
     async def disconnect(self):
@@ -594,9 +608,21 @@ class ChatGPTWorker(BaseWorker):
             # Check for and recover any in-progress work from before restart
             await self.check_and_recover_work()
 
-        except Exception as e:
-            log.exception(e, "pool.worker.connection_failed", {"backend": self.backend_name})
+        except AuthenticationRequired as e:
+            # Genuine auth failure - mark as needing auth
+            log.warning("pool.worker.auth_required", backend=self.backend_name, message=str(e))
             self.state.mark_authenticated(self.backend_name, False)
+            raise
+
+        except Exception as e:
+            # Connection issue - don't change auth state, just log and raise
+            print(f"[chatgpt] Connection failed: {type(e).__name__}: {e}")
+            log.warning("pool.worker.connection_failed",
+                       backend=self.backend_name,
+                       error=str(e),
+                       error_type=type(e).__name__,
+                       auth_state_unchanged=True)
+            # Don't mark as unauthenticated - might just be transient
             raise
 
     async def disconnect(self):
@@ -732,86 +758,169 @@ class ChatGPTWorker(BaseWorker):
 
 
 class ClaudeWorker(BaseWorker):
-    """Worker for Claude API backend."""
+    """Worker for Claude browser backend."""
 
     backend_name = "claude"
+    deep_mode_method = "enable_extended_thinking"
 
     def __init__(self, config: dict, state: StateManager, queue: RequestQueue):
         super().__init__(config, state, queue)
-        self.client = None
-        self._model = config.get("backends", {}).get("claude", {}).get("model", "claude-sonnet-4-20250514")
 
     async def connect(self):
-        """Initialize Claude API client."""
+        """Connect to Claude browser."""
         try:
-            import anthropic
-
-            api_key = os.environ.get("ANTHROPIC_API_KEY")
-            if not api_key:
-                raise ValueError("ANTHROPIC_API_KEY not set")
-
-            self.client = anthropic.Anthropic(api_key=api_key)
+            self.browser = ClaudeInterface()
+            await self.browser.connect()
             self.state.mark_authenticated(self.backend_name, True)
             log.info("pool.worker.lifecycle", action="connected", backend=self.backend_name)
 
-        except Exception as e:
-            log.exception(e, "pool.worker.connection_failed", {"backend": self.backend_name})
+            # Check for and recover any in-progress work from before restart
+            await self.check_and_recover_work()
+
+        except AuthenticationRequired as e:
+            # Genuine auth failure - mark as needing auth
+            log.warning("pool.worker.auth_required", backend=self.backend_name, message=str(e))
             self.state.mark_authenticated(self.backend_name, False)
             raise
 
+        except Exception as e:
+            # Connection issue - don't change auth state, just log and raise
+            print(f"[claude] Connection failed: {type(e).__name__}: {e}")
+            log.warning("pool.worker.connection_failed",
+                       backend=self.backend_name,
+                       error=str(e),
+                       error_type=type(e).__name__,
+                       auth_state_unchanged=True)
+            # Don't mark as unauthenticated - might just be transient
+            raise
+
     async def disconnect(self):
-        """Cleanup Claude client."""
-        self.client = None
+        """Disconnect from Claude browser."""
+        if self.browser:
+            await self.browser.disconnect()
+            self.browser = None
 
     async def authenticate(self):
-        """Claude uses API key, no interactive auth needed."""
-        api_key = os.environ.get("ANTHROPIC_API_KEY")
-        if api_key:
-            self.state.mark_authenticated(self.backend_name, True)
+        """Open browser for manual authentication."""
+        try:
+            browser = ClaudeInterface()
+            await browser.connect()
+            log.info("pool.worker.auth", action="browser_opened", backend=self.backend_name)
             return True
-        return False
+
+        except Exception as e:
+            log.exception(e, "pool.worker.auth_failed", {"backend": self.backend_name})
+            return False
+
+    async def check_health(self) -> tuple[bool, str]:
+        """Check if Claude browser is healthy by verifying page is responsive."""
+        if not self.browser:
+            return False, "browser_not_initialized"
+
+        try:
+            # Check if page exists and is not closed
+            if not self.browser.page:
+                return False, "page_not_initialized"
+
+            # Try a simple page query to verify page is responsive
+            await asyncio.wait_for(
+                self.browser.page.evaluate("() => document.readyState"),
+                timeout=5.0
+            )
+            return True, "ok"
+
+        except asyncio.TimeoutError:
+            log.warning("pool.health.timeout", backend=self.backend_name)
+            self.state.mark_authenticated(self.backend_name, False)
+            return False, "page_unresponsive"
+
+        except Exception as e:
+            error_name = type(e).__name__
+            log.warning("pool.health.failed", backend=self.backend_name, error=error_name, message=str(e))
+            self.state.mark_authenticated(self.backend_name, False)
+            return False, f"page_error:{error_name}"
 
     async def _process_request(self, request: SendRequest) -> SendResponse:
-        """Process a Claude API request."""
-        if not self.client:
+        """Process a Claude browser request."""
+        if not self.browser:
             return SendResponse(
                 success=False,
                 error="unavailable",
-                message="Claude API client not initialized",
+                message="Claude browser not connected",
             )
 
         start_time = time.time()
+        deep_mode_used = False
+        request_id = self._current_request_id or str(uuid.uuid4())
 
         try:
-            # Run synchronous API call in thread pool
-            response = await asyncio.to_thread(
-                self.client.messages.create,
-                model=self._model,
-                max_tokens=8192,
-                messages=[{"role": "user", "content": request.prompt}],
+            if request.options.new_chat:
+                await self.browser.start_new_chat()
+
+            # Claude Extended Thinking is lighter than ChatGPT Pro or Gemini Deep Think,
+            # so we enable it by default (not just when deep_mode is requested)
+            if request.options.deep_mode:
+                deep_mode_used = await self._try_enable_deep_mode()
+            else:
+                # Enable Extended Thinking as default mode (it's not as heavy as Pro/Deep Think)
+                await self.browser.enable_extended_thinking()
+
+            # Capture chat URL before sending message
+            chat_url = self.browser.page.url
+
+            # Set up URL update callback - browser will call this when URL changes
+            def on_url_change(new_url: str):
+                log.info("pool.worker.url_changed", backend=self.backend_name, new_url=new_url)
+                self.state.set_active_work(
+                    backend=self.backend_name,
+                    request_id=request_id,
+                    prompt=request.prompt,
+                    chat_url=new_url,
+                    thread_id=getattr(request, 'thread_id', None),
+                    options={"deep_mode": deep_mode_used, "new_chat": request.options.new_chat},
+                )
+
+            self.browser.set_url_update_callback(on_url_change)
+
+            # Record active work so we can recover if pool restarts
+            self.state.set_active_work(
+                backend=self.backend_name,
+                request_id=request_id,
+                prompt=request.prompt,
+                chat_url=chat_url,
+                thread_id=getattr(request, 'thread_id', None),
+                options={"deep_mode": deep_mode_used, "new_chat": request.options.new_chat},
             )
 
-            response_text = response.content[0].text
-            elapsed = time.time() - start_time
+            response_text = await self.browser.send_message(request.prompt)
+
+            # Clear callback
+            self.browser.set_url_update_callback(None)
+
+            self._check_and_mark_rate_limit(response_text)
+
+            # Clear active work on successful completion
+            self.state.clear_active_work(self.backend_name)
 
             return SendResponse(
                 success=True,
                 response=response_text,
                 metadata=ResponseMetadata(
                     backend=self.backend_name,
-                    deep_mode_used=False,
-                    response_time_seconds=elapsed,
+                    deep_mode_used=deep_mode_used,
+                    response_time_seconds=time.time() - start_time,
+                    session_id=self.browser.chat_logger.get_session_id(),
                 ),
             )
 
         except Exception as e:
-            error_str = str(e)
-            if "rate" in error_str.lower() or "429" in error_str:
-                self.state.mark_rate_limited(self.backend_name, 60)
-
-            log.exception(e, "pool.request.api_error", {"backend": self.backend_name})
+            # Clear callback on error too
+            if self.browser:
+                self.browser.set_url_update_callback(None)
+            log.exception(e, "pool.request.processing_error", {"backend": self.backend_name})
+            # Don't clear active work on error - we might be able to recover
             return SendResponse(
                 success=False,
-                error="api_error",
+                error="processing_error",
                 message=str(e),
             )

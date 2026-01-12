@@ -52,6 +52,34 @@ models:
       wait_seconds: 600  # 10 minutes default
       max_retries: 3
 
+  claude:
+    url: "https://claude.ai/new"
+    selectors:
+      input:
+        - "div.ProseMirror[contenteditable='true']"
+        - "div[contenteditable='true']"
+      send:
+        - "button[aria-label='Send message']"
+        - "button[data-testid='send-button']"
+        - "fieldset button:not([disabled])"
+      response:
+        - "[data-testid='message-content']"
+        - "div[data-is-streaming]"
+        - ".font-claude-message"
+      extended_thinking_toggle:
+        - "[data-testid='extended-thinking-toggle']"
+        - "button[aria-label*='thinking']"
+      rate_limit_patterns:
+        - "rate limit"
+        - "too many messages"
+        - "try again later"
+        - "usage limit"
+    response_timeout: 3600  # Extended Thinking can take a while
+    # Extended Thinking settings
+    extended_thinking:
+      initial_wait: 30
+      stability_checks: 15
+
 # Model selection weights (higher = more likely to be chosen)
 # Gemini tends to explore creatively, ChatGPT tends to critique rigorously
 model_weights:
@@ -66,11 +94,15 @@ model_weights:
     chatgpt: 50
 
 # Deep/Pro mode daily limits (preserved for synthesis and breakthroughs)
+# Note: Claude Extended Thinking is lighter than ChatGPT Pro or Gemini Deep Think,
+# so it can be used more liberally (effectively as default mode)
 deep_modes:
   gemini_deep_think:
     daily_limit: 20
   chatgpt_pro:
     daily_limit: 100
+  claude_extended_thinking:
+    daily_limit: 500  # High limit - can use as default
 
 # Exploration seed prompt
 exploration:

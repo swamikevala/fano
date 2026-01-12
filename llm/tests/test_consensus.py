@@ -4,6 +4,8 @@ import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
 
 from llm.src.consensus import ConsensusReviewer
+from llm.src.consensus.prompts import build_review_round1_prompt, build_review_round2_prompt
+from llm.src.consensus.response_parser import parse_review_response
 from llm.src.client import LLMClient
 from llm.src.models import LLMResponse, ConsensusResult, ReviewResponse
 
@@ -199,48 +201,48 @@ class TestConsensusReviewerReview:
 
 
 class TestBuildRound1Prompt:
-    """Tests for _build_round1_prompt method."""
+    """Tests for build_review_round1_prompt function."""
 
-    def test_includes_insight_text(self, reviewer):
-        prompt = reviewer._build_round1_prompt(
+    def test_includes_insight_text(self):
+        prompt = build_review_round1_prompt(
             "Test insight about math",
             tags=[], context="", confidence="medium", dependencies=[]
         )
 
         assert "Test insight about math" in prompt
 
-    def test_includes_tags(self, reviewer):
-        prompt = reviewer._build_round1_prompt(
+    def test_includes_tags(self):
+        prompt = build_review_round1_prompt(
             "Test", tags=["yoga", "numbers"], context="", confidence="medium", dependencies=[]
         )
 
         assert "yoga" in prompt
         assert "numbers" in prompt
 
-    def test_includes_confidence(self, reviewer):
-        prompt = reviewer._build_round1_prompt(
+    def test_includes_confidence(self):
+        prompt = build_review_round1_prompt(
             "Test", tags=[], context="", confidence="high", dependencies=[]
         )
 
         assert "high" in prompt
 
-    def test_includes_context(self, reviewer):
-        prompt = reviewer._build_round1_prompt(
+    def test_includes_context(self):
+        prompt = build_review_round1_prompt(
             "Test", tags=[], context="Some blessed axioms here", confidence="medium", dependencies=[]
         )
 
         assert "Some blessed axioms here" in prompt
 
-    def test_includes_dependencies(self, reviewer):
-        prompt = reviewer._build_round1_prompt(
+    def test_includes_dependencies(self):
+        prompt = build_review_round1_prompt(
             "Test", tags=[], context="", confidence="medium", dependencies=["insight-1", "insight-2"]
         )
 
         assert "insight-1" in prompt
         assert "insight-2" in prompt
 
-    def test_includes_rating_instructions(self, reviewer):
-        prompt = reviewer._build_round1_prompt(
+    def test_includes_rating_instructions(self):
+        prompt = build_review_round1_prompt(
             "Test", tags=[], context="", confidence="medium", dependencies=[]
         )
 
@@ -248,8 +250,8 @@ class TestBuildRound1Prompt:
         assert "uncertain" in prompt
         assert "reject" in prompt
 
-    def test_includes_format_instructions(self, reviewer):
-        prompt = reviewer._build_round1_prompt(
+    def test_includes_format_instructions(self):
+        prompt = build_review_round1_prompt(
             "Test", tags=[], context="", confidence="medium", dependencies=[]
         )
 
@@ -262,9 +264,9 @@ class TestBuildRound1Prompt:
 
 
 class TestBuildRound2Prompt:
-    """Tests for _build_round2_prompt method."""
+    """Tests for build_review_round2_prompt function."""
 
-    def test_includes_insight_text(self, reviewer):
+    def test_includes_insight_text(self):
         round1 = {
             "gemini": ReviewResponse(
                 llm="gemini", mode="standard", rating="bless",
@@ -272,11 +274,11 @@ class TestBuildRound2Prompt:
             )
         }
 
-        prompt = reviewer._build_round2_prompt("Test insight", round1, "")
+        prompt = build_review_round2_prompt("Test insight", round1, "")
 
         assert "Test insight" in prompt
 
-    def test_includes_round1_responses(self, reviewer):
+    def test_includes_round1_responses(self):
         round1 = {
             "gemini": ReviewResponse(
                 llm="gemini", mode="standard", rating="bless",
@@ -288,14 +290,14 @@ class TestBuildRound2Prompt:
             ),
         }
 
-        prompt = reviewer._build_round2_prompt("Test", round1, "")
+        prompt = build_review_round2_prompt("Test", round1, "")
 
         assert "GEMINI" in prompt
         assert "bless" in prompt
         assert "CLAUDE" in prompt
         assert "uncertain" in prompt
 
-    def test_includes_round2_format(self, reviewer):
+    def test_includes_round2_format(self):
         round1 = {
             "gemini": ReviewResponse(
                 llm="gemini", mode="standard", rating="bless",
@@ -303,17 +305,17 @@ class TestBuildRound2Prompt:
             )
         }
 
-        prompt = reviewer._build_round2_prompt("Test", round1, "")
+        prompt = build_review_round2_prompt("Test", round1, "")
 
         assert "NEW_INFORMATION:" in prompt
         assert "CHANGED_MIND:" in prompt
 
 
 class TestParseReviewResponse:
-    """Tests for _parse_review_response method."""
+    """Tests for parse_review_response function."""
 
-    def test_parses_complete_response(self, reviewer, sample_round1_response):
-        result = reviewer._parse_review_response("gemini", sample_round1_response, "standard")
+    def test_parses_complete_response(self, sample_round1_response):
+        result = parse_review_response("gemini", sample_round1_response, "standard")
 
         assert result.llm == "gemini"
         assert result.mode == "standard"
@@ -321,58 +323,58 @@ class TestParseReviewResponse:
         assert "84" in result.mathematical_verification
         assert result.confidence == "high"
 
-    def test_parses_rating_bless(self, reviewer):
-        result = reviewer._parse_review_response(
+    def test_parses_rating_bless(self):
+        result = parse_review_response(
             "gemini", "RATING: bless\nREASONING: Valid\nCONFIDENCE: high", "standard"
         )
         assert result.rating == "bless"
 
-    def test_parses_rating_reject(self, reviewer):
-        result = reviewer._parse_review_response(
+    def test_parses_rating_reject(self):
+        result = parse_review_response(
             "gemini", "RATING: reject\nREASONING: Invalid\nCONFIDENCE: high", "standard"
         )
         assert result.rating == "reject"
 
-    def test_parses_rating_uncertain(self, reviewer):
-        result = reviewer._parse_review_response(
+    def test_parses_rating_uncertain(self):
+        result = parse_review_response(
             "gemini", "RATING: uncertain\nREASONING: Maybe\nCONFIDENCE: medium", "standard"
         )
         assert result.rating == "uncertain"
 
-    def test_defaults_to_uncertain(self, reviewer):
+    def test_defaults_to_uncertain(self):
         """Defaults to uncertain when rating cannot be parsed."""
-        result = reviewer._parse_review_response(
+        result = parse_review_response(
             "gemini", "Some unstructured response", "standard"
         )
         assert result.rating == "uncertain"
 
-    def test_parses_reasoning(self, reviewer):
-        result = reviewer._parse_review_response(
+    def test_parses_reasoning(self):
+        result = parse_review_response(
             "gemini", "RATING: bless\nREASONING: This is the reason why.\nCONFIDENCE: high", "standard"
         )
         assert "This is the reason" in result.reasoning
 
-    def test_parses_confidence(self, reviewer):
-        result = reviewer._parse_review_response(
+    def test_parses_confidence(self):
+        result = parse_review_response(
             "gemini", "RATING: bless\nREASONING: Valid\nCONFIDENCE: low", "standard"
         )
         assert result.confidence == "low"
 
-    def test_truncates_long_fields(self, reviewer):
+    def test_truncates_long_fields(self):
         long_text = "A" * 1000
-        result = reviewer._parse_review_response(
+        result = parse_review_response(
             "gemini", f"RATING: bless\nREASONING: {long_text}\nCONFIDENCE: high", "standard"
         )
         assert len(result.reasoning) <= 500
 
-    def test_handles_multiline_reasoning(self, reviewer):
+    def test_handles_multiline_reasoning(self):
         response = """RATING: bless
 REASONING: First line of reasoning.
 Second line of reasoning.
 Third line.
 CONFIDENCE: high"""
 
-        result = reviewer._parse_review_response("gemini", response, "standard")
+        result = parse_review_response("gemini", response, "standard")
         assert "First line" in result.reasoning
         assert "Second line" in result.reasoning
 
@@ -464,7 +466,7 @@ class TestQuickCheck:
 
 
 class TestRunRounds:
-    """Tests for round execution methods."""
+    """Tests for round execution methods (via ReviewTask)."""
 
     @pytest.mark.asyncio
     async def test_run_round1_sends_to_all_backends(self, reviewer, mock_client):
@@ -476,7 +478,7 @@ class TestRunRounds:
             for b in backends
         }
 
-        result = await reviewer._run_round1(
+        result = await reviewer._review_task._run_round1(
             "Test", ["tag"], "", "medium", [], backends
         )
 
@@ -501,14 +503,13 @@ class TestRunRounds:
             for b in backends
         }
 
-        await reviewer._run_round2("Test", round1, "", backends, use_deep_mode=True)
+        await reviewer._review_task._run_round2("Test", round1, "", backends, use_deep_mode=True)
 
         mock_client.send_parallel.assert_called_once()
         call_kwargs = mock_client.send_parallel.call_args[1]
         assert call_kwargs["deep_mode"] is True
 
-    @pytest.mark.asyncio
-    async def test_run_round3_finds_majority(self, reviewer):
+    def test_run_round3_finds_majority(self, reviewer):
         """_run_round3 correctly identifies majority rating."""
         round2 = {
             "gemini": ReviewResponse(llm="gemini", mode="deep", rating="bless", reasoning="", confidence="high"),
@@ -516,13 +517,12 @@ class TestRunRounds:
             "chatgpt": ReviewResponse(llm="chatgpt", mode="deep", rating="reject", reasoning="", confidence="high"),
         }
 
-        final_rating, is_disputed = await reviewer._run_round3("Test", round2, "", ["gemini", "claude", "chatgpt"])
+        final_rating, is_disputed = reviewer._review_task._run_round3(round2)
 
         assert final_rating == "bless"
         assert is_disputed is False
 
-    @pytest.mark.asyncio
-    async def test_run_round3_no_majority(self, reviewer):
+    def test_run_round3_no_majority(self, reviewer):
         """_run_round3 returns uncertain when no majority."""
         round2 = {
             "gemini": ReviewResponse(llm="gemini", mode="deep", rating="bless", reasoning="", confidence="high"),
@@ -530,7 +530,7 @@ class TestRunRounds:
             "chatgpt": ReviewResponse(llm="chatgpt", mode="deep", rating="uncertain", reasoning="", confidence="high"),
         }
 
-        final_rating, is_disputed = await reviewer._run_round3("Test", round2, "", ["gemini", "claude", "chatgpt"])
+        final_rating, is_disputed = reviewer._review_task._run_round3(round2)
 
         assert final_rating == "uncertain"
         assert is_disputed is True

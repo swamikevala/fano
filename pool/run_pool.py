@@ -8,6 +8,11 @@ import sys
 import warnings
 from pathlib import Path
 
+# Add parent directory to path so 'pool' package can be imported
+_fano_root = Path(__file__).parent.parent
+if str(_fano_root) not in sys.path:
+    sys.path.insert(0, str(_fano_root))
+
 # Suppress ResourceWarning about unclosed transports during shutdown
 # These are harmless on Windows when the process is being terminated
 warnings.filterwarnings("ignore", category=ResourceWarning, message="unclosed transport")

@@ -15,7 +15,7 @@ from typing import Optional
 
 from shared.logging import get_logger
 
-from .base import BaseLLMInterface, rate_tracker
+from .base import BaseLLMInterface, rate_tracker, AuthenticationRequired
 from .model_selector import deep_mode_tracker
 
 log = get_logger("explorer", "browser.chatgpt")
@@ -38,6 +38,10 @@ class ChatGPTInterface(BaseLLMInterface):
         await super().connect()
         # Wait for the chat interface to load
         await self._wait_for_ready()
+        # Check if actually logged in
+        is_logged_in = await self._check_login_status()
+        if not is_logged_in:
+            raise AuthenticationRequired("ChatGPT login required")
         # Run selector health check
         await self._check_selectors()
     
@@ -90,6 +94,73 @@ class ChatGPTInterface(BaseLLMInterface):
                 ".markdown",
             ],
         })
+
+    async def _check_login_status(self) -> bool:
+        """
+        Check if we're logged in to ChatGPT.
+
+        Returns:
+            True if logged in, False if login page detected
+        """
+        try:
+            # Check 1: If input element was found, likely logged in
+            if getattr(self, '_input_selector', None):
+                print(f"[chatgpt] Appears to be logged in (input found)")
+                return True
+
+            # Check 2: Look for login page indicators
+            login_indicators = [
+                "button:has-text('Log in')",
+                "button:has-text('Sign up')",
+                "a[href*='/auth/login']",
+                "[data-testid='login-button']",
+                "input[name='email']",  # Login form email field
+            ]
+
+            for selector in login_indicators:
+                try:
+                    element = await self.page.query_selector(selector)
+                    if element and await element.is_visible():
+                        print(f"[chatgpt] WARNING: Not logged in! Found: {selector}")
+                        print(f"[chatgpt] Please run auth setup for ChatGPT")
+                        return False
+                except:
+                    continue
+
+            # Check 3: URL-based detection
+            try:
+                current_url = self.page.url
+                if '/auth/' in current_url or 'login' in current_url.lower():
+                    print(f"[chatgpt] WARNING: On login page: {current_url}")
+                    return False
+            except:
+                pass  # URL check failed, continue
+
+            # Check 4: Look for logged-in indicators as confirmation
+            logged_in_indicators = [
+                "[data-testid='profile-button']",
+                "nav[aria-label='Chat history']",
+                "[data-testid='new-chat-button']",
+            ]
+
+            for selector in logged_in_indicators:
+                try:
+                    element = await self.page.query_selector(selector)
+                    if element:
+                        print(f"[chatgpt] Confirmed logged in (found: {selector})")
+                        return True
+                except:
+                    continue
+
+            # Uncertain - assume logged in if no login indicators found
+            print(f"[chatgpt] Login status uncertain, assuming logged in")
+            return True
+
+        except Exception as e:
+            # If anything fails during login check, assume logged in
+            # (the user says they ARE logged in, so don't block on check failures)
+            print(f"[chatgpt] Login check error: {e}, assuming logged in")
+            return True
 
     async def start_new_chat(self):
         """Start a new conversation."""

@@ -50,6 +50,10 @@ class DeepModeTracker:
                 "used_today": 0,
                 "last_reset": date.today().isoformat(),
             },
+            "claude_extended_thinking": {
+                "used_today": 0,
+                "last_reset": date.today().isoformat(),
+            },
         }
 
     def _save(self):
@@ -61,7 +65,7 @@ class DeepModeTracker:
     def _check_daily_reset(self):
         """Reset counters if it's a new day."""
         today = date.today().isoformat()
-        for mode in ["gemini_deep_think", "chatgpt_pro"]:
+        for mode in ["gemini_deep_think", "chatgpt_pro", "claude_extended_thinking"]:
             if self.state.get(mode, {}).get("last_reset") != today:
                 self.state[mode] = {
                     "used_today": 0,
@@ -93,7 +97,7 @@ class DeepModeTracker:
         self._check_daily_reset()
         config_limits = CONFIG.get("deep_modes", {})
         status = {}
-        for mode in ["gemini_deep_think", "chatgpt_pro"]:
+        for mode in ["gemini_deep_think", "chatgpt_pro", "claude_extended_thinking"]:
             limit = config_limits.get(mode, {}).get("daily_limit", 0)
             used = self.state.get(mode, {}).get("used_today", 0)
             status[mode] = {
@@ -159,14 +163,17 @@ def should_use_deep_mode(
     """
     Determine if deep mode should be used for this request.
 
-    Deep mode is used when:
+    For Claude: Extended Thinking is lighter than ChatGPT Pro or Gemini Deep Think,
+    so we use it liberally (essentially as default mode).
+
+    For ChatGPT/Gemini: Deep mode is reserved for:
     - Phase is 'synthesis' (always worth using deep mode), OR
     - Thread has >= 4 exchanges AND recent responses contain profundity signals
 
     AND the daily limit hasn't been exceeded.
 
     Args:
-        model: 'gemini' or 'chatgpt'
+        model: 'gemini', 'chatgpt', or 'claude'
         thread: The exploration thread
         phase: 'exploration', 'critique', or 'synthesis'
 
@@ -174,11 +181,21 @@ def should_use_deep_mode(
         True if deep mode should be used
     """
     # Map model to deep mode name
-    mode_name = "gemini_deep_think" if model == "gemini" else "chatgpt_pro"
+    mode_map = {
+        "gemini": "gemini_deep_think",
+        "chatgpt": "chatgpt_pro",
+        "claude": "claude_extended_thinking",
+    }
+    mode_name = mode_map.get(model, "chatgpt_pro")
 
     # Check if we have remaining quota
     if not deep_mode_tracker.can_use_deep_mode(mode_name):
         return False
+
+    # Claude Extended Thinking is light enough to use as default
+    # Always recommend it when quota is available
+    if model == "claude":
+        return True
 
     # Always use deep mode for synthesis
     if phase == "synthesis":

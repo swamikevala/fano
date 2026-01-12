@@ -34,9 +34,12 @@ class GeminiInterface(BaseLLMInterface):
     
     async def connect(self):
         """Connect to Gemini."""
+        from .base import AuthenticationRequired
         await super().connect()
         await self._wait_for_ready()
-        await self._check_login_status()
+        is_logged_in = await self._check_login_status()
+        if not is_logged_in:
+            raise AuthenticationRequired("Gemini login required")
         await self._check_selectors()
     
     async def _check_login_status(self):
