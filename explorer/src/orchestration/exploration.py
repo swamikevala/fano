@@ -194,6 +194,11 @@ class ExplorationEngine:
             prompt_parts.append("Begin your exploration. Examine these seed aphorisms mathematically.")
             prompt_parts.append("What structures and patterns emerge? What can you verify or develop?")
 
+        # Add math formatting instructions
+        math_formatting = self.config.get("exploration", {}).get("math_formatting", "")
+        if math_formatting:
+            prompt_parts.extend(["", "=== MATH FORMATTING ===", math_formatting.strip()])
+
         # Add anti-bloat instructions with structured format
         prompt_parts.extend(
             [
@@ -222,6 +227,7 @@ class ExplorationEngine:
         """Build the prompt for critique."""
         context = thread.get_context_for_prompt()
         date_prefix = datetime.now().strftime("[FANO %m-%d]")
+        math_formatting = self.config.get("exploration", {}).get("math_formatting", "").strip()
 
         prompt = f"""{date_prefix} You are a rigorous mathematical critic. Review the following exploration:
 
@@ -250,6 +256,9 @@ Signs of invention (bad):
 
 Be constructive but rigorous. The goal is truth, not validation.
 Push toward depth, not toward any particular application.
+
+=== MATH FORMATTING ===
+{math_formatting}
 
 === RESPONSE FORMAT ===
 IMPORTANT: Do not summarize or recap previous discussion.

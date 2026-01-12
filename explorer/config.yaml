@@ -163,6 +163,14 @@ exploration:
     rather than INVENTED? Does it explain WHY the numbers are what they are,
     not just THAT they match?
 
+  # Math formatting instructions (ensures LaTeX is preserved in responses)
+  math_formatting: |
+    When writing mathematical formulas or expressions, provide the raw LaTeX
+    code inside a Markdown code block (```latex ... ```). Do not allow math
+    to render into visual symbols. Use double dollar signs ($$...$$) for
+    display equations and single dollar signs ($...$) for inline math.
+    Ensure no whitespace immediately inside dollar-sign delimiters.
+
 # Orchestration settings
 orchestration:
   # Seconds between exploration cycles
