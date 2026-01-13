@@ -2486,7 +2486,7 @@
                                          thread.priority >= 4 ? 'var(--warning)' : 'var(--text-dim)';
 
                     html += `
-                        <div onclick="viewThread('${thread.id}')" style="display: flex; align-items: center; gap: 0.75rem; padding: 0.75rem; background: var(--bg-secondary); border-radius: 6px; border-left: 3px solid ${priorityColor}; cursor: pointer; transition: background 0.2s;" onmouseover="this.style.background='var(--bg-tertiary)'" onmouseout="this.style.background='var(--bg-secondary)'">
+                        <div class="thread-item" data-thread-id="${thread.id}" style="display: flex; align-items: center; gap: 0.75rem; padding: 0.75rem; background: var(--bg-secondary); border-radius: 6px; border-left: 3px solid ${priorityColor}; cursor: pointer; transition: background 0.2s;" onmouseover="this.style.background='var(--bg-tertiary)'" onmouseout="this.style.background='var(--bg-secondary)'">
                             <span style="font-size: 1.2rem;">${activityIcon}</span>
                             <div style="flex: 1; min-width: 0;">
                                 <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.25rem;">
@@ -2509,6 +2509,16 @@
                 html += '</div>';
                 container.innerHTML = html;
 
+                // Add click handlers using event delegation
+                container.querySelectorAll('.thread-item').forEach(item => {
+                    item.addEventListener('click', () => {
+                        const threadId = item.dataset.threadId;
+                        if (threadId) {
+                            viewThread(threadId);
+                        }
+                    });
+                });
+
             } catch (e) {
                 console.error('Failed to load active threads:', e);
                 container.innerHTML = `<div style="padding: 1rem; color: var(--error);">Failed to load threads: ${e}</div>`;
@@ -2516,6 +2526,7 @@
         }
 
         async function viewThread(threadId) {
+            console.log('viewThread called with:', threadId);
             // Switch to explorer page and show thread detail
             showPage('explorer');
 
