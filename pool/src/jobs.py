@@ -45,6 +45,7 @@ class Job:
     deep_mode: bool = False
     new_chat: bool = True
     priority: str = "normal"
+    images: list = field(default_factory=list)  # Image attachments as dicts
 
     # State
     status: JobStatus = JobStatus.QUEUED
@@ -133,6 +134,7 @@ class JobStore:
         deep_mode: bool = False,
         new_chat: bool = True,
         priority: str = "normal",
+        images: list = None,
     ) -> dict:
         """
         Submit a new job.
@@ -177,6 +179,7 @@ class JobStore:
                 new_chat=new_chat,
                 priority=priority,
                 content_hash=content_hash,
+                images=images or [],
             )
 
             # Add to store

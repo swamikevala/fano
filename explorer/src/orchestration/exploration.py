@@ -71,9 +71,10 @@ class ExplorationEngine:
             model: Model adapter instance
             llm_manager: LLMManager for sending messages
         """
-        prompt = self._build_exploration_prompt(thread)
+        prompt, images = self._build_exploration_prompt(thread)
 
-        log.info(f"Exploring [{thread.id}] with {model_name}")
+        image_note = f" with {len(images)} image(s)" if images else ""
+        log.info(f"Exploring [{thread.id}] with {model_name}{image_note}")
 
         try:
             response, deep_mode_used = await llm_manager.send_message(
@@ -82,6 +83,7 @@ class ExplorationEngine:
                 prompt=prompt,
                 thread=thread,
                 task_type="exploration",
+                images=images,
             )
 
             # Extract only structured sections, stripping preamble and recaps
@@ -165,19 +167,46 @@ class ExplorationEngine:
         except Exception as e:
             log.error(f"Critique failed: {e}")
 
-    def _build_exploration_prompt(self, thread: ExplorationThread) -> str:
-        """Build the prompt for exploration based on seed aphorisms."""
+    def _build_exploration_prompt(self, thread: ExplorationThread) -> tuple[str, list]:
+        """
+        Build the prompt for exploration based on seed aphorisms.
+
+        Returns:
+            tuple of (prompt_text, image_attachments)
+        """
+        from llm.src.models import ImageAttachment
+
+        images = []
+
         # Check if this is a focused single-seed thread
         is_focused = thread.primary_question_id or thread.related_conjecture_ids
 
         if is_focused and self.get_focused_context:
             # Use focused context for single-seed exploration
             context = self.get_focused_context(thread)
+            # Get images for focused seeds
+            if thread.primary_question_id:
+                seed = self.axioms.get_seed_by_id(thread.primary_question_id)
+                if seed:
+                    for path in self.axioms.get_seed_images(seed.id):
+                        images.append(ImageAttachment.from_file(str(path)))
+            for cid in (thread.related_conjecture_ids or []):
+                seed = self.axioms.get_seed_by_id(cid)
+                if seed:
+                    for path in self.axioms.get_seed_images(seed.id):
+                        images.append(ImageAttachment.from_file(str(path)))
         elif thread.seed_axioms:
             # Legacy: use context for all seeds in the thread
             context = self.get_context_for_seeds(thread.seed_axioms)
+            # Get images for these specific seeds
+            for seed_id in thread.seed_axioms:
+                for path in self.axioms.get_seed_images(seed_id):
+                    images.append(ImageAttachment.from_file(str(path)))
         else:
-            context = self.axioms.get_context_for_exploration()
+            # Use full context with all seed images
+            context, image_paths = self.axioms.get_context_with_images()
+            for path in image_paths:
+                images.append(ImageAttachment.from_file(str(path)))
 
         date_prefix = datetime.now().strftime("[FANO %m-%d]")
 
@@ -230,7 +259,7 @@ class ExplorationEngine:
             ]
         )
 
-        return "\n".join(prompt_parts)
+        return "\n".join(prompt_parts), images
 
     def _build_critique_prompt(self, thread: ExplorationThread) -> str:
         """Build the prompt for critique."""

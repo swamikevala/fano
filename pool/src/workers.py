@@ -179,7 +179,7 @@ class BaseWorker:
 
         try:
             # Convert job to SendRequest for processing
-            from .models import SendOptions, Priority
+            from .models import SendOptions, Priority, ImageAttachment
             request = SendRequest(
                 backend=Backend(self.backend_name),
                 prompt=job.prompt,
@@ -190,6 +190,7 @@ class BaseWorker:
                     timeout_seconds=3600,  # Jobs have long timeout
                 ),
                 thread_id=job.thread_id,
+                images=[ImageAttachment(**img) for img in (job.images or [])],
             )
 
             # Process the request

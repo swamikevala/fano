@@ -20,6 +20,13 @@ class Backend(str, Enum):
     CLAUDE = "claude"
 
 
+class ImageAttachment(BaseModel):
+    """An image attachment to include with a prompt."""
+    filename: str  # Original filename
+    data: str  # Base64-encoded image data
+    media_type: str  # MIME type, e.g., "image/png", "image/jpeg"
+
+
 class SendOptions(BaseModel):
     """Options for send request."""
     deep_mode: bool = False
@@ -34,6 +41,7 @@ class SendRequest(BaseModel):
     prompt: str
     options: SendOptions = Field(default_factory=SendOptions)
     thread_id: Optional[str] = None  # For tracking/recovery purposes
+    images: list[ImageAttachment] = Field(default_factory=list)  # Optional image attachments
 
 
 class JobSubmitRequest(BaseModel):
@@ -45,6 +53,7 @@ class JobSubmitRequest(BaseModel):
     deep_mode: bool = False
     new_chat: bool = True
     priority: str = "normal"
+    images: list[ImageAttachment] = Field(default_factory=list)  # Optional image attachments
 
 
 class ResponseMetadata(BaseModel):

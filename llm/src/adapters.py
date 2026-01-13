@@ -68,6 +68,7 @@ class BrowserAdapter:
         use_pro_mode: bool = False,
         use_thinking_mode: bool = False,
         thread_id: Optional[str] = None,
+        images: Optional[list] = None,
     ) -> str:
         """
         Send message to LLM using the async job system.
@@ -81,6 +82,7 @@ class BrowserAdapter:
             use_pro_mode: Use ChatGPT Pro mode
             use_thinking_mode: Use ChatGPT Thinking mode (ignored if pro_mode)
             thread_id: Thread ID for recovery correlation
+            images: Optional list of ImageAttachment objects to include
 
         Returns:
             Response text
@@ -97,7 +99,8 @@ class BrowserAdapter:
                  job_id=job_id,
                  thread_id=thread_id,
                  deep_mode=deep_mode,
-                 prompt_length=len(prompt))
+                 prompt_length=len(prompt),
+                 image_count=len(images) if images else 0)
 
         response = await self.client.send_async(
             self.backend,
@@ -108,6 +111,7 @@ class BrowserAdapter:
             new_chat=True,  # Each send starts fresh
             poll_interval=5.0,  # Check every 5 seconds
             timeout_seconds=3600,  # 1 hour max wait
+            images=images,
         )
 
         # Track whether deep mode was actually used

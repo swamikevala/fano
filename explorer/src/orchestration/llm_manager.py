@@ -178,6 +178,7 @@ class LLMManager:
         prompt: str,
         thread: ExplorationThread = None,
         task_type: str = "exploration",
+        images: list = None,
     ) -> tuple[str, bool]:
         """
         Send a message to an LLM with deep mode handling.
@@ -187,6 +188,7 @@ class LLMManager:
         - Different parameter names for ChatGPT vs Gemini
         - Deep mode usage tracking
         - Thread ID passing for recovery
+        - Image attachment passing
 
         Args:
             model_name: Name of the model ('chatgpt' or 'gemini')
@@ -194,6 +196,7 @@ class LLMManager:
             prompt: The prompt to send
             thread: Optional thread for context (used for deep mode decision and recovery)
             task_type: Type of task ('exploration', 'critique', 'synthesis')
+            images: Optional list of ImageAttachment objects to include with the prompt
 
         Returns:
             Tuple of (response_text, deep_mode_used)
@@ -211,12 +214,14 @@ class LLMManager:
                 use_pro_mode=use_deep,
                 use_thinking_mode=not use_deep,
                 thread_id=thread_id,
+                images=images,
             )
         else:
             response = await model.send_message(
                 prompt,
                 use_deep_think=use_deep,
                 thread_id=thread_id,
+                images=images,
             )
 
         # Check if deep mode was actually used and record it

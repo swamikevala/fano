@@ -21,6 +21,7 @@ from .models import (
     Priority,
     PoolStatus,
     BackendStatus,
+    ImageAttachment,
 )
 
 log = get_logger("llm", "client")
@@ -137,6 +138,7 @@ class LLMClient:
         timeout_seconds: int,
         priority: str,
         thread_id: Optional[str] = None,
+        images: Optional[list[ImageAttachment]] = None,
     ) -> LLMResponse:
         """
         Send request via pool service (legacy sync mode).
@@ -154,6 +156,7 @@ class LLMClient:
                 "priority": priority,
             },
             "thread_id": thread_id,
+            "images": [img.to_dict() for img in images] if images else [],
         }
 
         max_retries = 2
@@ -329,6 +332,7 @@ class LLMClient:
         priority: str = "normal",
         model: Optional[str] = None,
         thread_id: Optional[str] = None,
+        images: Optional[list[ImageAttachment]] = None,
     ) -> LLMResponse:
         """
         Send a prompt to an LLM backend.
@@ -344,6 +348,7 @@ class LLMClient:
             priority: Request priority (browser backends only)
             model: Specific model to use (API backends only)
             thread_id: Thread ID for recovery correlation (browser backends only)
+            images: Optional list of ImageAttachment objects to include
 
         Returns:
             LLMResponse with the result
@@ -353,7 +358,7 @@ class LLMClient:
         if backend in BROWSER_BACKENDS:
             # Route to pool service (gemini, chatgpt, claude)
             return await self._send_via_pool(
-                backend, prompt, deep_mode, new_chat, timeout_seconds, priority, thread_id
+                backend, prompt, deep_mode, new_chat, timeout_seconds, priority, thread_id, images
             )
 
         elif backend == "openrouter":
@@ -516,6 +521,7 @@ class LLMClient:
         deep_mode: bool = False,
         new_chat: bool = True,
         priority: str = "normal",
+        images: Optional[list[ImageAttachment]] = None,
     ) -> dict:
         """
         Submit a job for async processing.
@@ -531,6 +537,7 @@ class LLMClient:
             deep_mode: Use deep/pro mode
             new_chat: Start new session
             priority: Request priority
+            images: Optional list of ImageAttachment objects to include
 
         Returns:
             {"status": "queued" | "exists" | "cached", "job_id": str, "cached_job_id"?: str}
@@ -549,6 +556,7 @@ class LLMClient:
             "deep_mode": deep_mode,
             "new_chat": new_chat,
             "priority": priority,
+            "images": [img.to_dict() for img in images] if images else [],
         }
 
         try:
@@ -694,6 +702,7 @@ class LLMClient:
         priority: str = "normal",
         poll_interval: float = 3.0,
         timeout_seconds: int = 3600,
+        images: Optional[list[ImageAttachment]] = None,
     ) -> LLMResponse:
         """
         Submit a job and wait for completion.
@@ -712,6 +721,7 @@ class LLMClient:
             priority: Request priority
             poll_interval: Seconds between status polls
             timeout_seconds: Maximum wait time
+            images: Optional list of ImageAttachment objects to include
 
         Returns:
             LLMResponse with the result
@@ -724,6 +734,7 @@ class LLMClient:
                 deep_mode=deep_mode,
                 new_chat=new_chat,
                 priority=priority,
+                images=images,
             )
         except PoolUnavailableError as e:
             return LLMResponse(

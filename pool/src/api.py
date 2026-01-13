@@ -363,6 +363,7 @@ def create_app(config: dict) -> FastAPI:
             deep_mode=request.deep_mode,
             new_chat=request.new_chat,
             priority=request.priority,
+            images=[img.model_dump() for img in request.images] if request.images else [],
         )
 
         return result

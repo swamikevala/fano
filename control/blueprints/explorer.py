@@ -8,7 +8,7 @@ from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, send_file
 
 from explorer.src.models.axiom import AxiomStore, SeedAphorism
 
@@ -480,3 +480,133 @@ def api_update_seed_priority(seed_id: str):
         return jsonify({"success": True, "priority": priority})
     else:
         return jsonify({"error": "Seed not found"}), 404
+
+
+# ============ Seed Images API ============
+
+# Allowed image extensions
+ALLOWED_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
+
+
+def is_allowed_image(filename: str) -> bool:
+    """Check if the file extension is an allowed image type."""
+    ext = Path(filename).suffix.lower()
+    return ext in ALLOWED_IMAGE_EXTENSIONS
+
+
+@bp.route("/seed/<seed_id>/image", methods=["POST"])
+def api_upload_seed_image(seed_id: str):
+    """
+    Upload an image to attach to a seed.
+
+    Accepts multipart form data with an 'image' file field.
+    """
+    store = get_axiom_store()
+
+    # Check if seed exists
+    seed = store.get_seed_by_id(seed_id)
+    if not seed:
+        return jsonify({"error": "Seed not found"}), 404
+
+    # Check if file was uploaded
+    if "image" not in request.files:
+        return jsonify({"error": "No image file provided"}), 400
+
+    file = request.files["image"]
+    if file.filename == "":
+        return jsonify({"error": "No file selected"}), 400
+
+    # Validate file type
+    if not is_allowed_image(file.filename):
+        return jsonify({
+            "error": f"Invalid file type. Allowed: {', '.join(ALLOWED_IMAGE_EXTENSIONS)}"
+        }), 400
+
+    # Sanitize filename - keep only alphanumeric, dots, underscores, hyphens
+    original_name = file.filename
+    safe_name = "".join(
+        c for c in original_name
+        if c.isalnum() or c in "._-"
+    )
+    if not safe_name:
+        safe_name = f"image{Path(original_name).suffix}"
+
+    # Read file data
+    image_data = file.read()
+
+    # Add image to seed
+    stored_filename = store.add_seed_image(seed_id, safe_name, image_data)
+
+    if stored_filename:
+        updated_seed = store.get_seed_by_id(seed_id)
+        return jsonify({
+            "success": True,
+            "filename": stored_filename,
+            "seed": asdict(updated_seed),
+        })
+    else:
+        return jsonify({"error": "Failed to save image"}), 500
+
+
+@bp.route("/seed/<seed_id>/image/<filename>", methods=["GET"])
+def api_get_seed_image(seed_id: str, filename: str):
+    """
+    Serve a seed image file.
+
+    The filename should be the stored filename (seed_id_originalname.ext).
+    """
+    store = get_axiom_store()
+
+    # Check if seed exists
+    seed = store.get_seed_by_id(seed_id)
+    if not seed:
+        return jsonify({"error": "Seed not found"}), 404
+
+    # Verify the image belongs to this seed
+    if filename not in seed.images:
+        return jsonify({"error": "Image not found for this seed"}), 404
+
+    # Get the image path
+    image_path = store.images_dir / filename
+    if not image_path.exists():
+        return jsonify({"error": "Image file not found"}), 404
+
+    # Determine MIME type from extension
+    ext = image_path.suffix.lower()
+    mime_types = {
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".gif": "image/gif",
+        ".webp": "image/webp",
+    }
+    mimetype = mime_types.get(ext, "application/octet-stream")
+
+    return send_file(image_path, mimetype=mimetype)
+
+
+@bp.route("/seed/<seed_id>/image/<filename>", methods=["DELETE"])
+def api_delete_seed_image(seed_id: str, filename: str):
+    """
+    Delete an image from a seed.
+
+    The filename should be the stored filename (seed_id_originalname.ext).
+    """
+    store = get_axiom_store()
+
+    # Check if seed exists
+    seed = store.get_seed_by_id(seed_id)
+    if not seed:
+        return jsonify({"error": "Seed not found"}), 404
+
+    # Remove the image
+    success = store.remove_seed_image(seed_id, filename)
+
+    if success:
+        updated_seed = store.get_seed_by_id(seed_id)
+        return jsonify({
+            "success": True,
+            "seed": asdict(updated_seed),
+        })
+    else:
+        return jsonify({"error": "Image not found"}), 404

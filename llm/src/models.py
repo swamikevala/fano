@@ -21,6 +21,44 @@ class Priority(str, Enum):
 
 
 @dataclass
+class ImageAttachment:
+    """An image attachment to include with a prompt."""
+    filename: str  # Original filename
+    data: str  # Base64-encoded image data
+    media_type: str  # MIME type, e.g., "image/png", "image/jpeg"
+
+    def to_dict(self) -> dict:
+        return {
+            "filename": self.filename,
+            "data": self.data,
+            "media_type": self.media_type,
+        }
+
+    @classmethod
+    def from_file(cls, filepath: str) -> "ImageAttachment":
+        """Create from a file path."""
+        import base64
+        from pathlib import Path
+
+        path = Path(filepath)
+        ext = path.suffix.lower()
+        media_types = {
+            ".png": "image/png",
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".gif": "image/gif",
+            ".webp": "image/webp",
+        }
+
+        data = base64.b64encode(path.read_bytes()).decode("utf-8")
+        return cls(
+            filename=path.name,
+            data=data,
+            media_type=media_types.get(ext, "application/octet-stream"),
+        )
+
+
+@dataclass
 class LLMResponse:
     """Response from an LLM request."""
     success: bool

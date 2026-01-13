@@ -1165,6 +1165,138 @@
             border-top: 1px solid var(--border-light);
         }
 
+        /* Seed Images */
+        .seed-images {
+            padding: 0.75rem 1.5rem;
+            border-top: 1px solid var(--border-light);
+        }
+
+        .seed-images-grid {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+        }
+
+        .seed-image-thumb {
+            width: 60px;
+            height: 60px;
+            border-radius: 6px;
+            object-fit: cover;
+            cursor: pointer;
+            border: 2px solid transparent;
+            transition: border-color 0.15s;
+        }
+
+        .seed-image-thumb:hover {
+            border-color: var(--interesting);
+        }
+
+        /* Image upload in modal */
+        .seed-images-upload {
+            margin-top: 0.5rem;
+        }
+
+        .seed-images-preview {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin-bottom: 0.75rem;
+        }
+
+        .seed-image-preview-item {
+            position: relative;
+            width: 80px;
+            height: 80px;
+        }
+
+        .seed-image-preview-item img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+        }
+
+        .seed-image-preview-item .remove-btn {
+            position: absolute;
+            top: -6px;
+            right: -6px;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: var(--error);
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-size: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            line-height: 1;
+        }
+
+        .seed-image-preview-item .remove-btn:hover {
+            background: #ef4444;
+        }
+
+        .image-upload-area {
+            border: 2px dashed var(--border);
+            border-radius: 8px;
+            padding: 1rem;
+            text-align: center;
+            cursor: pointer;
+            transition: border-color 0.15s, background 0.15s;
+        }
+
+        .image-upload-area:hover {
+            border-color: var(--interesting);
+            background: rgba(96, 165, 250, 0.05);
+        }
+
+        .image-upload-area.dragover {
+            border-color: var(--interesting);
+            background: rgba(96, 165, 250, 0.1);
+        }
+
+        .image-upload-area input[type="file"] {
+            display: none;
+        }
+
+        .image-upload-text {
+            color: var(--text-dim);
+            font-size: 0.85rem;
+        }
+
+        .image-upload-text strong {
+            color: var(--interesting);
+        }
+
+        /* Image lightbox */
+        .image-lightbox {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.9);
+            z-index: 2000;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+        }
+
+        .image-lightbox.active {
+            display: flex;
+        }
+
+        .image-lightbox img {
+            max-width: 90%;
+            max-height: 90%;
+            object-fit: contain;
+            border-radius: 8px;
+        }
+
         /* Seed Modal */
         .seed-modal {
             position: fixed;
@@ -1953,11 +2085,28 @@
                     <textarea id="seed-notes" placeholder="Additional context..." rows="2"></textarea>
                 </div>
 
+                <div class="form-group seed-images-upload">
+                    <label>Images (optional)</label>
+                    <div id="seed-images-preview" class="seed-images-preview"></div>
+                    <div class="image-upload-area" id="seed-image-upload-area" onclick="document.getElementById('seed-image-input').click()">
+                        <input type="file" id="seed-image-input" accept="image/*" multiple onchange="handleSeedImageSelect(event)">
+                        <div class="image-upload-text">
+                            <strong>Click to upload</strong> or drag and drop<br>
+                            PNG, JPG, GIF, WebP
+                        </div>
+                    </div>
+                </div>
+
                 <div class="btn-group" style="justify-content: flex-end; margin-top: 1rem;">
                     <button type="button" class="btn btn-secondary" onclick="hideSeedModal()">Cancel</button>
                     <button type="submit" class="btn btn-primary" id="seed-submit-btn">Add Seed</button>
                 </div>
             </form>
+        </div>
+
+        <!-- Image Lightbox -->
+        <div id="image-lightbox" class="image-lightbox" onclick="closeLightbox()">
+            <img id="lightbox-image" src="" alt="Full size image">
         </div>
 
         <!-- Document Page -->
@@ -4149,6 +4298,8 @@
 
         let currentSeedsFilter = 'all';
         let allSeeds = [];
+        let pendingSeedImages = []; // Files to upload when creating a new seed
+        let currentEditSeedId = null; // Track which seed is being edited
 
         async function loadSeeds() {
             try {
@@ -4232,6 +4383,14 @@
                 sourceHtml = `<div class="seed-source">Source: ${escapeHtml(seed.source)}</div>`;
             }
 
+            let imagesHtml = '';
+            if (seed.images && seed.images.length > 0) {
+                const thumbs = seed.images.map(img =>
+                    `<img class="seed-image-thumb" src="/api/explorer/seed/${seed.id}/image/${encodeURIComponent(img)}" alt="Seed image" onclick="openLightbox('/api/explorer/seed/${seed.id}/image/${encodeURIComponent(img)}')">`
+                ).join('');
+                imagesHtml = `<div class="seed-images"><div class="seed-images-grid">${thumbs}</div></div>`;
+            }
+
             return `
                 <div class="seed-card type-${seed.type}" data-seed-id="${seed.id}">
                     <div class="seed-card-header">
@@ -4253,6 +4412,7 @@
                             <button class="seed-action-btn delete" onclick="deleteSeed('${seed.id}')" title="Delete">Delete</button>
                         </div>
                     </div>
+                    ${imagesHtml}
                     ${notesHtml}
                     ${sourceHtml}
                 </div>`;
@@ -4267,6 +4427,8 @@
             // Reset form
             document.getElementById('seed-form').reset();
             document.getElementById('seed-edit-id').value = '';
+            pendingSeedImages = [];
+            currentEditSeedId = editSeedId;
 
             if (editSeedId) {
                 // Edit mode
@@ -4282,11 +4444,16 @@
                     document.getElementById('seed-tags').value = (seed.tags || []).join(', ');
                     document.getElementById('seed-source').value = seed.source || '';
                     document.getElementById('seed-notes').value = seed.notes || '';
+                    // Render existing images
+                    renderSeedImagesPreview(seed.images || [], seed.id);
+                } else {
+                    renderSeedImagesPreview([], null);
                 }
             } else {
                 // Add mode
                 title.textContent = 'Add New Seed';
                 submitBtn.textContent = 'Add Seed';
+                renderSeedImagesPreview([], null);
             }
 
             updateSeedFormByType();
@@ -4298,6 +4465,8 @@
         function hideSeedModal() {
             document.getElementById('seed-modal').style.display = 'none';
             document.getElementById('seed-modal-overlay').style.display = 'none';
+            pendingSeedImages = [];
+            currentEditSeedId = null;
         }
 
         function updateSeedFormByType() {
@@ -4335,12 +4504,15 @@
 
             try {
                 let resp;
+                let seedId;
+
                 if (isEdit) {
                     resp = await fetch(`/api/explorer/seed/${editId}`, {
                         method: 'PUT',
                         headers: {'Content-Type': 'application/json'},
                         body: JSON.stringify(seedData)
                     });
+                    seedId = editId;
                 } else {
                     resp = await fetch('/api/explorer/seed', {
                         method: 'POST',
@@ -4351,6 +4523,15 @@
 
                 const data = await resp.json();
                 if (data.success) {
+                    seedId = data.seed.id;
+
+                    // Upload any pending images for new seeds
+                    if (!isEdit && pendingSeedImages.length > 0) {
+                        for (const file of pendingSeedImages) {
+                            await uploadSeedImage(seedId, file);
+                        }
+                    }
+
                     hideSeedModal();
                     showToast(isEdit ? 'Seed updated' : 'Seed added');
                     loadSeeds();
@@ -4413,6 +4594,179 @@
                 console.error('Error updating priority:', e);
             }
         }
+
+        // ============ Seed Image Management ============
+
+        function renderSeedImagesPreview(existingImages, seedId) {
+            const container = document.getElementById('seed-images-preview');
+            let html = '';
+
+            // Render existing images (for edit mode)
+            if (existingImages && existingImages.length > 0 && seedId) {
+                for (const img of existingImages) {
+                    html += `
+                        <div class="seed-image-preview-item" data-filename="${escapeHtml(img)}">
+                            <img src="/api/explorer/seed/${seedId}/image/${encodeURIComponent(img)}" alt="Seed image">
+                            <button class="remove-btn" onclick="removeSeedImage('${seedId}', '${escapeHtml(img)}')" title="Remove image">&times;</button>
+                        </div>`;
+                }
+            }
+
+            // Render pending images (for add mode)
+            for (let i = 0; i < pendingSeedImages.length; i++) {
+                const file = pendingSeedImages[i];
+                html += `
+                    <div class="seed-image-preview-item" data-pending-index="${i}">
+                        <img src="${URL.createObjectURL(file)}" alt="Pending image">
+                        <button class="remove-btn" onclick="removePendingSeedImage(${i})" title="Remove image">&times;</button>
+                    </div>`;
+            }
+
+            container.innerHTML = html;
+        }
+
+        function handleSeedImageSelect(event) {
+            const files = Array.from(event.target.files);
+            if (files.length === 0) return;
+
+            const editId = document.getElementById('seed-edit-id').value;
+
+            if (editId) {
+                // Edit mode - upload immediately
+                for (const file of files) {
+                    uploadSeedImage(editId, file);
+                }
+            } else {
+                // Add mode - queue for later upload
+                for (const file of files) {
+                    pendingSeedImages.push(file);
+                }
+                renderSeedImagesPreview([], null);
+            }
+
+            // Clear the input so the same file can be selected again
+            event.target.value = '';
+        }
+
+        async function uploadSeedImage(seedId, file) {
+            const formData = new FormData();
+            formData.append('image', file);
+
+            try {
+                const resp = await fetch(`/api/explorer/seed/${seedId}/image`, {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await resp.json();
+
+                if (data.success) {
+                    // Update local state
+                    const seed = allSeeds.find(s => s.id === seedId);
+                    if (seed) {
+                        seed.images = data.seed.images;
+                    }
+                    // Re-render preview if we're in edit mode
+                    if (currentEditSeedId === seedId) {
+                        renderSeedImagesPreview(data.seed.images, seedId);
+                    }
+                    renderSeeds();
+                } else {
+                    console.error('Failed to upload image:', data.error);
+                    showToast('Failed to upload image: ' + (data.error || 'Unknown error'));
+                }
+            } catch (e) {
+                console.error('Error uploading image:', e);
+                showToast('Failed to upload image');
+            }
+        }
+
+        function removePendingSeedImage(index) {
+            pendingSeedImages.splice(index, 1);
+            renderSeedImagesPreview([], null);
+        }
+
+        async function removeSeedImage(seedId, filename) {
+            if (!confirm('Remove this image?')) return;
+
+            try {
+                const resp = await fetch(`/api/explorer/seed/${seedId}/image/${encodeURIComponent(filename)}`, {
+                    method: 'DELETE'
+                });
+                const data = await resp.json();
+
+                if (data.success) {
+                    // Update local state
+                    const seed = allSeeds.find(s => s.id === seedId);
+                    if (seed) {
+                        seed.images = data.seed.images;
+                    }
+                    // Re-render preview if we're in edit mode
+                    if (currentEditSeedId === seedId) {
+                        renderSeedImagesPreview(data.seed.images, seedId);
+                    }
+                    renderSeeds();
+                    showToast('Image removed');
+                } else {
+                    alert(data.error || 'Failed to remove image');
+                }
+            } catch (e) {
+                console.error('Error removing image:', e);
+                alert('Failed to remove image');
+            }
+        }
+
+        // ============ Image Lightbox ============
+
+        function openLightbox(imageUrl) {
+            const lightbox = document.getElementById('image-lightbox');
+            const img = document.getElementById('lightbox-image');
+            img.src = imageUrl;
+            lightbox.classList.add('active');
+        }
+
+        function closeLightbox() {
+            const lightbox = document.getElementById('image-lightbox');
+            lightbox.classList.remove('active');
+        }
+
+        // Setup drag and drop for image upload area
+        document.addEventListener('DOMContentLoaded', function() {
+            const uploadArea = document.getElementById('seed-image-upload-area');
+            if (uploadArea) {
+                uploadArea.addEventListener('dragover', function(e) {
+                    e.preventDefault();
+                    uploadArea.classList.add('dragover');
+                });
+
+                uploadArea.addEventListener('dragleave', function(e) {
+                    e.preventDefault();
+                    uploadArea.classList.remove('dragover');
+                });
+
+                uploadArea.addEventListener('drop', function(e) {
+                    e.preventDefault();
+                    uploadArea.classList.remove('dragover');
+
+                    const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'));
+                    if (files.length === 0) return;
+
+                    const editId = document.getElementById('seed-edit-id').value;
+
+                    if (editId) {
+                        // Edit mode - upload immediately
+                        for (const file of files) {
+                            uploadSeedImage(editId, file);
+                        }
+                    } else {
+                        // Add mode - queue for later
+                        for (const file of files) {
+                            pendingSeedImages.push(file);
+                        }
+                        renderSeedImagesPreview([], null);
+                    }
+                });
+            }
+        });
     </script>
 </body>
 </html>

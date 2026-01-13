@@ -100,6 +100,11 @@ class SeedAphorism:
     Priority:
     - 1-10 scale (10 = highest priority, explore first)
     - Default is 5 (medium priority)
+
+    Images:
+    - Optional list of image filenames attached to this seed
+    - Images are stored in data/axioms/images/
+    - Will be passed to LLMs during exploration (for vision-capable models)
     """
     id: str
     text: str
@@ -109,6 +114,7 @@ class SeedAphorism:
     confidence: str = "high"  # high, medium, low (for conjectures)
     source: str = "user"  # Where this seed came from
     notes: str = ""  # Additional context
+    images: list[str] = field(default_factory=list)  # Image filenames
 
     @classmethod
     def from_dict(cls, data: dict, index: int = 0) -> "SeedAphorism":
@@ -132,6 +138,7 @@ class SeedAphorism:
             confidence=data.get("confidence", "high"),
             source=data.get("source", "user"),
             notes=data.get("notes", ""),
+            images=data.get("images", []),
         )
 
 
@@ -174,10 +181,12 @@ class AxiomStore:
         self.numbers_file = data_dir / "axioms" / "target_numbers.yaml"
         self.blessed_dir = data_dir / "axioms" / "blessed_insights"
         self.seeds_file = data_dir / "axioms" / "seeds.yaml"
+        self.images_dir = data_dir / "axioms" / "images"
 
         # Ensure directories exist
         self.excerpts_dir.mkdir(parents=True, exist_ok=True)
         self.blessed_dir.mkdir(parents=True, exist_ok=True)
+        self.images_dir.mkdir(parents=True, exist_ok=True)
     
     def get_excerpts(self) -> list[SourceExcerpt]:
         """Load all source excerpts."""
@@ -294,7 +303,45 @@ class AxiomStore:
         - Conjectures: Ideas to explore and verify
         - Questions: Specific questions to answer
         """
+        text_context, _ = self.get_context_with_images(max_seeds)
+        return text_context
+
+    def get_context_with_images(self, max_seeds: int = 10) -> tuple[str, list[Path]]:
+        """
+        Build context string and collect image paths for exploration prompts.
+
+        Returns:
+            tuple of (text_context, image_paths)
+            - text_context: Formatted text for prompts
+            - image_paths: List of Path objects for all seed images
+        """
         lines = []
+        all_images: list[Path] = []
+
+        def add_seed_to_context(seed: SeedAphorism, marker: str, show_confidence: bool = False):
+            """Helper to add a seed and its images to the context."""
+            prefix = marker
+            if show_confidence:
+                confidence_marker = {"high": "⚡", "medium": "?", "low": "○"}.get(seed.confidence, "?")
+                prefix = confidence_marker
+            priority_marker = f"[P{seed.priority}]" if seed.priority != 5 else ""
+
+            # Add text
+            line = f"{prefix} {priority_marker} {seed.text}".strip()
+            if seed.images:
+                line += f" [📷 {len(seed.images)} image(s) attached]"
+            lines.append(line)
+
+            if seed.tags:
+                lines.append(f"   [Tags: {', '.join(seed.tags)}]")
+            if seed.notes:
+                lines.append(f"   Note: {seed.notes}")
+
+            # Collect images
+            for filename in seed.images:
+                image_path = self.images_dir / filename
+                if image_path.exists():
+                    all_images.append(image_path)
 
         # 1. AXIOMS - Assumed true facts (always included)
         axioms = self.get_axioms()
@@ -302,9 +349,7 @@ class AxiomStore:
             lines.append("=== AXIOMS (ASSUMED TRUE) ===")
             lines.append("These are established facts. Do NOT re-derive or question these - take them as given:\n")
             for axiom in axioms:
-                lines.append(f"• {axiom.text}")
-                if axiom.notes:
-                    lines.append(f"   Note: {axiom.notes}")
+                add_seed_to_context(axiom, "•")
             lines.append("")
 
         # 2. CONJECTURES - To explore and verify (sorted by priority)
@@ -313,13 +358,7 @@ class AxiomStore:
             lines.append("=== CONJECTURES (TO EXPLORE) ===")
             lines.append("These are conjectured connections to explore, verify, and build upon:\n")
             for seed in conjectures:
-                confidence_marker = {"high": "⚡", "medium": "?", "low": "○"}.get(seed.confidence, "?")
-                priority_marker = f"[P{seed.priority}]" if seed.priority != 5 else ""
-                lines.append(f"{confidence_marker} {priority_marker} {seed.text}".strip())
-                if seed.tags:
-                    lines.append(f"   [Tags: {', '.join(seed.tags)}]")
-                if seed.notes:
-                    lines.append(f"   Note: {seed.notes}")
+                add_seed_to_context(seed, "", show_confidence=True)
             lines.append("")
 
         # 3. QUESTIONS - Specific questions to answer (sorted by priority)
@@ -328,15 +367,15 @@ class AxiomStore:
             lines.append("=== QUESTIONS (TO ANSWER) ===")
             lines.append("These are specific questions that need answers (highest priority first):\n")
             for q in questions:
-                priority_marker = f"[P{q.priority}]" if q.priority != 5 else ""
-                lines.append(f"❓ {priority_marker} {q.text}".strip())
-                if q.tags:
-                    lines.append(f"   [Tags: {', '.join(q.tags)}]")
-                if q.notes:
-                    lines.append(f"   Context: {q.notes}")
+                add_seed_to_context(q, "❓")
             lines.append("")
 
-        return "\n".join(lines)
+        # Add note about images if any exist
+        if all_images:
+            lines.append(f"[Note: {len(all_images)} reference image(s) are attached to provide visual context for the seeds above.]")
+            lines.append("")
+
+        return "\n".join(lines), all_images
     
     def get_unexplained_numbers(self) -> list[str]:
         """Get number sets that haven't been explained yet."""
@@ -371,6 +410,8 @@ class AxiomStore:
                 seed_dict["source"] = seed.source
             if seed.notes:
                 seed_dict["notes"] = seed.notes
+            if seed.images:
+                seed_dict["images"] = seed.images
             seeds_data.append(seed_dict)
 
         # Create the full YAML content with header comments
@@ -399,6 +440,7 @@ class AxiomStore:
 #     confidence: high/medium/low  # For conjectures only
 #     source: Where this idea came from (optional)
 #     notes: Additional context (optional)
+#     images: [image1.png, image2.jpg]  # Attached images (optional)
 
 """
         yaml_content = yaml.dump(
@@ -456,6 +498,8 @@ class AxiomStore:
                     seed.source = updates["source"]
                 if "notes" in updates:
                     seed.notes = updates["notes"]
+                if "images" in updates:
+                    seed.images = updates["images"]
 
                 seeds[i] = seed
                 self.save_seeds(seeds)
@@ -465,6 +509,7 @@ class AxiomStore:
     def delete_seed(self, seed_id: str) -> bool:
         """
         Delete a seed by its ID.
+        Also removes any associated images.
 
         Args:
             seed_id: The ID of the seed to delete
@@ -472,6 +517,9 @@ class AxiomStore:
         Returns:
             True if seed was found and deleted, False otherwise
         """
+        # First, clean up any associated images
+        self.delete_seed_images(seed_id)
+
         seeds = self.get_seed_aphorisms(sort_by_priority=False)
         original_count = len(seeds)
         seeds = [s for s in seeds if s.id != seed_id]
@@ -496,3 +544,138 @@ class AxiomStore:
             if seed.id == seed_id:
                 return seed
         return None
+
+    # --- Image Management Methods ---
+
+    def get_seed_image_path(self, seed_id: str, filename: str) -> Path:
+        """
+        Get the full path to a seed image file.
+
+        Args:
+            seed_id: The seed ID
+            filename: The image filename
+
+        Returns:
+            Full Path to the image file
+        """
+        return self.images_dir / f"{seed_id}_{filename}"
+
+    def add_seed_image(self, seed_id: str, filename: str, image_data: bytes) -> Optional[str]:
+        """
+        Add an image to a seed.
+
+        Args:
+            seed_id: The seed ID to add the image to
+            filename: Original filename of the image
+            image_data: Raw image bytes
+
+        Returns:
+            The stored filename if successful, None if seed not found
+        """
+        seed = self.get_seed_by_id(seed_id)
+        if not seed:
+            return None
+
+        # Create a unique filename: seed_id + original filename
+        stored_filename = f"{seed_id}_{filename}"
+        image_path = self.images_dir / stored_filename
+
+        # Write the image file
+        image_path.write_bytes(image_data)
+
+        # Update the seed's images list
+        if stored_filename not in seed.images:
+            seed.images.append(stored_filename)
+            self.update_seed(seed_id, {"images": seed.images})
+
+        return stored_filename
+
+    def remove_seed_image(self, seed_id: str, filename: str) -> bool:
+        """
+        Remove an image from a seed.
+
+        Args:
+            seed_id: The seed ID
+            filename: The stored filename to remove
+
+        Returns:
+            True if image was removed, False otherwise
+        """
+        seed = self.get_seed_by_id(seed_id)
+        if not seed:
+            return False
+
+        if filename not in seed.images:
+            return False
+
+        # Remove the file
+        image_path = self.images_dir / filename
+        if image_path.exists():
+            image_path.unlink()
+
+        # Update the seed's images list
+        seed.images.remove(filename)
+        self.update_seed(seed_id, {"images": seed.images})
+
+        return True
+
+    def get_seed_images(self, seed_id: str) -> list[Path]:
+        """
+        Get all image paths for a seed.
+
+        Args:
+            seed_id: The seed ID
+
+        Returns:
+            List of Path objects to existing image files
+        """
+        seed = self.get_seed_by_id(seed_id)
+        if not seed:
+            return []
+
+        paths = []
+        for filename in seed.images:
+            image_path = self.images_dir / filename
+            if image_path.exists():
+                paths.append(image_path)
+
+        return paths
+
+    def delete_seed_images(self, seed_id: str) -> int:
+        """
+        Delete all images associated with a seed.
+        Called when deleting a seed to clean up orphaned images.
+
+        Args:
+            seed_id: The seed ID
+
+        Returns:
+            Number of images deleted
+        """
+        seed = self.get_seed_by_id(seed_id)
+        if not seed:
+            return 0
+
+        deleted = 0
+        for filename in seed.images:
+            image_path = self.images_dir / filename
+            if image_path.exists():
+                image_path.unlink()
+                deleted += 1
+
+        return deleted
+
+    def get_all_seed_images(self) -> list[tuple[str, str, Path]]:
+        """
+        Get all images across all seeds.
+
+        Returns:
+            List of (seed_id, filename, path) tuples
+        """
+        result = []
+        for seed in self.get_seed_aphorisms(sort_by_priority=False):
+            for filename in seed.images:
+                image_path = self.images_dir / filename
+                if image_path.exists():
+                    result.append((seed.id, filename, image_path))
+        return result
