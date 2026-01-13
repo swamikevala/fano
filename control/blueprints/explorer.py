@@ -109,6 +109,81 @@ def api_explorer_active_threads():
     return jsonify({"threads": threads, "count": len(threads)})
 
 
+@bp.route("/threads/<thread_id>")
+def api_explorer_thread_detail(thread_id: str):
+    """Get full details of an exploration thread including all exchanges."""
+    explorations_dir = EXPLORER_DATA_DIR / "explorations"
+    thread_path = explorations_dir / f"{thread_id}.json"
+
+    if not thread_path.exists():
+        return jsonify({"error": "Thread not found"}), 404
+
+    data = load_insight_json(thread_path)
+    if not data:
+        return jsonify({"error": "Failed to load thread"}), 500
+
+    # Get the focus seed text if available
+    focus_seed_text = None
+    focus_seed_id = data.get("primary_question_id")
+    if not focus_seed_id and data.get("related_conjecture_ids"):
+        focus_seed_id = data["related_conjecture_ids"][0]
+
+    if focus_seed_id:
+        store = get_axiom_store()
+        seed = store.get_seed_by_id(focus_seed_id)
+        if seed:
+            focus_seed_text = seed.text
+
+    # Format exchanges for display
+    exchanges = []
+    for i, ex in enumerate(data.get("exchanges", [])):
+        exchanges.append({
+            "index": i,
+            "id": ex.get("id", f"ex-{i}"),
+            "role": ex.get("role", "unknown"),
+            "model": ex.get("model", "unknown"),
+            "prompt": ex.get("prompt", ""),
+            "response": ex.get("response", ""),
+            "timestamp": ex.get("timestamp", ""),
+            "deep_mode_used": ex.get("deep_mode_used", False),
+        })
+
+    # Calculate progress toward synthesis
+    exchange_count = len(exchanges)
+    min_exchanges = 4  # From config
+    max_exchanges = 12
+    critique_count = sum(1 for ex in exchanges if ex["role"] == "critic")
+
+    progress = {
+        "exchange_count": exchange_count,
+        "min_required": min_exchanges,
+        "max_allowed": max_exchanges,
+        "critique_count": critique_count,
+        "critiques_required": 2,
+        "ready_for_synthesis": exchange_count >= min_exchanges and critique_count >= 2,
+        "percent": min(100, int((exchange_count / min_exchanges) * 100)),
+    }
+
+    return jsonify({
+        "thread": {
+            "id": data.get("id", thread_id),
+            "topic": data.get("topic", "Unknown"),
+            "status": data.get("status", "unknown"),
+            "priority": data.get("priority", 5),
+            "created_at": data.get("created_at", ""),
+            "updated_at": data.get("updated_at", ""),
+            "seed_axioms": data.get("seed_axioms", []),
+            "primary_question_id": data.get("primary_question_id"),
+            "related_conjecture_ids": data.get("related_conjecture_ids", []),
+            "focus_seed_text": focus_seed_text,
+            "notes": data.get("notes", ""),
+            "chunks_extracted": data.get("chunks_extracted", False),
+        },
+        "exchanges": exchanges,
+        "progress": progress,
+    })
+
+
 @bp.route("/insights/<status>")
 def api_explorer_insights(status: str):
     """Get insights by status."""

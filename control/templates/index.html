@@ -2486,7 +2486,7 @@
                                          thread.priority >= 4 ? 'var(--warning)' : 'var(--text-dim)';
 
                     html += `
-                        <div style="display: flex; align-items: center; gap: 0.75rem; padding: 0.75rem; background: var(--bg-secondary); border-radius: 6px; border-left: 3px solid ${priorityColor};">
+                        <div onclick="viewThread('${thread.id}')" style="display: flex; align-items: center; gap: 0.75rem; padding: 0.75rem; background: var(--bg-secondary); border-radius: 6px; border-left: 3px solid ${priorityColor}; cursor: pointer; transition: background 0.2s;" onmouseover="this.style.background='var(--bg-tertiary)'" onmouseout="this.style.background='var(--bg-secondary)'">
                             <span style="font-size: 1.2rem;">${activityIcon}</span>
                             <div style="flex: 1; min-width: 0;">
                                 <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.25rem;">
@@ -2501,6 +2501,7 @@
                                     ${thread.current_activity} · ${thread.exchange_count} exchanges · P${thread.priority}
                                 </div>
                             </div>
+                            <span style="color: var(--text-dim); font-size: 1rem;">›</span>
                         </div>
                     `;
                 }
@@ -2513,6 +2514,139 @@
                 container.innerHTML = `<div style="padding: 1rem; color: var(--error);">Failed to load threads: ${e}</div>`;
             }
         }
+
+        async function viewThread(threadId) {
+            // Switch to explorer page and show thread detail
+            showPage('explorer');
+
+            const container = document.getElementById('explorer-insights');
+            container.innerHTML = '<div class="empty-state"><div class="icon loading">Loading thread...</div></div>';
+
+            try {
+                const resp = await fetch(`/api/explorer/threads/${threadId}`);
+                const data = await resp.json();
+
+                if (data.error) {
+                    container.innerHTML = `<div class="empty-state">
+                        <div class="icon">🔍</div>
+                        <h2>Thread not found</h2>
+                        <p>${data.error}</p>
+                    </div>`;
+                    return;
+                }
+
+                const thread = data.thread;
+                const exchanges = data.exchanges;
+                const progress = data.progress;
+
+                // Build the thread detail view
+                let html = `
+                    <div style="margin-bottom: 1rem; padding: 0.75rem; background: var(--bg-card); border-radius: 8px; display: flex; align-items: center; gap: 1rem;">
+                        <a href="#" onclick="loadExplorerInsights(currentExplorerStatus || 'pending'); return false;" style="color: var(--primary); text-decoration: none;">← Back to Insights</a>
+                        <span style="color: var(--text-dim);">|</span>
+                        <span style="color: var(--text-dim);">Thread Detail:</span>
+                        <code style="color: var(--primary);">${thread.id}</code>
+                        <span style="padding: 0.25rem 0.5rem; background: ${thread.status === 'active' ? 'var(--success)' : 'var(--warning)'}; color: var(--bg-dark); border-radius: 4px; font-size: 0.8rem; font-weight: bold;">${thread.status.toUpperCase()}</span>
+                    </div>
+
+                    <!-- Thread Info Card -->
+                    <div style="background: var(--bg-card); border-radius: 12px; padding: 1.5rem; margin-bottom: 1.5rem;">
+                        <h2 style="margin-bottom: 1rem; color: var(--text);">${thread.topic}</h2>
+
+                        ${thread.focus_seed_text ? `
+                        <div style="background: var(--bg-tertiary); padding: 1rem; border-radius: 8px; margin-bottom: 1rem; border-left: 4px solid var(--primary);">
+                            <div style="font-size: 0.8rem; color: var(--text-dim); margin-bottom: 0.5rem;">Focus Question/Conjecture</div>
+                            <div style="color: var(--text);">${thread.focus_seed_text}</div>
+                        </div>
+                        ` : ''}
+
+                        <!-- Progress Bar -->
+                        <div style="margin-bottom: 1rem;">
+                            <div style="display: flex; justify-content: space-between; font-size: 0.85rem; margin-bottom: 0.5rem;">
+                                <span>Progress to Synthesis</span>
+                                <span>${progress.exchange_count}/${progress.min_required} exchanges (${progress.critique_count}/${progress.critiques_required} critiques)</span>
+                            </div>
+                            <div style="background: var(--bg-tertiary); border-radius: 4px; height: 8px; overflow: hidden;">
+                                <div style="background: ${progress.ready_for_synthesis ? 'var(--success)' : 'var(--primary)'}; height: 100%; width: ${progress.percent}%; transition: width 0.3s;"></div>
+                            </div>
+                            ${progress.ready_for_synthesis ? '<div style="color: var(--success); font-size: 0.8rem; margin-top: 0.5rem;">Ready for synthesis!</div>' : ''}
+                        </div>
+
+                        <div style="display: flex; gap: 2rem; font-size: 0.85rem; color: var(--text-dim);">
+                            <div><strong>Priority:</strong> P${thread.priority}</div>
+                            <div><strong>Created:</strong> ${new Date(thread.created_at).toLocaleString()}</div>
+                            <div><strong>Updated:</strong> ${new Date(thread.updated_at).toLocaleString()}</div>
+                        </div>
+                    </div>
+
+                    <!-- Exchanges -->
+                    <h3 style="margin-bottom: 1rem; color: var(--text);">LLM Exchanges (${exchanges.length})</h3>
+                `;
+
+                if (exchanges.length === 0) {
+                    html += `<div style="background: var(--bg-card); padding: 2rem; border-radius: 12px; text-align: center; color: var(--text-dim);">
+                        No exchanges yet. Thread is waiting for LLM availability.
+                    </div>`;
+                } else {
+                    for (const ex of exchanges) {
+                        const roleColor = ex.role === 'explorer' ? 'var(--success)' :
+                                         ex.role === 'critic' ? 'var(--warning)' : 'var(--primary)';
+                        const roleIcon = ex.role === 'explorer' ? '🔭' :
+                                        ex.role === 'critic' ? '🔍' : '📝';
+                        const modelColor = ex.model === 'gemini' ? '#4285f4' :
+                                          ex.model === 'chatgpt' ? '#10a37f' :
+                                          ex.model === 'claude' ? '#cc785c' : 'var(--text-dim)';
+
+                        html += `
+                            <div style="background: var(--bg-card); border-radius: 12px; margin-bottom: 1rem; overflow: hidden; border-left: 4px solid ${roleColor};">
+                                <!-- Exchange Header -->
+                                <div style="padding: 0.75rem 1rem; background: var(--bg-tertiary); display: flex; align-items: center; gap: 1rem;">
+                                    <span style="font-size: 1.2rem;">${roleIcon}</span>
+                                    <span style="font-weight: bold; color: ${roleColor}; text-transform: uppercase;">${ex.role}</span>
+                                    <span style="padding: 0.2rem 0.5rem; background: ${modelColor}; color: white; border-radius: 4px; font-size: 0.75rem; font-weight: bold;">${ex.model}</span>
+                                    ${ex.deep_mode_used ? '<span style="padding: 0.2rem 0.5rem; background: var(--highlight); color: white; border-radius: 4px; font-size: 0.75rem;">DEEP</span>' : ''}
+                                    <span style="margin-left: auto; color: var(--text-dim); font-size: 0.8rem;">#${ex.index + 1} · ${ex.timestamp ? new Date(ex.timestamp).toLocaleTimeString() : ''}</span>
+                                </div>
+
+                                <!-- Prompt (collapsible) -->
+                                <details style="border-bottom: 1px solid var(--border-light);">
+                                    <summary style="padding: 0.75rem 1rem; cursor: pointer; color: var(--text-dim); font-size: 0.85rem;">
+                                        Show Prompt
+                                    </summary>
+                                    <div style="padding: 1rem; background: var(--bg-dark); font-size: 0.9rem; white-space: pre-wrap; max-height: 300px; overflow-y: auto;">
+                                        ${escapeHtml(ex.prompt)}
+                                    </div>
+                                </details>
+
+                                <!-- Response -->
+                                <div style="padding: 1rem;">
+                                    <div class="markdown-content" style="font-size: 0.95rem; line-height: 1.6;">
+                                        ${renderMarkdown(ex.response)}
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                    }
+                }
+
+                container.innerHTML = html;
+
+                // Trigger MathJax for LaTeX rendering
+                if (typeof MathJax !== 'undefined' && MathJax.typesetPromise) {
+                    MathJax.typesetPromise().catch(err => console.log('MathJax error:', err));
+                }
+
+            } catch (e) {
+                console.error('Failed to load thread:', e);
+                container.innerHTML = `<div class="empty-state">
+                    <div class="icon">Error</div>
+                    <p>Failed to load thread: ${e}</p>
+                </div>`;
+            }
+        }
+
+        // Track current explorer status for back navigation
+        let currentExplorerStatus = 'pending';
 
         async function viewInsight(insightId) {
             // Switch to explorer page
@@ -3223,6 +3357,19 @@
             const div = document.createElement('div');
             div.textContent = text;
             return div.innerHTML;
+        }
+
+        function renderMarkdown(text) {
+            if (!text) return '';
+            try {
+                // Use marked.js if available, otherwise return escaped text
+                if (typeof marked !== 'undefined') {
+                    return marked.parse(text);
+                }
+                return escapeHtml(text).replace(/\n/g, '<br>');
+            } catch (e) {
+                return escapeHtml(text).replace(/\n/g, '<br>');
+            }
         }
 
         // ==================== Annotations ====================
