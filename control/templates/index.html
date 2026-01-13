@@ -108,35 +108,86 @@
             border-bottom: 2px solid var(--highlight);
         }
 
-        .nav-status {
-            margin-left: auto;
+        /* Horizontal status strip under navbar */
+        .status-strip {
+            position: fixed;
+            left: 0;
+            right: 0;
+            top: var(--nav-height);
+            background: var(--bg-card);
+            border-bottom: 1px solid var(--border-light);
+            padding: 0.3rem 2rem;
             display: flex;
-            gap: 1rem;
             align-items: center;
+            justify-content: flex-start;
+            gap: 1.5rem;
+            z-index: 999;
+            height: 28px;
         }
 
-        .nav-indicator {
+        .status-strip-item {
             display: flex;
             align-items: center;
-            gap: 0.5rem;
-            font-size: 0.85rem;
+            gap: 0.4rem;
+            font-size: 0.7rem;
             color: var(--text-dim);
+            cursor: default;
         }
 
-        .nav-indicator .dot {
-            width: 8px;
-            height: 8px;
+        .status-strip-item .dot {
+            width: 6px;
+            height: 6px;
             border-radius: 50%;
             background: var(--text-dim);
+            flex-shrink: 0;
         }
 
-        .nav-indicator .dot.running {
+        .status-strip-item .dot.running {
             background: var(--success);
+        }
+
+        /* Restart button in navbar */
+        .nav-restart-btn {
+            margin-left: auto;
+            background: rgba(220, 53, 69, 0.15);
+            border: 1px solid var(--error);
+            color: var(--error);
+            cursor: pointer;
+            padding: 0.35rem 0.6rem;
+            border-radius: 6px;
+            font-size: 0.75rem;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 0.3rem;
+        }
+
+        .nav-restart-btn:hover {
+            background: var(--error);
+            color: white;
+        }
+
+        .nav-restart-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .nav-restart-btn .icon {
+            display: inline-block;
+        }
+
+        .nav-restart-btn.spinning .icon {
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
         }
 
         /* Main Content */
         .main-content {
-            padding-top: var(--nav-height);
+            padding-top: calc(var(--nav-height) + 28px);
             min-height: 100vh;
         }
 
@@ -524,47 +575,167 @@
         }
 
         /* Explorer Page */
-        .explorer-sub-nav {
+
+        /* Pipeline Navigation Bar */
+        .pipeline-bar {
             display: flex;
+            align-items: stretch;
+            justify-content: flex-start;
             gap: 0;
             margin-bottom: 1.5rem;
-            border-bottom: 2px solid var(--border-light);
-        }
-
-        .explorer-sub-tab {
-            padding: 1rem 2rem;
-            background: transparent;
-            border: none;
-            color: var(--text-dim);
-            cursor: pointer;
-            font-size: 1rem;
-            font-weight: 500;
-            transition: all 0.2s;
-            border-bottom: 2px solid transparent;
-            margin-bottom: -2px;
-        }
-
-        .explorer-sub-tab:hover {
-            color: var(--text);
             background: var(--bg-card);
+            border-radius: 12px;
+            overflow: hidden;
+            border: 1px solid var(--border-light);
         }
 
-        .explorer-sub-tab.active {
-            color: var(--text);
-            border-bottom-color: var(--highlight);
+        .pipeline-stage {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 1rem 1.25rem;
+            position: relative;
+            cursor: pointer;
+            transition: all 0.2s;
+            min-width: 100px;
+            border-right: 1px solid var(--border-light);
         }
 
-        .explorer-sub-tab .count {
+        .pipeline-stage:last-child {
+            border-right: none;
+        }
+
+        .pipeline-stage:hover {
             background: var(--bg-tertiary);
-            padding: 0.15rem 0.5rem;
-            border-radius: 10px;
-            font-size: 0.8rem;
-            margin-left: 0.5rem;
         }
 
-        .explorer-sub-tab.active .count {
-            background: var(--highlight);
-            color: white;
+        .pipeline-stage.active {
+            background: var(--accent);
+            box-shadow: inset 0 -3px 0 var(--highlight);
+        }
+
+        /* Pipeline flow arrow between stages */
+        .pipeline-stage:not(:last-child)::after {
+            content: '→';
+            position: absolute;
+            right: -8px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: var(--text-dim);
+            font-size: 0.9rem;
+            z-index: 1;
+        }
+
+        /* Outcome stages section */
+        .pipeline-outcomes {
+            display: flex;
+            margin-left: auto;
+            border-left: 2px solid var(--border);
+        }
+
+        .pipeline-stage .stage-label {
+            font-size: 0.7rem;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 0.2rem;
+        }
+
+        .pipeline-stage .stage-count {
+            font-size: 1.4rem;
+            font-weight: bold;
+            color: var(--text);
+        }
+
+        /* Stage-specific colors */
+        .pipeline-stage.seeds .stage-count { color: var(--text-secondary); }
+        .pipeline-stage.exploring .stage-count { color: var(--success); }
+        .pipeline-stage.synthesizing .stage-count { color: var(--warning); }
+        .pipeline-stage.reviewing .stage-count { color: var(--interesting); }
+        .pipeline-stage.attested .stage-count { color: var(--blessed); }
+        .pipeline-stage.noted .stage-count { color: #a78bfa; }
+        .pipeline-stage.disputed .stage-count { color: var(--disputed); }
+        .pipeline-stage.rejected .stage-count { color: var(--error); }
+
+        /* Pipeline content views */
+        .pipeline-content-view {
+            margin-top: 0;
+        }
+
+        .stage-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 1rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid var(--border-light);
+        }
+
+        .stage-header h3 {
+            color: var(--text);
+            font-size: 1.1rem;
+        }
+
+        /* Thread status badges */
+        .thread-status-badge {
+            display: inline-block;
+            padding: 0.2rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.7rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .thread-status-badge.active {
+            background: rgba(74, 222, 128, 0.2);
+            color: var(--success);
+        }
+
+        .thread-status-badge.chunk_ready {
+            background: rgba(251, 191, 36, 0.2);
+            color: var(--warning);
+        }
+
+        .thread-status-badge.archived {
+            background: rgba(100, 116, 139, 0.2);
+            color: var(--text-dim);
+        }
+
+        /* Thread filter buttons */
+        .thread-filter-nav {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+            flex-wrap: wrap;
+        }
+
+        .thread-filter-btn {
+            padding: 0.4rem 0.8rem;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-light);
+            border-radius: 6px;
+            color: var(--text-secondary);
+            cursor: pointer;
+            font-size: 0.85rem;
+            transition: all 0.2s;
+        }
+
+        .thread-filter-btn:hover {
+            background: var(--accent);
+            color: var(--text);
+        }
+
+        .thread-filter-btn.active {
+            background: var(--accent);
+            border-color: var(--highlight);
+            color: var(--text);
+        }
+
+        .thread-filter-btn .count {
+            margin-left: 0.3rem;
+            opacity: 0.7;
         }
 
         .explorer-nav {
@@ -976,11 +1147,44 @@
 
         .loading { animation: pulse 1.5s infinite; }
 
+        .processing-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            background: var(--success);
+            color: var(--bg-dark);
+            padding: 0.2rem 0.6rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            animation: pulse 1.5s infinite;
+        }
+        .processing-indicator::before {
+            content: '';
+            width: 6px;
+            height: 6px;
+            background: var(--bg-dark);
+            border-radius: 50%;
+            animation: pulse 0.8s infinite;
+        }
+
+        .pipeline-stage .activity-dot {
+            position: absolute;
+            top: 6px;
+            right: 6px;
+            width: 8px;
+            height: 8px;
+            background: var(--success);
+            border-radius: 50%;
+            animation: pulse 1s infinite;
+            box-shadow: 0 0 6px var(--success);
+        }
+
         @media (max-width: 768px) {
             .grid { grid-template-columns: 1fr; }
             .logs-page-container { grid-template-columns: 1fr; }
             .navbar { padding: 0 1rem; }
-            .nav-status { display: none; }
+            .status-strip { display: none; }
         }
 
         /* Seeds Page Styles */
@@ -1756,31 +1960,34 @@
         <div class="nav-tabs">
             <button class="nav-tab active" onclick="showPage('dashboard')">Dashboard</button>
             <button class="nav-tab" onclick="showPage('explorer')">Explorer</button>
-            <button class="nav-tab" onclick="showPage('seeds')">Seeds</button>
             <button class="nav-tab" onclick="showPage('researcher')">Researcher</button>
             <button class="nav-tab" onclick="showPage('document')">Document</button>
             <button class="nav-tab" onclick="showPage('logs')">Logs</button>
         </div>
-        <div class="nav-status">
-            <div class="nav-indicator">
-                <span class="dot" id="nav-pool-dot"></span>
-                <span>Pool</span>
-            </div>
-            <div class="nav-indicator">
-                <span class="dot" id="nav-explorer-dot"></span>
-                <span>Explorer</span>
-            </div>
-            <div class="nav-indicator">
-                <span class="dot" id="nav-documenter-dot"></span>
-                <span>Documenter</span>
-            </div>
-            <div class="nav-indicator">
-                <span class="dot" id="nav-researcher-dot"></span>
-                <span>Researcher</span>
-            </div>
-            <button class="btn btn-secondary" onclick="restartServer(this)" style="margin-left: 1rem; padding: 0.25rem 0.75rem; font-size: 0.85rem;">Restart Server</button>
-        </div>
+        <button class="nav-restart-btn" onclick="restartServer(this)" title="Restart the control server">
+            <span class="icon">⟳</span><span class="label">Restart</span>
+        </button>
     </nav>
+
+    <!-- Status Strip (left sidebar) -->
+    <div class="status-strip">
+        <div class="status-strip-item">
+            <span class="dot" id="nav-pool-dot"></span>
+            <span>Pool</span>
+        </div>
+        <div class="status-strip-item">
+            <span class="dot" id="nav-explorer-dot"></span>
+            <span>Explorer</span>
+        </div>
+        <div class="status-strip-item">
+            <span class="dot" id="nav-documenter-dot"></span>
+            <span>Documenter</span>
+        </div>
+        <div class="status-strip-item">
+            <span class="dot" id="nav-researcher-dot"></span>
+            <span>Researcher</span>
+        </div>
+    </div>
 
     <!-- Main Content -->
     <div class="main-content">
@@ -1936,61 +2143,184 @@
         <!-- Explorer Page -->
         <div id="page-explorer" class="page">
             <div class="container" style="max-width: 1100px;">
-                <!-- Explorer Sub-navigation -->
-                <div class="explorer-sub-nav">
-                    <button class="explorer-sub-tab active" data-view="threads" onclick="showExplorerView('threads')">
-                        Active Threads <span class="count" id="threads-tab-count">0</span>
-                    </button>
-                    <button class="explorer-sub-tab" data-view="insights" onclick="showExplorerView('insights')">
-                        Insights <span class="count" id="insights-tab-count">0</span>
-                    </button>
+                <!-- Pipeline Status Bar -->
+                <!-- Pipeline Navigation -->
+                <div class="pipeline-bar" id="pipeline-bar">
+                    <div class="pipeline-stage seeds" data-stage="seeds" onclick="showPipelineStage('seeds')" title="Seed questions and axioms">
+                        <span class="stage-label">Seeds</span>
+                        <span class="stage-count" id="pipeline-seeds">0</span>
+                    </div>
+                    <div class="pipeline-stage exploring" data-stage="exploring" onclick="showPipelineStage('exploring')" title="Active exploration threads">
+                        <span class="stage-label">Exploring</span>
+                        <span class="stage-count" id="pipeline-exploring">0</span>
+                    </div>
+                    <div class="pipeline-stage synthesizing" data-stage="synthesizing" onclick="showPipelineStage('synthesizing')" title="Awaiting insight extraction">
+                        <span class="stage-label">Synthesizing</span>
+                        <span class="stage-count" id="pipeline-synthesizing">0</span>
+                    </div>
+                    <div class="pipeline-stage reviewing" data-stage="reviewing" onclick="showPipelineStage('reviewing')" title="Insights being reviewed">
+                        <span class="stage-label">Reviewing</span>
+                        <span class="stage-count" id="pipeline-reviewing">0</span>
+                    </div>
+                    <div class="pipeline-outcomes">
+                        <div class="pipeline-stage attested" data-stage="attested" onclick="showPipelineStage('attested')" title="Verified insights">
+                            <span class="stage-label">Attested</span>
+                            <span class="stage-count" id="pipeline-attested">0</span>
+                        </div>
+                        <div class="pipeline-stage noted" data-stage="noted" onclick="showPipelineStage('noted')" title="Notable observations">
+                            <span class="stage-label">Noted</span>
+                            <span class="stage-count" id="pipeline-noted">0</span>
+                        </div>
+                        <div class="pipeline-stage disputed" data-stage="disputed" onclick="showPipelineStage('disputed')" title="Needs human review">
+                            <span class="stage-label">Disputed</span>
+                            <span class="stage-count" id="pipeline-disputed">0</span>
+                        </div>
+                        <div class="pipeline-stage rejected" data-stage="rejected" onclick="showPipelineStage('rejected')" title="Rejected insights">
+                            <span class="stage-label">Rejected</span>
+                            <span class="stage-count" id="pipeline-rejected">0</span>
+                        </div>
+                    </div>
                 </div>
 
-                <!-- Active Threads View -->
-                <div id="explorer-threads-view">
-                    <div id="threads-list-container">
-                        <div id="active-threads-list">
-                            <div class="empty-state">
-                                <div class="icon">Loading...</div>
+                <!-- Main Content Area - shows content based on selected pipeline stage -->
+                <div id="pipeline-content">
+                    <!-- Seeds View -->
+                    <div id="stage-seeds" class="pipeline-content-view">
+                        <div class="stage-header">
+                            <div>
+                                <h3 style="margin: 0;">Seed Questions & Axioms</h3>
+                                <p style="color: var(--text-dim); margin: 0.25rem 0 0 0; font-size: 0.85rem;">Foundational questions and axioms that guide exploration</p>
+                            </div>
+                            <button class="btn btn-primary" onclick="showSeedModal()">+ Add Seed</button>
+                        </div>
+                        <div class="seeds-nav">
+                            <button class="seeds-nav-btn active" data-type="all" onclick="filterSeeds('all')">
+                                All <span class="count" id="explorer-seeds-count-all">0</span>
+                            </button>
+                            <button class="seeds-nav-btn axiom" data-type="axiom" onclick="filterSeeds('axiom')">
+                                Axioms <span class="count" id="explorer-seeds-count-axiom">0</span>
+                            </button>
+                            <button class="seeds-nav-btn conjecture" data-type="conjecture" onclick="filterSeeds('conjecture')">
+                                Conjectures <span class="count" id="explorer-seeds-count-conjecture">0</span>
+                            </button>
+                            <button class="seeds-nav-btn question" data-type="question" onclick="filterSeeds('question')">
+                                Questions <span class="count" id="explorer-seeds-count-question">0</span>
+                            </button>
+                        </div>
+                        <div id="explorer-seeds-list">
+                            <div class="empty-state"><div class="icon">Loading...</div></div>
+                        </div>
+                    </div>
+
+                    <!-- Exploring Threads View -->
+                    <div id="stage-exploring" class="pipeline-content-view" style="display: none;">
+                        <div class="stage-header">
+                            <h3 style="margin: 0;">Active Exploration Threads</h3>
+                            <p style="color: var(--text-dim); margin: 0.25rem 0 0 0; font-size: 0.85rem;">LLM conversations actively exploring mathematical ideas</p>
+                        </div>
+                        <div id="exploring-threads-list">
+                            <div class="empty-state"><div class="icon">Loading...</div></div>
+                        </div>
+                    </div>
+
+                    <!-- Synthesizing Threads View -->
+                    <div id="stage-synthesizing" class="pipeline-content-view" style="display: none;">
+                        <div class="stage-header">
+                            <h3 style="margin: 0;">Awaiting Synthesis</h3>
+                            <p style="color: var(--text-dim); margin: 0.25rem 0 0 0; font-size: 0.85rem;">Completed explorations waiting for insight extraction</p>
+                        </div>
+                        <div id="synthesizing-threads-list">
+                            <div class="empty-state"><div class="icon">Loading...</div></div>
+                        </div>
+                    </div>
+
+                    <!-- Reviewing Insights View -->
+                    <div id="stage-reviewing" class="pipeline-content-view" style="display: none;">
+                        <div class="stage-header">
+                            <div>
+                                <h3 style="margin: 0;">Insights Under Review</h3>
+                                <p style="color: var(--text-dim); margin: 0.25rem 0 0 0; font-size: 0.85rem;">Pending and in-progress reviews</p>
+                            </div>
+                            <div>
+                                <button class="btn btn-secondary" onclick="expandAllInsights()">Expand All</button>
+                                <button class="btn btn-secondary" onclick="collapseAllInsights()">Collapse All</button>
                             </div>
                         </div>
+                        <div id="reviewing-insights-list">
+                            <div class="empty-state"><div class="icon">Loading...</div></div>
+                        </div>
                     </div>
+
+                    <!-- Attested Insights View -->
+                    <div id="stage-attested" class="pipeline-content-view" style="display: none;">
+                        <div class="stage-header">
+                            <div>
+                                <h3 style="margin: 0;">Attested Insights</h3>
+                                <p style="color: var(--text-dim); margin: 0.25rem 0 0 0; font-size: 0.85rem;">Verified and profound mathematical insights</p>
+                            </div>
+                            <div>
+                                <button class="btn btn-secondary" onclick="expandAllInsights()">Expand All</button>
+                                <button class="btn btn-secondary" onclick="collapseAllInsights()">Collapse All</button>
+                            </div>
+                        </div>
+                        <div id="attested-insights-list">
+                            <div class="empty-state"><div class="icon">Loading...</div></div>
+                        </div>
+                    </div>
+
+                    <!-- Noted Insights View -->
+                    <div id="stage-noted" class="pipeline-content-view" style="display: none;">
+                        <div class="stage-header">
+                            <div>
+                                <h3 style="margin: 0;">Noted Observations</h3>
+                                <p style="color: var(--text-dim); margin: 0.25rem 0 0 0; font-size: 0.85rem;">Worth keeping but not fully verified</p>
+                            </div>
+                            <div>
+                                <button class="btn btn-secondary" onclick="expandAllInsights()">Expand All</button>
+                                <button class="btn btn-secondary" onclick="collapseAllInsights()">Collapse All</button>
+                            </div>
+                        </div>
+                        <div id="noted-insights-list">
+                            <div class="empty-state"><div class="icon">Loading...</div></div>
+                        </div>
+                    </div>
+
+                    <!-- Disputed Insights View -->
+                    <div id="stage-disputed" class="pipeline-content-view" style="display: none;">
+                        <div class="stage-header">
+                            <div>
+                                <h3 style="margin: 0;">Disputed Insights</h3>
+                                <p style="color: var(--text-dim); margin: 0.25rem 0 0 0; font-size: 0.85rem;">Reviewers disagreed - needs human judgment</p>
+                            </div>
+                            <div>
+                                <button class="btn btn-secondary" onclick="expandAllInsights()">Expand All</button>
+                                <button class="btn btn-secondary" onclick="collapseAllInsights()">Collapse All</button>
+                            </div>
+                        </div>
+                        <div id="disputed-insights-list">
+                            <div class="empty-state"><div class="icon">Loading...</div></div>
+                        </div>
+                    </div>
+
+                    <!-- Rejected Insights View -->
+                    <div id="stage-rejected" class="pipeline-content-view" style="display: none;">
+                        <div class="stage-header">
+                            <div>
+                                <h3 style="margin: 0;">Rejected Insights</h3>
+                                <p style="color: var(--text-dim); margin: 0.25rem 0 0 0; font-size: 0.85rem;">Not useful or incorrect</p>
+                            </div>
+                            <div>
+                                <button class="btn btn-secondary" onclick="expandAllInsights()">Expand All</button>
+                                <button class="btn btn-secondary" onclick="collapseAllInsights()">Collapse All</button>
+                            </div>
+                        </div>
+                        <div id="rejected-insights-list">
+                            <div class="empty-state"><div class="icon">Loading...</div></div>
+                        </div>
+                    </div>
+
+                    <!-- Thread Detail View (shown when clicking on a thread) -->
                     <div id="thread-detail-container" style="display: none;">
-                        <!-- Thread detail shown here when viewing a specific thread -->
-                    </div>
-                </div>
-
-                <!-- Insights View -->
-                <div id="explorer-insights-view" style="display: none;">
-                    <div class="explorer-nav">
-                        <button class="explorer-nav-btn" data-status="reviewing" onclick="loadExplorerInsights('reviewing')">
-                            In Review <span class="count" id="exp-stat-reviewing">0</span>
-                        </button>
-                        <button class="explorer-nav-btn active" data-status="pending" onclick="loadExplorerInsights('pending')">
-                            Pending <span class="count" id="exp-stat-pending">0</span>
-                        </button>
-                        <button class="explorer-nav-btn disputed" data-status="disputed" onclick="loadExplorerInsights('disputed')">
-                            Disputed <span class="count" id="exp-stat-disputed">0</span>
-                        </button>
-                        <button class="explorer-nav-btn blessed" data-status="blessed" onclick="loadExplorerInsights('blessed')">
-                            Blessed <span class="count" id="exp-stat-blessed">0</span>
-                        </button>
-                        <button class="explorer-nav-btn interesting" data-status="interesting" onclick="loadExplorerInsights('interesting')">
-                            Interesting <span class="count" id="exp-stat-interesting">0</span>
-                        </button>
-                        <button class="explorer-nav-btn rejected" data-status="rejected" onclick="loadExplorerInsights('rejected')">
-                            Rejected <span class="count" id="exp-stat-rejected">0</span>
-                        </button>
-                        <div style="margin-left: auto;">
-                            <button class="btn btn-secondary" onclick="expandAllInsights()">Expand All</button>
-                            <button class="btn btn-secondary" onclick="collapseAllInsights()">Collapse All</button>
-                        </div>
-                    </div>
-
-                    <div id="explorer-insights">
-                        <div class="empty-state">
-                            <div class="icon">Loading...</div>
-                        </div>
                     </div>
                 </div>
             </div>
@@ -2261,10 +2591,10 @@
         // Current state
         let currentPage = 'dashboard';
         let currentLogsSource = 'pool';
-        let currentExplorerStatus = 'pending';
-        let currentExplorerView = 'threads';  // 'threads' or 'insights'
+        let currentPipelineStage = 'seeds';  // seeds, exploring, synthesizing, reviewing, attested, noted, disputed, rejected
         let allLogs = [];
         let explorerStats = {};
+        let pipelineData = {};
 
         // Page navigation
         function showPage(pageName) {
@@ -2288,13 +2618,9 @@
             } else if (pageName === 'logs') {
                 loadFullLogs(currentLogsSource);
             } else if (pageName === 'explorer') {
-                loadExplorerStats();
-                // Load the current view (threads or insights)
-                if (currentExplorerView === 'threads') {
-                    loadActiveThreads();
-                } else {
-                    loadExplorerInsights(currentExplorerStatus);
-                }
+                loadPipelineData();
+                // Show the current pipeline stage
+                showPipelineStage(currentPipelineStage);
             } else if (pageName === 'llm-activity') {
                 loadLLMActivityDetail();
             } else if (pageName === 'researcher') {
@@ -2642,9 +2968,16 @@
         }
 
         async function restartServer(btn) {
-            const originalText = btn.textContent;
-            btn.textContent = 'Restarting...';
+            btn.classList.add('spinning');
             btn.disabled = true;
+            const label = btn.querySelector('.label');
+            if (label) label.textContent = 'Restarting...';
+
+            const resetBtn = () => {
+                btn.classList.remove('spinning');
+                btn.disabled = false;
+                if (label) label.textContent = 'Restart';
+            };
 
             try {
                 await fetch('/api/server/restart', { method: 'POST' });
@@ -2670,8 +3003,7 @@
                         setTimeout(pollServer, 1000);
                     } else {
                         alert('Server restart timed out. Please refresh manually.');
-                        btn.textContent = originalText;
-                        btn.disabled = false;
+                        resetBtn();
                     }
                 };
 
@@ -2697,8 +3029,7 @@
                             setTimeout(pollServer, 1000);
                         } else {
                             alert('Server restart timed out. Please refresh manually.');
-                            btn.textContent = originalText;
-                            btn.disabled = false;
+                            resetBtn();
                         }
                     };
                     pollServer();
@@ -2725,131 +3056,322 @@
                                      (explorerStats.reviewing || 0) + (explorerStats.disputed || 0);
                 const insightsTabCount = document.getElementById('insights-tab-count');
                 if (insightsTabCount) insightsTabCount.textContent = totalInsights;
+
+                // Also load pipeline data
+                await loadPipelineData();
             } catch (e) {
                 console.error('Failed to load explorer stats:', e);
             }
         }
 
-        function showExplorerView(view) {
-            currentExplorerView = view;
+        async function loadPipelineData() {
+            try {
+                const [pipelineResp, activityResp] = await Promise.all([
+                    fetch('/api/explorer/pipeline'),
+                    fetch('/api/pool/activity')
+                ]);
+                pipelineData = await pipelineResp.json();
 
-            // Update sub-tab buttons
-            document.querySelectorAll('.explorer-sub-tab').forEach(tab => {
-                tab.classList.toggle('active', tab.dataset.view === view);
+                // Update pipeline bar counts
+                const setCount = (id, count) => {
+                    const el = document.getElementById(id);
+                    if (el) el.textContent = count || 0;
+                };
+
+                setCount('pipeline-seeds', pipelineData.seeds);
+                setCount('pipeline-exploring', pipelineData.threads?.active || 0);
+                setCount('pipeline-synthesizing', pipelineData.threads?.chunk_ready || 0);
+
+                // Reviewing = pending + in-review
+                const reviewingCount = (pipelineData.insights?.pending || 0) +
+                                      (pipelineData.insights?.reviewing || 0);
+                setCount('pipeline-reviewing', reviewingCount);
+
+                // Outcome counts (using new terminology)
+                setCount('pipeline-attested', pipelineData.insights?.blessed || 0);
+                setCount('pipeline-noted', pipelineData.insights?.interesting || 0);
+                setCount('pipeline-disputed', pipelineData.insights?.disputed || 0);
+                setCount('pipeline-rejected', pipelineData.insights?.rejected || 0);
+
+                // Check for active processing and show dot on Exploring tab
+                try {
+                    const activity = await activityResp.json();
+                    let hasActiveWork = false;
+                    for (const [backend, info] of Object.entries(activity)) {
+                        if (info.status === 'working' && info.current_work) {
+                            hasActiveWork = true;
+                            break;
+                        }
+                    }
+
+                    const exploringStage = document.querySelector('.pipeline-stage.exploring');
+                    if (exploringStage) {
+                        // Remove existing dot
+                        const existingDot = exploringStage.querySelector('.activity-dot');
+                        if (existingDot) existingDot.remove();
+
+                        // Add dot if there's active work
+                        if (hasActiveWork) {
+                            const dot = document.createElement('span');
+                            dot.className = 'activity-dot';
+                            exploringStage.appendChild(dot);
+                        }
+                    }
+                } catch (e) {
+                    console.warn('Could not check pool activity:', e);
+                }
+
+            } catch (e) {
+                console.error('Failed to load pipeline data:', e);
+            }
+        }
+
+        // Show a specific pipeline stage content
+        function showPipelineStage(stage) {
+            currentPipelineStage = stage;
+
+            // Update pipeline bar active state
+            document.querySelectorAll('.pipeline-stage').forEach(el => {
+                el.classList.toggle('active', el.dataset.stage === stage);
             });
 
-            // Show/hide views
-            document.getElementById('explorer-threads-view').style.display = view === 'threads' ? 'block' : 'none';
-            document.getElementById('explorer-insights-view').style.display = view === 'insights' ? 'block' : 'none';
+            // Hide all content views
+            document.querySelectorAll('.pipeline-content-view').forEach(view => {
+                view.style.display = 'none';
+            });
 
-            // Load content for the view
-            if (view === 'threads') {
-                loadActiveThreads();
-            } else {
-                loadExplorerInsights(currentExplorerStatus);
+            // Show the selected stage's view
+            const stageView = document.getElementById(`stage-${stage}`);
+            if (stageView) {
+                stageView.style.display = 'block';
+            }
+
+            // Hide thread detail if showing
+            document.getElementById('thread-detail-container').style.display = 'none';
+
+            // Load content for this stage
+            loadStageContent(stage);
+        }
+
+        // Load content for a pipeline stage
+        async function loadStageContent(stage) {
+            switch (stage) {
+                case 'seeds':
+                    await loadExplorerSeeds();
+                    break;
+                case 'exploring':
+                    await loadThreadsForStage('active', 'exploring-threads-list');
+                    break;
+                case 'synthesizing':
+                    await loadThreadsForStage('chunk_ready', 'synthesizing-threads-list');
+                    break;
+                case 'reviewing':
+                    await loadInsightsForStage(['pending', 'reviewing'], 'reviewing-insights-list');
+                    break;
+                case 'attested':
+                    await loadInsightsForStage(['blessed'], 'attested-insights-list');
+                    break;
+                case 'noted':
+                    await loadInsightsForStage(['interesting'], 'noted-insights-list');
+                    break;
+                case 'disputed':
+                    await loadInsightsForStage(['disputed'], 'disputed-insights-list');
+                    break;
+                case 'rejected':
+                    await loadInsightsForStage(['rejected'], 'rejected-insights-list');
+                    break;
             }
         }
 
-        async function loadActiveThreadsCount() {
-            try {
-                const resp = await fetch('/api/explorer/threads/active');
-                const data = await resp.json();
-                // Update both the tab count and any other count elements
-                const tabCount = document.getElementById('threads-tab-count');
-                if (tabCount) tabCount.textContent = data.count || 0;
-            } catch (e) {
-                console.error('Failed to load active threads count:', e);
-            }
-        }
-
-        async function loadActiveThreads() {
-            const container = document.getElementById('active-threads-list');
-            const listContainer = document.getElementById('threads-list-container');
-            const detailContainer = document.getElementById('thread-detail-container');
-
-            // Show list, hide detail
-            listContainer.style.display = 'block';
-            detailContainer.style.display = 'none';
+        // Load threads for a specific status into a container
+        async function loadThreadsForStage(status, containerId) {
+            const container = document.getElementById(containerId);
+            if (!container) return;
 
             try {
-                const resp = await fetch('/api/explorer/threads/active');
-                const data = await resp.json();
+                // Fetch threads and pool activity in parallel
+                const [threadsResp, activityResp] = await Promise.all([
+                    fetch(`/api/explorer/threads?status=${status}`),
+                    fetch('/api/pool/activity')
+                ]);
+                const data = await threadsResp.json();
+                const threads = data.threads || [];
 
-                // Update tab count
-                const tabCount = document.getElementById('threads-tab-count');
-                if (tabCount) tabCount.textContent = data.count || 0;
+                // Get thread IDs currently being processed (maps threadId -> array of backend names)
+                let processingThreads = new Map();
+                try {
+                    const activity = await activityResp.json();
+                    for (const [backend, info] of Object.entries(activity)) {
+                        if (info.status === 'working' && info.current_work) {
+                            // request_id format: "uuid-shortid-suffix" where thread_id is "uuid-shortid"
+                            const requestId = info.current_work.request_id || '';
+                            const threadId = requestId.split('-').slice(0, 2).join('-');
+                            if (threadId) {
+                                if (!processingThreads.has(threadId)) {
+                                    processingThreads.set(threadId, []);
+                                }
+                                processingThreads.get(threadId).push(backend);
+                            }
+                        }
+                    }
+                } catch (e) {
+                    console.warn('Could not fetch pool activity:', e);
+                }
 
-                if (data.threads.length === 0) {
+                if (threads.length === 0) {
                     container.innerHTML = `
                         <div class="empty-state">
-                            <div class="icon">🔭</div>
-                            <h2>No Active Threads</h2>
-                            <p>Start the explorer to begin mathematical exploration</p>
+                            <div class="icon">No threads</div>
+                            <p style="color: var(--text-dim);">No threads at this stage</p>
                         </div>`;
                     return;
                 }
 
-                let html = '<div style="display: flex; flex-direction: column; gap: 0.75rem;">';
-
-                for (const thread of data.threads) {
-                    const activityIcon = thread.current_activity === 'needs critique' ? '🔍' :
-                                        thread.current_activity === 'needs exploration' ? '🔭' : '⏳';
-                    const modelBadge = thread.last_model ?
-                        `<span style="background: var(--bg-tertiary); padding: 0.15rem 0.5rem; border-radius: 4px; font-size: 0.75rem;">${thread.last_model}</span>` : '';
-
-                    const priorityColor = thread.priority >= 7 ? 'var(--success)' :
-                                         thread.priority >= 4 ? 'var(--warning)' : 'var(--text-dim)';
-
-                    html += `
-                        <div class="thread-card" data-thread-id="${thread.id}" style="display: flex; align-items: center; gap: 1rem; padding: 1rem 1.25rem; background: var(--bg-card); border-radius: 10px; border-left: 4px solid ${priorityColor}; cursor: pointer; transition: all 0.2s;">
-                            <span style="font-size: 1.5rem;">${activityIcon}</span>
-                            <div style="flex: 1; min-width: 0;">
-                                <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.35rem;">
-                                    <code style="font-size: 0.85rem; color: var(--highlight);">${thread.id}</code>
-                                    ${modelBadge}
-                                    <span style="color: var(--text-dim); font-size: 0.8rem; margin-left: auto;">${thread.time_ago}</span>
-                                </div>
-                                <div style="font-size: 1rem; color: var(--text); margin-bottom: 0.35rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${thread.topic}">
-                                    ${thread.focus ? `<strong style="color: var(--interesting);">${thread.focus}</strong> — ` : ''}${thread.topic}
-                                </div>
-                                <div style="font-size: 0.85rem; color: var(--text-dim);">
-                                    <span style="color: ${thread.current_activity === 'needs critique' ? 'var(--warning)' : 'var(--success)'}">${thread.current_activity}</span>
-                                    · ${thread.exchange_count} exchanges · Priority ${thread.priority}
-                                </div>
-                            </div>
-                            <span style="color: var(--text-dim); font-size: 1.25rem;">›</span>
-                        </div>
-                    `;
+                let html = '';
+                for (const thread of threads) {
+                    const processingBackends = processingThreads.get(thread.id) || [];
+                    html += renderThreadCard(thread, processingBackends);
                 }
-
-                html += '</div>';
                 container.innerHTML = html;
-
-                // Add click handlers
-                container.querySelectorAll('.thread-card').forEach(item => {
-                    item.addEventListener('click', function() {
-                        viewThread(this.dataset.threadId);
-                    });
-                    item.addEventListener('mouseover', function() {
-                        this.style.background = 'var(--bg-tertiary)';
-                    });
-                    item.addEventListener('mouseout', function() {
-                        this.style.background = 'var(--bg-card)';
-                    });
-                });
-
             } catch (e) {
-                console.error('Failed to load active threads:', e);
-                container.innerHTML = `<div class="empty-state"><div class="icon">⚠️</div><p>Failed to load threads: ${e}</p></div>`;
+                console.error('Failed to load threads:', e);
+                container.innerHTML = '<div class="empty-state"><div class="icon">Error loading threads</div></div>';
             }
         }
 
+        // Load insights for specific statuses into a container
+        async function loadInsightsForStage(statuses, containerId) {
+            const container = document.getElementById(containerId);
+            if (!container) return;
+
+            try {
+                let allInsights = [];
+                for (const status of statuses) {
+                    const resp = await fetch(`/api/explorer/insights/${status}`);
+                    const data = await resp.json();
+                    allInsights = allInsights.concat(data.insights || []);
+                }
+
+                if (allInsights.length === 0) {
+                    container.innerHTML = `
+                        <div class="empty-state">
+                            <div class="icon">No insights</div>
+                            <p style="color: var(--text-dim);">No insights at this stage</p>
+                        </div>`;
+                    return;
+                }
+
+                let html = '';
+                for (const item of allInsights) {
+                    const status = item.insight?.status || statuses[0];
+                    html += renderInsightCard(item, status);
+                }
+                container.innerHTML = html;
+
+                // Re-process MathJax if available
+                if (typeof MathJax !== 'undefined' && MathJax.typesetPromise) {
+                    MathJax.typesetPromise([container]);
+                }
+            } catch (e) {
+                console.error('Failed to load insights:', e);
+                container.innerHTML = '<div class="empty-state"><div class="icon">Error loading insights</div></div>';
+            }
+        }
+
+        // Legacy function kept for compatibility
+        function filterThreadsByStatus(status) {
+            // Map to appropriate pipeline stage
+            if (status === 'active') {
+                showPipelineStage('exploring');
+            } else if (status === 'chunk_ready') {
+                showPipelineStage('synthesizing');
+            } else {
+                // For 'all', default to exploring
+                showPipelineStage('exploring');
+            }
+        }
+
+        // Legacy functions for backwards compatibility
+        function showExplorerView(view) {
+            // Map old view names to pipeline stages
+            if (view === 'threads') showPipelineStage('exploring');
+            else if (view === 'seeds') showPipelineStage('seeds');
+            else showPipelineStage('reviewing');
+        }
+
+        async function loadActiveThreadsCount() {
+            await loadPipelineData();
+        }
+
+        async function loadActiveThreads() {
+            showPipelineStage('exploring');
+        }
+
+        async function loadThreads() {
+            // Legacy - redirect to exploring stage
+            showPipelineStage('exploring');
+        }
+
+        // Render a single thread card
+        function renderThreadCard(thread, processingBackends = []) {
+            // Status-based icon
+            let activityIcon = '⏳';
+            if (thread.status === 'active') {
+                activityIcon = thread.current_activity === 'needs critique' ? '🔍' :
+                              thread.current_activity === 'needs exploration' ? '🔭' : '⏳';
+            } else if (thread.status === 'chunk_ready') {
+                activityIcon = thread.chunks_extracted ? '📝' : '⚙️';
+            } else if (thread.status === 'archived') {
+                activityIcon = '✅';
+            }
+
+            const modelBadge = thread.last_model ?
+                `<span style="background: var(--bg-tertiary); padding: 0.15rem 0.5rem; border-radius: 4px; font-size: 0.75rem;">${thread.last_model}</span>` : '';
+
+            const processingBadges = processingBackends.length > 0 ?
+                processingBackends.map(b => `<span class="processing-indicator">${b}</span>`).join('') : '';
+
+            const priorityColor = thread.priority >= 7 ? 'var(--success)' :
+                                 thread.priority >= 4 ? 'var(--warning)' : 'var(--text-dim)';
+
+            // Activity text based on status
+            let activityText = thread.current_activity;
+            if (thread.status === 'chunk_ready') {
+                activityText = thread.chunks_extracted ? 'insights extracted' : 'awaiting extraction';
+            } else if (thread.status === 'archived') {
+                activityText = 'completed';
+            }
+
+            return `
+                <div class="thread-card" onclick="viewThread('${thread.id}')" style="display: flex; align-items: center; gap: 1rem; padding: 1rem 1.25rem; background: var(--bg-card); border-radius: 10px; border-left: 4px solid ${priorityColor}; cursor: pointer; transition: all 0.2s; margin-bottom: 0.75rem;">
+                    <span style="font-size: 1.5rem;">${activityIcon}</span>
+                    <div style="flex: 1; min-width: 0;">
+                        <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.35rem; flex-wrap: wrap;">
+                            <code style="font-size: 0.85rem; color: var(--highlight);">${thread.id}</code>
+                            ${processingBadges}
+                            ${modelBadge}
+                            <span style="color: var(--text-dim); font-size: 0.8rem; margin-left: auto;">${thread.time_ago}</span>
+                        </div>
+                        <div style="font-size: 1rem; color: var(--text); margin-bottom: 0.35rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${thread.topic || ''}">
+                            ${thread.focus ? `<strong style="color: var(--interesting);">${thread.focus}</strong> — ` : ''}${thread.topic || 'No topic'}
+                        </div>
+                        <div style="font-size: 0.85rem; color: var(--text-dim);">
+                            <span style="color: ${thread.status === 'active' && thread.current_activity === 'needs critique' ? 'var(--warning)' : 'var(--success)'}">${activityText}</span>
+                            · ${thread.exchange_count} exchanges · Priority ${thread.priority}
+                        </div>
+                    </div>
+                    <span style="color: var(--text-dim); font-size: 1.25rem;">›</span>
+                </div>
+            `;
+        }
+
         async function viewThread(threadId) {
-            const listContainer = document.getElementById('threads-list-container');
             const detailContainer = document.getElementById('thread-detail-container');
 
-            // Hide list, show detail
-            listContainer.style.display = 'none';
+            // Hide all content views, show detail
+            document.querySelectorAll('.pipeline-content-view').forEach(view => {
+                view.style.display = 'none';
+            });
             detailContainer.style.display = 'block';
             detailContainer.innerHTML = '<div class="empty-state"><div class="icon loading">Loading thread...</div></div>';
 
@@ -3285,7 +3807,7 @@
                 }
 
                 container.innerHTML = data.logs.map(log => {
-                    const time = log.timestamp ? log.timestamp.split('T')[1].split('.')[0] : '';
+                    const time = log.timestamp ? new Date(log.timestamp).toLocaleTimeString() : '';
                     const level = log.level || 'INFO';
                     const event = log.event_type || '';
                     return `<div class="log-entry">
@@ -3332,7 +3854,7 @@
             }
 
             container.innerHTML = filteredLogs.map(log => {
-                const time = log.timestamp ? log.timestamp.split('T')[1].split('.')[0] : '';
+                const time = log.timestamp ? new Date(log.timestamp).toLocaleTimeString() : '';
                 const level = log.level || 'INFO';
                 const event = log.event_type || '';
                 const details = Object.keys(log)
@@ -4307,11 +4829,22 @@
                 const data = await resp.json();
                 allSeeds = data.seeds || [];
 
-                // Update counts
-                document.getElementById('seeds-count-all').textContent = data.counts.total || 0;
-                document.getElementById('seeds-count-axiom').textContent = data.counts.axiom || 0;
-                document.getElementById('seeds-count-conjecture').textContent = data.counts.conjecture || 0;
-                document.getElementById('seeds-count-question').textContent = data.counts.question || 0;
+                // Update counts in both places (Seeds page and Explorer seeds view)
+                const setCount = (id, val) => {
+                    const el = document.getElementById(id);
+                    if (el) el.textContent = val;
+                };
+                setCount('seeds-count-all', data.counts.total || 0);
+                setCount('seeds-count-axiom', data.counts.axiom || 0);
+                setCount('seeds-count-conjecture', data.counts.conjecture || 0);
+                setCount('seeds-count-question', data.counts.question || 0);
+                // Explorer view counts
+                setCount('explorer-seeds-count-all', data.counts.total || 0);
+                setCount('explorer-seeds-count-axiom', data.counts.axiom || 0);
+                setCount('explorer-seeds-count-conjecture', data.counts.conjecture || 0);
+                setCount('explorer-seeds-count-question', data.counts.question || 0);
+                // Explorer sub-nav count
+                setCount('seeds-tab-count', data.counts.total || 0);
 
                 renderSeeds();
             } catch (e) {
@@ -4319,6 +4852,11 @@
                 document.getElementById('seeds-list').innerHTML =
                     '<div class="empty-state"><div class="icon">Error loading seeds</div></div>';
             }
+        }
+
+        // Alias for Explorer view
+        async function loadExplorerSeeds() {
+            await loadSeeds();
         }
 
         function filterSeeds(type) {
@@ -4336,7 +4874,12 @@
         }
 
         function renderSeeds() {
-            const container = document.getElementById('seeds-list');
+            // Render to both containers (Seeds page and Explorer seeds view)
+            const containers = [
+                document.getElementById('seeds-list'),
+                document.getElementById('explorer-seeds-list')
+            ].filter(c => c);
+
             let seeds = allSeeds;
 
             if (currentSeedsFilter !== 'all') {
@@ -4345,11 +4888,12 @@
 
             if (seeds.length === 0) {
                 const typeLabel = currentSeedsFilter === 'all' ? 'seeds' : currentSeedsFilter + 's';
-                container.innerHTML = `
+                const emptyHtml = `
                     <div class="empty-state">
                         <div class="icon">No ${typeLabel} yet</div>
                         <p style="color: var(--text-dim); margin-top: 1rem;">Click "+ Add Seed" to create one</p>
                     </div>`;
+                containers.forEach(c => c.innerHTML = emptyHtml);
                 return;
             }
 
@@ -4357,7 +4901,7 @@
             for (const seed of seeds) {
                 html += renderSeedCard(seed);
             }
-            container.innerHTML = html;
+            containers.forEach(c => c.innerHTML = html);
         }
 
         function renderSeedCard(seed) {
