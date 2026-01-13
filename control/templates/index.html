@@ -108,41 +108,31 @@
             border-bottom: 2px solid var(--highlight);
         }
 
-        /* Horizontal status strip under navbar */
-        .status-strip {
-            position: fixed;
-            left: 0;
-            right: 0;
-            top: var(--nav-height);
-            background: var(--bg-card);
-            border-bottom: 1px solid var(--border-light);
-            padding: 0.3rem 2rem;
+        /* Status indicators in navbar */
+        .nav-status {
             display: flex;
             align-items: center;
-            justify-content: flex-start;
-            gap: 1.5rem;
-            z-index: 999;
-            height: 28px;
+            gap: 1rem;
+            margin-left: auto;
+            margin-right: 1rem;
         }
 
-        .status-strip-item {
+        .nav-status-item {
             display: flex;
             align-items: center;
-            gap: 0.4rem;
-            font-size: 0.7rem;
+            gap: 0.3rem;
+            font-size: 0.75rem;
             color: var(--text-dim);
-            cursor: default;
         }
 
-        .status-strip-item .dot {
+        .nav-status-item .dot {
             width: 6px;
             height: 6px;
             border-radius: 50%;
             background: var(--text-dim);
-            flex-shrink: 0;
         }
 
-        .status-strip-item .dot.running {
+        .nav-status-item .dot.running {
             background: var(--success);
         }
 
@@ -187,7 +177,7 @@
 
         /* Main Content */
         .main-content {
-            padding-top: calc(var(--nav-height) + 28px);
+            padding-top: var(--nav-height);
             min-height: 100vh;
         }
 
@@ -574,89 +564,118 @@
             color: var(--text);
         }
 
+        /* Submenu Bar (attached below navbar) */
+        .submenu-bar {
+            position: fixed;
+            top: var(--nav-height);
+            left: 0;
+            right: 0;
+            height: 50px;
+            background: var(--bg-card);
+            border-bottom: 1px solid var(--border-light);
+            display: none;
+            align-items: center;
+            padding: 0 2rem;
+            z-index: 999;
+        }
+
+        .submenu-bar.active {
+            display: flex;
+        }
+
+        /* Adjust main content when submenu is visible */
+        .main-content.has-submenu {
+            padding-top: calc(var(--nav-height) + 50px);
+        }
+
+        /* Document Submenu */
+        .document-submenu {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            width: 100%;
+        }
+
+        .document-title {
+            display: flex;
+            align-items: center;
+        }
+
+        .document-actions {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .btn-sm {
+            padding: 0.3rem 0.75rem;
+            font-size: 0.8rem;
+            border-radius: 6px;
+        }
+
         /* Explorer Page */
 
         /* Pipeline Navigation Bar */
         .pipeline-bar {
             display: flex;
-            align-items: stretch;
+            align-items: center;
             justify-content: flex-start;
-            gap: 0;
-            margin-bottom: 1.5rem;
-            background: var(--bg-card);
-            border-radius: 12px;
-            overflow: hidden;
-            border: 1px solid var(--border-light);
+            gap: 0.25rem;
+            flex: 1;
         }
 
         .pipeline-stage {
             display: flex;
-            flex-direction: column;
             align-items: center;
-            justify-content: center;
-            padding: 1rem 1.25rem;
+            gap: 0.4rem;
+            padding: 0.5rem 1rem;
             position: relative;
             cursor: pointer;
             transition: all 0.2s;
-            min-width: 100px;
-            border-right: 1px solid var(--border-light);
-        }
-
-        .pipeline-stage:last-child {
-            border-right: none;
+            border-radius: 6px;
+            color: var(--text-dim);
         }
 
         .pipeline-stage:hover {
-            background: var(--bg-tertiary);
+            background: var(--accent);
+            color: var(--text);
         }
 
         .pipeline-stage.active {
             background: var(--accent);
-            box-shadow: inset 0 -3px 0 var(--highlight);
-        }
-
-        /* Pipeline flow arrow between stages */
-        .pipeline-stage:not(:last-child)::after {
-            content: '→';
-            position: absolute;
-            right: -8px;
-            top: 50%;
-            transform: translateY(-50%);
-            color: var(--text-dim);
-            font-size: 0.9rem;
-            z-index: 1;
+            color: var(--text);
+            border-bottom: 2px solid var(--highlight);
         }
 
         /* Outcome stages section */
         .pipeline-outcomes {
             display: flex;
             margin-left: auto;
-            border-left: 2px solid var(--border);
+            gap: 0.25rem;
+            padding-left: 1rem;
+            border-left: 1px solid var(--border-light);
         }
 
         .pipeline-stage .stage-label {
-            font-size: 0.7rem;
-            color: var(--text-dim);
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            margin-bottom: 0.2rem;
+            font-size: 0.9rem;
         }
 
         .pipeline-stage .stage-count {
-            font-size: 1.4rem;
-            font-weight: bold;
-            color: var(--text);
+            font-size: 0.75rem;
+            font-weight: 600;
+            background: var(--bg-dark);
+            padding: 0.1rem 0.4rem;
+            border-radius: 10px;
         }
 
         /* Stage-specific colors */
-        .pipeline-stage.seeds .stage-count { color: var(--text-secondary); }
-        .pipeline-stage.exploring .stage-count { color: var(--success); }
-        .pipeline-stage.synthesizing .stage-count { color: var(--warning); }
-        .pipeline-stage.reviewing .stage-count { color: var(--interesting); }
-        .pipeline-stage.attested .stage-count { color: var(--blessed); }
-        .pipeline-stage.noted .stage-count { color: #a78bfa; }
-        .pipeline-stage.disputed .stage-count { color: var(--disputed); }
-        .pipeline-stage.rejected .stage-count { color: var(--error); }
+        .pipeline-stage.seeds { }
+        .pipeline-stage.exploring .stage-count { background: var(--success); color: white; }
+        .pipeline-stage.synthesizing .stage-count { background: var(--warning); color: black; }
+        .pipeline-stage.reviewing .stage-count { background: var(--interesting); color: white; }
+        .pipeline-stage.attested .stage-count { background: var(--blessed); color: white; }
+        .pipeline-stage.noted .stage-count { background: #a78bfa; color: white; }
+        .pipeline-stage.disputed .stage-count { background: var(--disputed); color: white; }
+        .pipeline-stage.rejected .stage-count { background: var(--error); color: white; }
 
         /* Pipeline content views */
         .pipeline-content-view {
@@ -1184,7 +1203,7 @@
             .grid { grid-template-columns: 1fr; }
             .logs-page-container { grid-template-columns: 1fr; }
             .navbar { padding: 0 1rem; }
-            .status-strip { display: none; }
+            .nav-status { display: none; }
         }
 
         /* Seeds Page Styles */
@@ -1964,28 +1983,83 @@
             <button class="nav-tab" onclick="showPage('document')">Document</button>
             <button class="nav-tab" onclick="showPage('logs')">Logs</button>
         </div>
+        <div class="nav-status">
+            <div class="nav-status-item" title="Pool Service">
+                <span class="dot" id="nav-pool-dot"></span>
+                <span>Pool</span>
+            </div>
+            <div class="nav-status-item" title="Explorer">
+                <span class="dot" id="nav-explorer-dot"></span>
+                <span>Exp</span>
+            </div>
+            <div class="nav-status-item" title="Documenter">
+                <span class="dot" id="nav-documenter-dot"></span>
+                <span>Doc</span>
+            </div>
+            <div class="nav-status-item" title="Researcher">
+                <span class="dot" id="nav-researcher-dot"></span>
+                <span>Res</span>
+            </div>
+        </div>
         <button class="nav-restart-btn" onclick="restartServer(this)" title="Restart the control server">
             <span class="icon">⟳</span><span class="label">Restart</span>
         </button>
     </nav>
 
-    <!-- Status Strip (left sidebar) -->
-    <div class="status-strip">
-        <div class="status-strip-item">
-            <span class="dot" id="nav-pool-dot"></span>
-            <span>Pool</span>
+    <!-- Explorer Submenu Bar -->
+    <div class="submenu-bar" id="submenu-explorer">
+        <div class="pipeline-bar" id="pipeline-bar">
+            <div class="pipeline-stage seeds" data-stage="seeds" onclick="showPipelineStage('seeds')" title="Seed questions and axioms">
+                <span class="stage-label">Seeds</span>
+                <span class="stage-count" id="pipeline-seeds">0</span>
+            </div>
+            <div class="pipeline-stage exploring" data-stage="exploring" onclick="showPipelineStage('exploring')" title="Active exploration threads">
+                <span class="stage-label">Exploring</span>
+                <span class="stage-count" id="pipeline-exploring">0</span>
+            </div>
+            <div class="pipeline-stage synthesizing" data-stage="synthesizing" onclick="showPipelineStage('synthesizing')" title="Awaiting insight extraction">
+                <span class="stage-label">Synthesizing</span>
+                <span class="stage-count" id="pipeline-synthesizing">0</span>
+            </div>
+            <div class="pipeline-stage reviewing" data-stage="reviewing" onclick="showPipelineStage('reviewing')" title="Insights being reviewed">
+                <span class="stage-label">Reviewing</span>
+                <span class="stage-count" id="pipeline-reviewing">0</span>
+            </div>
+            <div class="pipeline-outcomes">
+                <div class="pipeline-stage attested" data-stage="attested" onclick="showPipelineStage('attested')" title="Verified insights">
+                    <span class="stage-label">Attested</span>
+                    <span class="stage-count" id="pipeline-attested">0</span>
+                </div>
+                <div class="pipeline-stage noted" data-stage="noted" onclick="showPipelineStage('noted')" title="Notable observations">
+                    <span class="stage-label">Noted</span>
+                    <span class="stage-count" id="pipeline-noted">0</span>
+                </div>
+                <div class="pipeline-stage disputed" data-stage="disputed" onclick="showPipelineStage('disputed')" title="Needs human review">
+                    <span class="stage-label">Disputed</span>
+                    <span class="stage-count" id="pipeline-disputed">0</span>
+                </div>
+                <div class="pipeline-stage rejected" data-stage="rejected" onclick="showPipelineStage('rejected')" title="Rejected insights">
+                    <span class="stage-label">Rejected</span>
+                    <span class="stage-count" id="pipeline-rejected">0</span>
+                </div>
+            </div>
         </div>
-        <div class="status-strip-item">
-            <span class="dot" id="nav-explorer-dot"></span>
-            <span>Explorer</span>
-        </div>
-        <div class="status-strip-item">
-            <span class="dot" id="nav-documenter-dot"></span>
-            <span>Documenter</span>
-        </div>
-        <div class="status-strip-item">
-            <span class="dot" id="nav-researcher-dot"></span>
-            <span>Researcher</span>
+    </div>
+
+    <!-- Document Submenu Bar -->
+    <div class="submenu-bar" id="submenu-document">
+        <div class="document-submenu">
+            <div class="document-title">
+                <span style="font-weight: 600;">Live Document</span>
+                <span class="document-stats" id="document-stats-nav" style="color: var(--text-dim); font-size: 0.8rem; margin-left: 0.5rem;">Loading...</span>
+            </div>
+            <div class="document-actions">
+                <button class="btn btn-sm" onclick="loadDocument()">Refresh</button>
+                <button class="btn btn-sm" id="toggle-annotations-btn" onclick="toggleAnnotationMargin()">Hide Annotations</button>
+                <button class="btn btn-sm" onclick="toggleVersionHistory()">History</button>
+                <button class="btn btn-sm" onclick="fixFormatting(this)" title="Fix math delimiter issues">Fix Formatting</button>
+                <button class="btn btn-sm btn-primary" onclick="downloadDocument()">Download</button>
+            </div>
         </div>
     </div>
 
@@ -2143,45 +2217,6 @@
         <!-- Explorer Page -->
         <div id="page-explorer" class="page">
             <div class="container" style="max-width: 1100px;">
-                <!-- Pipeline Status Bar -->
-                <!-- Pipeline Navigation -->
-                <div class="pipeline-bar" id="pipeline-bar">
-                    <div class="pipeline-stage seeds" data-stage="seeds" onclick="showPipelineStage('seeds')" title="Seed questions and axioms">
-                        <span class="stage-label">Seeds</span>
-                        <span class="stage-count" id="pipeline-seeds">0</span>
-                    </div>
-                    <div class="pipeline-stage exploring" data-stage="exploring" onclick="showPipelineStage('exploring')" title="Active exploration threads">
-                        <span class="stage-label">Exploring</span>
-                        <span class="stage-count" id="pipeline-exploring">0</span>
-                    </div>
-                    <div class="pipeline-stage synthesizing" data-stage="synthesizing" onclick="showPipelineStage('synthesizing')" title="Awaiting insight extraction">
-                        <span class="stage-label">Synthesizing</span>
-                        <span class="stage-count" id="pipeline-synthesizing">0</span>
-                    </div>
-                    <div class="pipeline-stage reviewing" data-stage="reviewing" onclick="showPipelineStage('reviewing')" title="Insights being reviewed">
-                        <span class="stage-label">Reviewing</span>
-                        <span class="stage-count" id="pipeline-reviewing">0</span>
-                    </div>
-                    <div class="pipeline-outcomes">
-                        <div class="pipeline-stage attested" data-stage="attested" onclick="showPipelineStage('attested')" title="Verified insights">
-                            <span class="stage-label">Attested</span>
-                            <span class="stage-count" id="pipeline-attested">0</span>
-                        </div>
-                        <div class="pipeline-stage noted" data-stage="noted" onclick="showPipelineStage('noted')" title="Notable observations">
-                            <span class="stage-label">Noted</span>
-                            <span class="stage-count" id="pipeline-noted">0</span>
-                        </div>
-                        <div class="pipeline-stage disputed" data-stage="disputed" onclick="showPipelineStage('disputed')" title="Needs human review">
-                            <span class="stage-label">Disputed</span>
-                            <span class="stage-count" id="pipeline-disputed">0</span>
-                        </div>
-                        <div class="pipeline-stage rejected" data-stage="rejected" onclick="showPipelineStage('rejected')" title="Rejected insights">
-                            <span class="stage-label">Rejected</span>
-                            <span class="stage-count" id="pipeline-rejected">0</span>
-                        </div>
-                    </div>
-                </div>
-
                 <!-- Main Content Area - shows content based on selected pipeline stage -->
                 <div id="pipeline-content">
                     <!-- Seeds View -->
@@ -2442,22 +2477,6 @@
         <!-- Document Page -->
         <div id="page-document" class="page">
             <div class="container">
-                <div class="card document-toolbar">
-                    <div class="document-header">
-                        <div>
-                            <h2 style="margin: 0;">Live Document</h2>
-                            <div class="document-stats" id="document-stats">Loading...</div>
-                        </div>
-                        <div class="btn-group">
-                            <button class="btn btn-secondary" onclick="loadDocument()">Refresh</button>
-                            <button class="btn btn-secondary" id="toggle-annotations-btn" onclick="toggleAnnotationMargin()">Hide Annotations</button>
-                            <button class="btn btn-secondary" onclick="toggleVersionHistory()">History</button>
-                            <button class="btn btn-secondary" onclick="fixFormatting(this)" title="Fix math delimiter issues">Fix Formatting</button>
-                            <button class="btn btn-primary" onclick="downloadDocument()">Download</button>
-                        </div>
-                    </div>
-                </div>
-
                 <!-- Version History Panel -->
                 <div id="version-history-panel" class="card" style="margin-bottom: 1rem; display: none;">
                     <h3 style="margin-top: 0;">Version History</h3>
@@ -2609,6 +2628,19 @@
                 page.classList.remove('active');
             });
             document.getElementById(`page-${pageName}`).classList.add('active');
+
+            // Handle submenus
+            document.querySelectorAll('.submenu-bar').forEach(bar => {
+                bar.classList.remove('active');
+            });
+            const mainContent = document.querySelector('.main-content');
+            const submenu = document.getElementById(`submenu-${pageName}`);
+            if (submenu) {
+                submenu.classList.add('active');
+                mainContent.classList.add('has-submenu');
+            } else {
+                mainContent.classList.remove('has-submenu');
+            }
 
             currentPage = pageName;
             location.hash = pageName;
@@ -3880,7 +3912,7 @@
 
         async function loadDocument() {
             const container = document.getElementById('document-content');
-            const statsEl = document.getElementById('document-stats');
+            const statsEl = document.getElementById('document-stats-nav');
 
             try {
                 const resp = await fetch('/api/document');
@@ -4138,7 +4170,7 @@
 
                 // Show in document container with a banner
                 const container = document.getElementById('document-content');
-                const statsEl = document.getElementById('document-stats');
+                const statsEl = document.getElementById('document-stats-nav');
 
                 const timestamp = new Date(data.version.timestamp).toLocaleString();
 
