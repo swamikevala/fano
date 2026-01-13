@@ -1546,7 +1546,7 @@
                             <span id="pool-status" class="status-badge status-loading">...</span>
                         </div>
                         <p style="color: var(--text-dim); margin-bottom: 1rem;">
-                            Manages browser connections to Gemini and ChatGPT
+                            Manages browser connections to Gemini, ChatGPT and Claude
                         </p>
                         <div class="btn-group">
                             <button id="pool-start" class="btn btn-primary" onclick="startComponent('pool')" disabled>Start Pool</button>
@@ -1709,6 +1709,19 @@
                     <div style="margin-left: auto;">
                         <button class="btn btn-secondary" onclick="expandAllInsights()">Expand All</button>
                         <button class="btn btn-secondary" onclick="collapseAllInsights()">Collapse All</button>
+                    </div>
+                </div>
+
+                <!-- Active Threads Section -->
+                <div id="active-threads-section" class="active-threads-section" style="margin-bottom: 1.5rem;">
+                    <div class="active-threads-header" onclick="toggleActiveThreads()" style="cursor: pointer; display: flex; align-items: center; gap: 0.5rem; padding: 0.75rem; background: var(--bg-card); border-radius: 8px; margin-bottom: 0.5rem;">
+                        <span id="active-threads-toggle" style="transition: transform 0.2s;">&#9654;</span>
+                        <strong>Active Threads</strong>
+                        <span class="count" id="active-threads-count" style="background: var(--primary); color: white; padding: 0.15rem 0.5rem; border-radius: 10px; font-size: 0.8rem;">0</span>
+                        <span style="color: var(--text-dim); font-size: 0.85rem; margin-left: auto;">Click to expand</span>
+                    </div>
+                    <div id="active-threads-list" style="display: none;">
+                        <!-- Threads will be loaded here -->
                     </div>
                 </div>
 
@@ -1985,6 +1998,7 @@
                 loadFullLogs(currentLogsSource);
             } else if (pageName === 'explorer') {
                 loadExplorerStats();
+                loadActiveThreadsCount();
                 loadExplorerInsights(currentExplorerStatus);
             } else if (pageName === 'llm-activity') {
                 loadLLMActivityDetail();
@@ -2001,7 +2015,10 @@
         setInterval(refreshLLMActivity, 2000);  // More frequent for real-time feel
         setInterval(() => {
             if (currentPage === 'logs') loadFullLogs(currentLogsSource, true);
-            if (currentPage === 'explorer') loadExplorerStats();
+            if (currentPage === 'explorer') {
+                loadExplorerStats();
+                loadActiveThreadsCount();
+            }
             if (currentPage === 'llm-activity') loadLLMActivityDetail();
         }, 2000);
 
@@ -2408,6 +2425,92 @@
                 document.getElementById('exp-stat-rejected').textContent = explorerStats.rejected || 0;
             } catch (e) {
                 console.error('Failed to load explorer stats:', e);
+            }
+        }
+
+        let activeThreadsExpanded = false;
+
+        async function loadActiveThreadsCount() {
+            try {
+                const resp = await fetch('/api/explorer/threads/active');
+                const data = await resp.json();
+                document.getElementById('active-threads-count').textContent = data.count || 0;
+                // If expanded, refresh the full list too
+                if (activeThreadsExpanded) {
+                    loadActiveThreads();
+                }
+            } catch (e) {
+                console.error('Failed to load active threads count:', e);
+            }
+        }
+
+        function toggleActiveThreads() {
+            activeThreadsExpanded = !activeThreadsExpanded;
+            const list = document.getElementById('active-threads-list');
+            const toggle = document.getElementById('active-threads-toggle');
+
+            if (activeThreadsExpanded) {
+                list.style.display = 'block';
+                toggle.style.transform = 'rotate(90deg)';
+                loadActiveThreads();
+            } else {
+                list.style.display = 'none';
+                toggle.style.transform = 'rotate(0deg)';
+            }
+        }
+
+        async function loadActiveThreads() {
+            const container = document.getElementById('active-threads-list');
+            const countEl = document.getElementById('active-threads-count');
+
+            try {
+                const resp = await fetch('/api/explorer/threads/active');
+                const data = await resp.json();
+
+                countEl.textContent = data.count || 0;
+
+                if (data.threads.length === 0) {
+                    container.innerHTML = `<div style="padding: 1rem; color: var(--text-dim); text-align: center;">No active threads</div>`;
+                    return;
+                }
+
+                let html = '<div style="display: flex; flex-direction: column; gap: 0.5rem;">';
+
+                for (const thread of data.threads) {
+                    const activityIcon = thread.current_activity === 'needs critique' ? '🔍' :
+                                        thread.current_activity === 'needs exploration' ? '🔭' : '⏳';
+                    const modelBadge = thread.last_model ?
+                        `<span style="background: var(--bg-secondary); padding: 0.1rem 0.4rem; border-radius: 4px; font-size: 0.75rem;">${thread.last_model}</span>` : '';
+
+                    const priorityColor = thread.priority >= 7 ? 'var(--success)' :
+                                         thread.priority >= 4 ? 'var(--warning)' : 'var(--text-dim)';
+
+                    html += `
+                        <div style="display: flex; align-items: center; gap: 0.75rem; padding: 0.75rem; background: var(--bg-secondary); border-radius: 6px; border-left: 3px solid ${priorityColor};">
+                            <span style="font-size: 1.2rem;">${activityIcon}</span>
+                            <div style="flex: 1; min-width: 0;">
+                                <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.25rem;">
+                                    <code style="font-size: 0.8rem; color: var(--primary);">${thread.id}</code>
+                                    ${modelBadge}
+                                    <span style="color: var(--text-dim); font-size: 0.75rem; margin-left: auto;">${thread.time_ago}</span>
+                                </div>
+                                <div style="font-size: 0.85rem; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${thread.topic}">
+                                    ${thread.focus ? `<strong>${thread.focus}</strong> - ` : ''}${thread.topic}
+                                </div>
+                                <div style="font-size: 0.75rem; color: var(--text-dim); margin-top: 0.25rem;">
+                                    ${thread.current_activity} · ${thread.exchange_count} exchanges · P${thread.priority}
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }
+
+                html += '</div>';
+                container.innerHTML = html;
+
+            } catch (e) {
+                console.error('Failed to load active threads:', e);
+                container.innerHTML = `<div style="padding: 1rem; color: var(--error);">Failed to load threads: ${e}</div>`;
             }
         }
 

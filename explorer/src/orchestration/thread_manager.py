@@ -154,72 +154,36 @@ class ThreadManager:
         thread.save(self.paths.data_dir)
         return thread
 
-    def spawn_thread_for_seeds(self, seeds: list) -> ExplorationThread:
-        """
-        Create a new exploration thread for specific seeds.
-
-        Args:
-            seeds: List of seed aphorisms to explore.
-
-        Returns:
-            Newly created thread.
-        """
-        seed_ids = [s.id for s in seeds]
-        topic = self._generate_topic(seeds)
-
-        thread = ExplorationThread.create_new(
-            topic=topic,
-            seed_axioms=seed_ids,
-            target_numbers=[],
-        )
-
-        thread.save(self.paths.data_dir)
-        return thread
-
     async def check_and_spawn_for_new_seeds(self) -> Optional[ExplorationThread]:
         """
         Check if there are new seeds that haven't been explored yet.
-        If so, spawn a new thread prioritizing those seeds.
+        If so, spawn a focused thread for the highest-priority unexplored seed.
 
         Returns:
             Newly spawned thread if new seeds found, None otherwise.
         """
         log.info("[seeds] Checking for new/unexplored seeds...")
 
-        # Get all current seeds
-        all_seeds = self.axioms.get_seed_aphorisms()
-        if not all_seeds:
+        # Get questions and conjectures (not axioms)
+        questions = self.axioms.get_questions()
+        conjectures = self.axioms.get_conjectures()
+
+        if not questions and not conjectures:
             log.info("[seeds] No seeds found")
             return None
 
-        all_seed_ids = {s.id for s in all_seeds}
+        explored = self.get_explored_seed_ids()
+        unexplored_count = sum(1 for q in questions if q.id not in explored)
+        unexplored_count += sum(1 for c in conjectures if c.id not in explored)
 
-        # Find which seeds have already been explored (in any thread)
-        explored_seed_ids = set()
-        if self.paths.explorations_dir.exists():
-            for filepath in self.paths.explorations_dir.glob("*.json"):
-                try:
-                    thread = ExplorationThread.load(filepath)
-                    explored_seed_ids.update(thread.seed_axioms or [])
-                except Exception:
-                    pass
-
-        # Find new seeds
-        new_seed_ids = all_seed_ids - explored_seed_ids
-
-        if not new_seed_ids:
-            log.info(f"[seeds] All {len(all_seed_ids)} seeds have been explored")
+        if unexplored_count == 0:
+            log.info(f"[seeds] All {len(questions) + len(conjectures)} seeds have been explored")
             return None
 
-        new_seeds = [s for s in all_seeds if s.id in new_seed_ids]
-        log.info(f"[seeds] Found {len(new_seeds)} NEW seeds to explore:")
-        for seed in new_seeds:
-            log.info(f"[seeds]   - {seed.id}: {seed.text[:60]}...")
+        log.info(f"[seeds] Found {unexplored_count} unexplored seeds")
 
-        # Spawn a new thread specifically for these seeds
-        thread = self.spawn_thread_for_seeds(new_seeds)
-        log.info(f"[seeds] Spawned new thread {thread.id} for new seeds")
-
+        # Spawn a focused thread for the next unexplored seed
+        thread = self.spawn_new_thread()
         return thread
 
     def get_explored_seed_ids(self) -> set[str]:

@@ -81,8 +81,31 @@ def cmd_auth():
 
 
 def cmd_start():
-    """Start the exploration loop."""
+    """Start the exploration loop with review UI."""
+    import threading
+    import yaml
     from explorer.src.orchestrator import Orchestrator
+    from explorer.src.ui.review_server import start_server
+
+    # Load review server config
+    config_path = Path(__file__).parent / "config.yaml"
+    host = "127.0.0.1"
+    port = 8765
+    if config_path.exists():
+        config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        host = config.get("review_server", {}).get("host", host)
+        port = config.get("review_server", {}).get("port", port)
+
+    # Start review server in background thread (disable reloader for thread safety)
+    def run_review_server():
+        from explorer.src.ui.review_server import app, CONFIG
+        review_host = CONFIG["review_server"]["host"]
+        review_port = CONFIG["review_server"]["port"]
+        # use_reloader=False required when running in thread
+        app.run(host=review_host, port=review_port, debug=False, use_reloader=False)
+
+    review_thread = threading.Thread(target=run_review_server, daemon=True)
+    review_thread.start()
 
     console.print("\n[bold]Starting exploration loop...[/bold]")
     console.print("Press Ctrl+C to stop gracefully.\n")

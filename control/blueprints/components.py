@@ -109,7 +109,9 @@ def api_server_restart():
 
         # Start new server process (detached on Windows)
         server_script = FANO_ROOT / "control" / "server.py"
-        restart_log = FANO_ROOT / "control" / "restart.log"
+        logs_dir = FANO_ROOT / "logs"
+        logs_dir.mkdir(exist_ok=True)
+        restart_log = logs_dir / "control.log"
 
         # Wait for port to be released
         time.sleep(1)

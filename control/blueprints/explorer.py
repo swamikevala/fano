@@ -41,6 +41,74 @@ def api_explorer_stats():
     return jsonify(get_explorer_stats())
 
 
+@bp.route("/threads/active")
+def api_explorer_active_threads():
+    """Get active exploration threads with their current state."""
+    from datetime import datetime
+
+    threads = []
+    explorations_dir = EXPLORER_DATA_DIR / "explorations"
+
+    if explorations_dir.exists():
+        for json_file in explorations_dir.glob("*.json"):
+            try:
+                data = load_insight_json(json_file)
+                if data and data.get("status") == "active":
+                    # Determine current activity
+                    exchanges = data.get("exchanges", [])
+                    last_exchange = exchanges[-1] if exchanges else None
+
+                    if not exchanges:
+                        current_activity = "waiting to start"
+                    elif last_exchange.get("role") == "critic":
+                        current_activity = "needs exploration"
+                    else:
+                        current_activity = "needs critique"
+
+                    # Get focus seed info
+                    focus_info = None
+                    if data.get("primary_question_id"):
+                        focus_info = f"Question: {data['primary_question_id']}"
+                    elif data.get("related_conjecture_ids"):
+                        focus_info = f"Conjecture: {data['related_conjecture_ids'][0]}"
+
+                    # Calculate time since last activity
+                    updated_at = data.get("updated_at", data.get("created_at"))
+                    time_ago = ""
+                    if updated_at:
+                        try:
+                            updated = datetime.fromisoformat(updated_at)
+                            delta = datetime.now() - updated
+                            if delta.total_seconds() < 60:
+                                time_ago = f"{int(delta.total_seconds())}s ago"
+                            elif delta.total_seconds() < 3600:
+                                time_ago = f"{int(delta.total_seconds() / 60)}m ago"
+                            else:
+                                time_ago = f"{int(delta.total_seconds() / 3600)}h ago"
+                        except Exception:
+                            pass
+
+                    threads.append({
+                        "id": data.get("id", json_file.stem),
+                        "topic": data.get("topic", "Unknown"),
+                        "focus": focus_info,
+                        "priority": data.get("priority", 5),
+                        "exchange_count": len(exchanges),
+                        "current_activity": current_activity,
+                        "last_model": last_exchange.get("model") if last_exchange else None,
+                        "last_role": last_exchange.get("role") if last_exchange else None,
+                        "time_ago": time_ago,
+                        "updated_at": updated_at,
+                    })
+            except Exception as e:
+                pass
+
+    # Sort by updated_at (most recent first)
+    threads.sort(key=lambda t: t.get("updated_at") or "", reverse=True)
+
+    return jsonify({"threads": threads, "count": len(threads)})
+
+
 @bp.route("/insights/<status>")
 def api_explorer_insights(status: str):
     """Get insights by status."""
