@@ -668,7 +668,15 @@ class GeminiWorker(BaseWorker):
             if self._current_job and self.jobs:
                 self.jobs.set_chat_url(self._current_job.job_id, chat_url)
 
-            response_text = await self.browser.send_message(request.prompt)
+            # Convert ImageAttachment models to dicts for browser interface
+            images = None
+            if request.images:
+                images = [
+                    {"filename": img.filename, "data": img.data, "media_type": img.media_type}
+                    for img in request.images
+                ]
+
+            response_text = await self.browser.send_message(request.prompt, images=images)
 
             # Clear callback
             self.browser.set_url_update_callback(None)
