@@ -109,8 +109,9 @@ def _get_modification_consensus(
     if not modifications:
         return None, None, None
 
-    # Sort by rating score (descending), then mode_score (descending)
-    modifications.sort(key=lambda x: (x["rating_score"], x["mode_score"]), reverse=True)
+    # Sort by rating score (descending), then mode_score (descending), then LLM name (ascending)
+    # The LLM name tiebreaker ensures deterministic selection when other scores are equal
+    modifications.sort(key=lambda x: (x["rating_score"], x["mode_score"], -ord(x["llm"][0])), reverse=True)
 
     # Accept the best modification
     best = modifications[0]

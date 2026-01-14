@@ -6,7 +6,7 @@ import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Optional
-from threading import Lock
+from threading import RLock
 
 from shared.logging import get_logger
 
@@ -20,7 +20,9 @@ BACKEND_MODE_KEY = {
 
 # Maximum age (in seconds) for active work to be considered valid for recovery
 # Work older than this is considered stale and will be auto-cleared
-MAX_ACTIVE_WORK_AGE_SECONDS = 7200  # 2 hours
+# Note: This should be longer than the maximum recovery time (30 minutes)
+# to prevent race conditions where work is cleared during recovery
+MAX_ACTIVE_WORK_AGE_SECONDS = 14400  # 4 hours
 
 
 class StateManager:
@@ -36,7 +38,9 @@ class StateManager:
     def __init__(self, state_file: Path, config: dict):
         self.state_file = state_file
         self.config = config
-        self._lock = Lock()
+        # Use RLock (reentrant) to prevent deadlock when methods call each other
+        # (e.g., get_backend_state calls _check_daily_reset which may call _save)
+        self._lock = RLock()
         self._state = self._load()
 
     def _load(self) -> dict:
@@ -159,6 +163,9 @@ class StateManager:
         return state.get("authenticated", False) and not state.get("rate_limited", False)
 
     # --- Active Work Tracking ---
+    # Note: For async jobs, JobStore is the authoritative source for chat_url.
+    # StateManager tracks active work primarily for legacy (non-job) requests.
+    # Both may store chat_url, but JobStore should be preferred for job recovery.
 
     def set_active_work(
         self,

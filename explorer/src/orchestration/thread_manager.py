@@ -95,6 +95,18 @@ class ThreadManager:
         if exclude_ids:
             threads = [t for t in threads if t.id not in exclude_ids]
 
+        # Filter out threads whose seeds are in exclude_seeds
+        # This prevents selecting a thread when its seed is already being spawned
+        if exclude_seeds:
+            def thread_has_excluded_seed(t: ExplorationThread) -> bool:
+                if t.primary_question_id and t.primary_question_id in exclude_seeds:
+                    return True
+                if t.related_conjecture_ids:
+                    return any(sid in exclude_seeds for sid in t.related_conjecture_ids)
+                return False
+
+            threads = [t for t in threads if not thread_has_excluded_seed(t)]
+
         # Sort by priority (highest first), then by needs_work status
         if threads:
             threads.sort(

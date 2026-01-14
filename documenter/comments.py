@@ -83,12 +83,71 @@ class CommentHandler:
                 s.document.save(f"Resolved comment: {comment_text[:50]}")
                 log.info("comment.resolved", comment=comment_text[:50])
         else:
-            # Mark as attempted
+            # Mark as attempted with timestamp so it can be retried later
+            # after new concepts are established
+            from datetime import datetime
+            timestamp = datetime.now().isoformat()[:10]  # Just date part
             old_comment = f"<!-- COMMENT: {comment_text} -->"
-            new_comment = f"<!-- COMMENT: {comment_text} (attempted: true) -->"
+            new_comment = f"<!-- COMMENT: {comment_text} (attempted: {timestamp}) -->"
             s.document.content = s.document.content.replace(old_comment, new_comment, 1)
             s.document.save(f"Attempted comment: {comment_text[:50]}")
             log.warning("comment.unresolved", comment=comment_text[:50])
+
+    def should_retry_comment(self, comment_marker: str) -> bool:
+        """
+        Check if an attempted comment should be retried.
+
+        Comments are retried if:
+        1. They were attempted more than 1 session ago (time-based retry)
+        2. OR new concepts have been established since the attempt
+
+        Args:
+            comment_marker: The full comment marker including (attempted: date)
+
+        Returns:
+            True if the comment should be retried
+        """
+        import re
+        from datetime import datetime, timedelta
+
+        # Extract the attempt date
+        match = re.search(r'\(attempted:\s*(\d{4}-\d{2}-\d{2})\)', comment_marker)
+        if not match:
+            return True  # No date, retry it
+
+        attempt_date_str = match.group(1)
+        try:
+            attempt_date = datetime.fromisoformat(attempt_date_str)
+            # Retry if more than 7 days old
+            if datetime.now() - attempt_date > timedelta(days=7):
+                return True
+        except ValueError:
+            return True  # Invalid date, retry it
+
+        return False
+
+    def get_retriable_comments(self) -> list[tuple[str, int]]:
+        """
+        Get list of previously attempted comments that should be retried.
+
+        Returns:
+            List of (comment_text, line_number) tuples for comments to retry.
+        """
+        import re
+        s = self.session
+        retriable = []
+
+        lines = s.document.content.split('\n')
+        for i, line in enumerate(lines):
+            if '<!-- COMMENT:' in line and '(attempted:' in line:
+                if self.should_retry_comment(line):
+                    # Extract the comment text
+                    match = re.search(r'<!-- COMMENT:\s*(.+?)\s*\(attempted:', line)
+                    if match:
+                        comment_text = match.group(1).strip()
+                        retriable.append((comment_text, i + 1))
+
+        return retriable
 
     def _get_section_around_line(self, line_num: int, context_lines: int = 20) -> str:
         """

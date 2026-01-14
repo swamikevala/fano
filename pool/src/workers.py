@@ -62,6 +62,10 @@ class BaseWorker:
         self._request_history: list[dict] = []
         self._max_history = 20
 
+        # Consecutive error tracking for exponential backoff
+        self._consecutive_errors = 0
+        self._max_backoff = 60  # Max 60 seconds between retries
+
     async def start(self):
         """Start the worker."""
         self._running = True
@@ -128,6 +132,8 @@ class BaseWorker:
                         deep_mode_used=response.metadata.deep_mode_used if response.metadata else False,
                     )
                     queued.future.set_result(response)
+                    # Reset consecutive error counter on success
+                    self._consecutive_errors = 0
                 except Exception as e:
                     log.request_error(
                         queued.request_id, self.backend_name,
@@ -168,8 +174,19 @@ class BaseWorker:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                log.exception(e, "pool.worker.loop_error", {"backend": self.backend_name})
-                await asyncio.sleep(1)
+                # Increment consecutive error counter and use exponential backoff
+                self._consecutive_errors += 1
+                backoff = min(1 * (2 ** self._consecutive_errors), self._max_backoff)
+                log.exception(
+                    e,
+                    "pool.worker.loop_error",
+                    {
+                        "backend": self.backend_name,
+                        "consecutive_errors": self._consecutive_errors,
+                        "backoff_seconds": backoff,
+                    },
+                )
+                await asyncio.sleep(backoff)
 
     async def _process_request(self, request: SendRequest) -> SendResponse:
         """Process a single request. Override in subclasses."""
@@ -293,10 +310,19 @@ class BaseWorker:
             # Check if page exists - try reconnect if not
             if not self.browser.page:
                 log.warning("pool.health.page_none", backend=self.backend_name, action="attempting_reconnect")
-                if await self.try_reconnect():
-                    log.info("pool.health.reconnected", backend=self.backend_name)
-                else:
-                    return False, "page_not_initialized_reconnect_failed"
+                # Add timeout to prevent hanging indefinitely on unresponsive browsers
+                try:
+                    reconnect_success = await asyncio.wait_for(
+                        self.try_reconnect(),
+                        timeout=60.0,  # 60 second timeout for reconnection
+                    )
+                    if reconnect_success:
+                        log.info("pool.health.reconnected", backend=self.backend_name)
+                    else:
+                        return False, "page_not_initialized_reconnect_failed"
+                except asyncio.TimeoutError:
+                    log.error("pool.health.reconnect_timeout", backend=self.backend_name)
+                    return False, "reconnect_timeout"
 
             # Verify page is responsive (throws TargetClosedError if browser crashed)
             await asyncio.wait_for(

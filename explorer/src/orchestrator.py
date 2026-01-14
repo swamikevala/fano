@@ -79,6 +79,10 @@ class Orchestrator:
         self.orchestration_config = CONFIG["orchestration"]
         self.running = False
 
+        # Consecutive failure tracking for exponential backoff
+        self._consecutive_failures = 0
+        self._max_backoff = 300  # Max 5 minutes between retries
+
         # Initialize LLM manager
         self.llm_manager = LLMManager(CONFIG, self.paths)
 
@@ -276,9 +280,18 @@ class Orchestrator:
             log.warning("[backlog] No model available for extraction")
             return
 
+        # In-progress marker file to track what we're working on (for crash recovery)
+        progress_file = self.paths.data_dir / ".backlog_in_progress"
+
         # Process each thread
         for i, thread in enumerate(unprocessed, 1):
             log.info(f"[backlog] Processing {i}/{len(unprocessed)}: {thread.id}")
+
+            # Write in-progress marker (for crash recovery debugging)
+            try:
+                progress_file.write_text(f"{thread.id}\n{i}/{len(unprocessed)}")
+            except Exception:
+                pass  # Non-critical, just for debugging
 
             try:
                 await self.insight_processor.extract_and_review(
@@ -294,6 +307,13 @@ class Orchestrator:
             # Small delay between threads to avoid rate limits
             if i < len(unprocessed):
                 await asyncio.sleep(5)
+
+        # Clear in-progress marker when done
+        try:
+            if progress_file.exists():
+                progress_file.unlink()
+        except Exception:
+            pass
 
         log.info(f"[backlog] Completed processing {len(unprocessed)} threads")
 
@@ -381,9 +401,11 @@ class Orchestrator:
         # Wait for all parallel work to complete
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        # Log any exceptions
+        # Count failures and implement exponential backoff
+        failure_count = 0
         for i, result in enumerate(results):
             if isinstance(result, Exception):
+                failure_count += 1
                 thread, model_name, _, task_type = work_items[i]
                 log.error(
                     "exploration.parallel_task.failed",
@@ -392,6 +414,24 @@ class Orchestrator:
                     task_type=task_type,
                     error=str(result),
                 )
+
+        # Track consecutive failures for backoff
+        if failure_count == len(results) and len(results) > 0:
+            # All tasks failed - increment consecutive failure counter
+            self._consecutive_failures += 1
+            backoff = min(
+                self.orchestration_config.get("backoff_base", 5) * (2 ** self._consecutive_failures),
+                self._max_backoff,
+            )
+            log.warning(
+                "exploration.cycle.all_failed",
+                consecutive_failures=self._consecutive_failures,
+                backoff_seconds=backoff,
+            )
+            await asyncio.sleep(backoff)
+        else:
+            # At least one task succeeded - reset failure counter
+            self._consecutive_failures = 0
 
     async def _do_exploration_and_save(self, thread, model_name, model):
         """Run exploration on a thread and save state."""

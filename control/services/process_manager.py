@@ -90,10 +90,19 @@ class ProcessManager:
         self._log_files[component] = log_file
         return log_file
 
+    def _validate_script(self, script_path: Path, component: str) -> None:
+        """Validate that a script file exists before starting."""
+        if not script_path.exists():
+            raise FileNotFoundError(
+                f"Script for {component} not found: {script_path}"
+            )
+
     def start_pool(self) -> subprocess.Popen:
         """Start the pool service."""
-        log_file = self._open_log_file("pool")
         pool_script = FANO_ROOT / "pool" / "run_pool.py"
+        self._validate_script(pool_script, "pool")
+
+        log_file = self._open_log_file("pool")
         proc = subprocess.Popen(
             [sys.executable, str(pool_script)],
             cwd=str(FANO_ROOT),
@@ -105,8 +114,10 @@ class ProcessManager:
 
     def start_explorer(self, mode: str = "start") -> subprocess.Popen:
         """Start the explorer."""
-        log_file = self._open_log_file("explorer")
         explorer_script = FANO_ROOT / "explorer" / "fano_explorer.py"
+        self._validate_script(explorer_script, "explorer")
+
+        log_file = self._open_log_file("explorer")
         proc = subprocess.Popen(
             [sys.executable, str(explorer_script), mode],
             cwd=str(FANO_ROOT),
@@ -118,8 +129,10 @@ class ProcessManager:
 
     def start_documenter(self) -> subprocess.Popen:
         """Start the documenter."""
-        log_file = self._open_log_file("documenter")
         documenter_script = FANO_ROOT / "documenter" / "fano_documenter.py"
+        self._validate_script(documenter_script, "documenter")
+
+        log_file = self._open_log_file("documenter")
         proc = subprocess.Popen(
             [sys.executable, str(documenter_script), "start"],
             cwd=str(FANO_ROOT),
@@ -131,8 +144,10 @@ class ProcessManager:
 
     def start_researcher(self) -> subprocess.Popen:
         """Start the researcher."""
-        log_file = self._open_log_file("researcher")
         researcher_script = FANO_ROOT / "researcher" / "main.py"
+        self._validate_script(researcher_script, "researcher")
+
+        log_file = self._open_log_file("researcher")
         proc = subprocess.Popen(
             [sys.executable, str(researcher_script), "start"],
             cwd=str(FANO_ROOT),
@@ -144,8 +159,10 @@ class ProcessManager:
 
     def start_orchestrator(self) -> subprocess.Popen:
         """Start the unified orchestrator."""
-        log_file = self._open_log_file("orchestrator")
         orchestrator_script = FANO_ROOT / "run_orchestrator.py"
+        self._validate_script(orchestrator_script, "orchestrator")
+
+        log_file = self._open_log_file("orchestrator")
         proc = subprocess.Popen(
             [sys.executable, str(orchestrator_script)],
             cwd=str(FANO_ROOT),

@@ -434,7 +434,12 @@ class JobStore:
             return False
 
     def _persist(self):
-        """Persist jobs to disk."""
+        """
+        Persist jobs to disk atomically.
+
+        Uses write-to-temp-file + rename pattern to ensure atomic updates.
+        This prevents data corruption if the process crashes during write.
+        """
         if not self.persist_path:
             return
 
@@ -444,10 +449,27 @@ class JobStore:
                 "queues": self._backend_queues,
             }
             self.persist_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.persist_path, "w") as f:
+
+            # Write to temp file first, then atomically rename
+            temp_path = self.persist_path.with_suffix(".tmp")
+            with open(temp_path, "w") as f:
                 json.dump(data, f)
+                f.flush()
+                # Ensure data is written to disk before rename
+                import os
+                os.fsync(f.fileno())
+
+            # Atomic rename (on POSIX this is atomic, on Windows it replaces)
+            temp_path.replace(self.persist_path)
         except Exception as e:
             log.error("pool.jobs.persist_failed", error=str(e))
+            # Clean up temp file if it exists
+            try:
+                temp_path = self.persist_path.with_suffix(".tmp")
+                if temp_path.exists():
+                    temp_path.unlink()
+            except Exception:
+                pass
 
     def _load_from_disk(self):
         """Load jobs from disk."""

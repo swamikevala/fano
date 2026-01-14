@@ -163,19 +163,21 @@ class RequestQueue:
         """
         restored = 0
         for item_data in items:
+            # Track counter from ALL items regardless of restoration success
+            # This prevents ID collisions even if some items fail to restore
+            try:
+                request_id = item_data.get("request_id", "")
+                counter = int(request_id.split("-")[-1])
+                if counter > self._request_counter:
+                    self._request_counter = counter
+            except (ValueError, IndexError, AttributeError):
+                pass
+
             try:
                 future = asyncio.get_event_loop().create_future()
                 queued = QueuedRequest.from_dict(item_data, future)
                 heappush(self._queue, queued)
                 restored += 1
-
-                # Update counter to avoid ID collisions
-                try:
-                    counter = int(queued.request_id.split("-")[-1])
-                    if counter > self._request_counter:
-                        self._request_counter = counter
-                except (ValueError, IndexError):
-                    pass
 
             except Exception as e:
                 log.error("pool.queue.restore_item_failed",

@@ -303,14 +303,39 @@ class Document:
             log.warning("documenter.document.section_not_found", section_id=section_id)
             return
 
-        # Find and replace section content in document
-        # This is a simplified approach - in production, be more careful
-        old_content = section.content
-        if old_content in self.content:
-            self.content = self.content.replace(old_content, new_content, 1)
+        # Find section by its metadata comment and replace content following it
+        # This is more reliable than simple string replacement which could match
+        # duplicated content in the wrong location
+        pattern = re.compile(
+            rf'(<!-- SECTION\s*\nid: {re.escape(section.id)}\n.*?-->\s*\n\n)'
+            rf'(.*?)(?=<!-- SECTION|\Z)',
+            re.DOTALL
+        )
+
+        match = pattern.search(self.content)
+        if match:
+            # Replace content after metadata comment
+            start = match.start(2)
+            end = match.end(2)
+            self.content = self.content[:start] + new_content + self.content[end:]
             section.content = new_content
             self._summary_stale = True
             log.info("documenter.document.section_updated", section_id=section_id)
+        else:
+            # Fallback: try simple replacement if regex doesn't match
+            # (handles legacy format without metadata comments)
+            old_content = section.content
+            if old_content in self.content:
+                self.content = self.content.replace(old_content, new_content, 1)
+                section.content = new_content
+                self._summary_stale = True
+                log.info("documenter.document.section_updated_fallback", section_id=section_id)
+            else:
+                log.warning(
+                    "documenter.document.section_update_failed",
+                    section_id=section_id,
+                    reason="content_not_found",
+                )
 
     def mark_section_reviewed(self, section_id: str):
         """Mark a section as reviewed."""

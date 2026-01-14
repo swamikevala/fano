@@ -52,6 +52,12 @@ class SynthesisEngine:
 
         Returns:
             True if thread is ready for synthesis.
+
+        Logic:
+            - Minimum 4 exchanges required
+            - Force synthesis at 12+ exchanges
+            - Allow synthesis at 8+ exchanges even with fewer critiques (prevents stuck threads)
+            - Otherwise require 2 critiques OR high profundity score
         """
         # Minimum exchanges
         min_exchanges = self.orchestration_config.get("min_exchanges_for_chunk", 4)
@@ -63,17 +69,23 @@ class SynthesisEngine:
         if thread.exchange_count >= max_exchanges:
             return True
 
+        # High exchange count threshold - allow synthesis even with fewer critiques
+        # This prevents threads from being stuck forever if critique models are unavailable
+        high_exchange_threshold = self.orchestration_config.get("high_exchange_threshold", 8)
+        if thread.exchange_count >= high_exchange_threshold:
+            return True
+
         # Count critique rounds
         critique_count = sum(1 for e in thread.exchanges if e.role == ExchangeRole.CRITIC)
         min_critiques = self.synthesis_config.get("min_critiques", 2)
-        if critique_count < min_critiques:
-            return False
 
         # Check for profundity signals in recent exchanges
         recent_text = " ".join(e.response for e in thread.exchanges[-4:])
         profundity_score = self.calculate_profundity(recent_text)
 
-        # Ready if high profundity
+        # Ready if enough critiques OR high profundity
+        if critique_count >= min_critiques:
+            return True
         if profundity_score > 0.6:
             return True
 

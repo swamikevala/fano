@@ -175,6 +175,10 @@ class BrowserPool:
                                  backend=name,
                                  result=result)
 
+                # Periodic cleanup of old completed/failed jobs (prevents memory leak)
+                if self.jobs:
+                    self.jobs.cleanup_old_jobs()
+
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -942,6 +946,8 @@ def create_app(config: dict) -> FastAPI:
                     timeout=5.0
                 )
             except asyncio.TimeoutError:
+                # Clear priority pause event before returning to avoid starving legacy workers
+                pool.priority_pause_event.clear()
                 return SubmitImmediateResponse(
                     success=False,
                     error="busy",

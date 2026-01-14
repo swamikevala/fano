@@ -168,9 +168,20 @@ Consider:
                     log.info("planning.selected_insight", insight_id=insight_id)
                     return {"type": "insight", "opportunity": opp}
 
-        # Fallback: couldn't parse ID, try first opportunity
-        log.warning("planning.id_parse_failed", trying_first=True)
-        return {"type": "insight", "opportunity": all_opportunities[0]}
+            # ID was parsed but didn't match any opportunity
+            log.warning(
+                "planning.id_not_found",
+                parsed_id=insight_id,
+                available_ids=[o.insight_id for o in all_opportunities[:5]],
+            )
+
+        # Fallback: couldn't parse ID or ID didn't match
+        # Return None to trigger retry rather than selecting arbitrary opportunity
+        log.warning(
+            "planning.id_parse_failed",
+            outcome_preview=outcome[:200],
+        )
+        return None
 
     async def _parse_prerequisite_decision(self, outcome: str) -> Optional[dict]:
         """Parse a PREREQUISITE decision from the LLM outcome."""

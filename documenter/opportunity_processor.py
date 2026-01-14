@@ -123,14 +123,18 @@ class OpportunityProcessor:
         )
         s.increment_consensus_calls()
 
-        # Check for errors first
+        # Check for errors first - technical failures should be distinguished
+        # from content rejections for better debugging
         if not result.success:
             log.error(
                 "math.evaluation_error",
                 insight_id=opportunity.insight_id,
                 outcome=result.outcome,
                 rounds=result.rounds,
+                error_type="consensus_failure",  # Technical error, not content rejection
             )
+            # Note: Returning False will mark as disputed in caller.
+            # This is intentional to prevent infinite retry loops on persistent errors.
             return False
 
         if result.converged and "DECISION: INCLUDE" in result.outcome.upper():
@@ -179,12 +183,13 @@ class OpportunityProcessor:
         )
         s.increment_consensus_calls()
 
-        # Check for errors first
+        # Check for errors first - technical failure
         if not result.success:
             log.error(
                 "draft.error",
                 insight_id=opportunity.insight_id,
                 outcome=result.outcome,
+                error_type="consensus_failure",
             )
             return None
 
@@ -234,9 +239,9 @@ class OpportunityProcessor:
         )
         s.increment_consensus_calls()
 
-        # Check for errors first
+        # Check for errors first - technical failure
         if not result.success:
-            log.error("exposition.error", outcome=result.outcome)
+            log.error("exposition.error", outcome=result.outcome, error_type="consensus_failure")
             return False
 
         if result.converged and "DECISION: APPROVE" in result.outcome.upper():
@@ -283,12 +288,28 @@ class OpportunityProcessor:
             requires=requires,
         )
 
-        # Add to document
+        # Add to document (in memory)
         s.document.append_section(section, content)
-        concepts_str = ", ".join(establishes) if establishes else "new content"
-        s.document.save(f"Incorporated insight {opportunity.insight_id}: {concepts_str}")
 
-        # Register concepts
+        # Try to persist to disk - rollback on failure
+        concepts_str = ", ".join(establishes) if establishes else "new content"
+        try:
+            s.document.save(f"Incorporated insight {opportunity.insight_id}: {concepts_str}")
+        except Exception as e:
+            # Rollback: remove section from memory to maintain consistency
+            log.error(
+                "content.save_failed",
+                section_id=section.id,
+                insight_id=opportunity.insight_id,
+                error=str(e),
+            )
+            # Remove the section we just added
+            if s.document.sections and s.document.sections[-1].id == section.id:
+                s.document.sections.pop()
+            # Don't mark as incorporated - will be retried next cycle
+            raise  # Re-raise to signal failure to caller
+
+        # Register concepts (only after successful save)
         s.concept_tracker.register_section(section)
 
         # Add to dedup checker for future duplicate detection
@@ -299,7 +320,7 @@ class OpportunityProcessor:
                 content_type=ContentType.SECTION,
             ))
 
-        # Mark opportunity as incorporated
+        # Mark opportunity as incorporated (only after successful save)
         s.opportunity_finder.mark_incorporated(opportunity)
 
         log.info(
@@ -363,8 +384,8 @@ class OpportunityProcessor:
         concepts_str = ", ".join(establishes) if establishes else "foundational content"
         s.document.save(f"Added prerequisite: {concepts_str}")
 
-        # Refresh concept tracker by recreating it
-        s.concept_tracker = ConceptTracker(s.document)
+        # Register new section's concepts incrementally instead of full rebuild
+        s.concept_tracker.register_section(section)
 
         # Add to dedup checker for future duplicate detection
         if s.dedup_checker:

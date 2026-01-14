@@ -18,7 +18,9 @@ log = get_logger("documenter", "opportunities")
 @dataclass
 class Opportunity:
     """An opportunity to add content to the document."""
-    type: str  # "blessed_insight" | "bridge" | "extension"
+    # Currently only "blessed_insight" is implemented.
+    # "bridge" and "extension" are reserved for future features.
+    type: str  # "blessed_insight" (| "bridge" | "extension" - reserved)
     source_file: Optional[str] = None
     insight_id: Optional[str] = None
     text: str = ""
@@ -45,6 +47,7 @@ class OpportunityFinder:
         concept_tracker: ConceptTracker,
         blessed_dir: Path,
         max_disputes: int = 3,
+        disputes_file: Optional[Path] = None,
     ):
         """
         Initialize opportunity finder.
@@ -54,12 +57,36 @@ class OpportunityFinder:
             concept_tracker: Concept dependency tracker
             blessed_dir: Directory containing blessed insight files
             max_disputes: Max times to retry a disputed item
+            disputes_file: Path to persist dispute counts (prevents reset between sessions)
         """
         self.document = document
         self.concept_tracker = concept_tracker
         self.blessed_dir = Path(blessed_dir)
         self.max_disputes = max_disputes
-        self._dispute_counts: dict[str, int] = {}
+        self._disputes_file = disputes_file or (Path(blessed_dir).parent / ".dispute_counts.json")
+        self._dispute_counts: dict[str, int] = self._load_disputes()
+
+    def _load_disputes(self) -> dict[str, int]:
+        """Load dispute counts from persistent storage."""
+        if self._disputes_file and self._disputes_file.exists():
+            try:
+                data = json.loads(self._disputes_file.read_text(encoding="utf-8"))
+                return {k: int(v) for k, v in data.items()}
+            except Exception as e:
+                log.warning("documenter.disputes.load_error", error=str(e))
+        return {}
+
+    def _save_disputes(self):
+        """Save dispute counts to persistent storage."""
+        if self._disputes_file:
+            try:
+                self._disputes_file.parent.mkdir(parents=True, exist_ok=True)
+                self._disputes_file.write_text(
+                    json.dumps(self._dispute_counts, indent=2),
+                    encoding="utf-8"
+                )
+            except Exception as e:
+                log.warning("documenter.disputes.save_error", error=str(e))
 
     def find_next(self) -> Optional[Opportunity]:
         """
@@ -213,6 +240,9 @@ class OpportunityFinder:
             self._dispute_counts[opportunity.insight_id] = (
                 self._dispute_counts.get(opportunity.insight_id, 0) + 1
             )
+
+            # Persist dispute counts to survive session restarts
+            self._save_disputes()
 
             count = self._dispute_counts[opportunity.insight_id]
             log.info(
