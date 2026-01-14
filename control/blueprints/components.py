@@ -30,10 +30,20 @@ def check_pool_health(host: str = "127.0.0.1", port: int = 9000) -> bool:
         return False
 
 
+def check_orchestrator_health(host: str = "127.0.0.1", port: int = 9001) -> bool:
+    """Check if orchestrator is responding to health checks."""
+    try:
+        import urllib.request
+        with urllib.request.urlopen(f"http://{host}:{port}/health", timeout=2) as resp:
+            return resp.status == 200
+    except Exception:
+        return False
+
+
 @bp.route("/start/<component>", methods=["POST"])
 def api_start(component: str):
     """Start a component."""
-    if component not in ["pool", "explorer", "documenter", "researcher"]:
+    if component not in ["pool", "orchestrator", "explorer", "documenter", "researcher"]:
         return jsonify({"error": f"Unknown component: {component}"}), 400
 
     config = load_config()
@@ -48,6 +58,9 @@ def api_start(component: str):
         pool_port = config.get("llm", {}).get("pool", {}).get("port", 9000)
         if check_pool_health(pool_host, pool_port):
             return jsonify({"error": "Pool is already running (detected on port)", "already_running": True}), 400
+    elif component == "orchestrator":
+        if check_orchestrator_health():
+            return jsonify({"error": "Orchestrator is already running (detected on port)", "already_running": True}), 400
     elif pm.is_running(component):
         return jsonify({"error": f"{component} is already running"}), 400
 
@@ -55,6 +68,10 @@ def api_start(component: str):
         if component == "pool":
             # Pool has no dependencies, start directly
             pm.start_pool()
+        elif component == "orchestrator":
+            # Orchestrator depends on pool
+            if not pm.start_with_deps(component, config):
+                return jsonify({"error": "Failed to start dependencies for orchestrator"}), 500
         elif component == "explorer":
             # Explorer depends on pool - use dependency-aware start
             options = request.json or {}
@@ -79,7 +96,7 @@ def api_start(component: str):
 @bp.route("/stop/<component>", methods=["POST"])
 def api_stop(component: str):
     """Stop a component."""
-    if component not in ["pool", "explorer", "documenter", "researcher"]:
+    if component not in ["pool", "orchestrator", "explorer", "documenter", "researcher"]:
         return jsonify({"error": f"Unknown component: {component}"}), 400
 
     pm = get_process_manager()

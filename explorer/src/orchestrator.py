@@ -322,19 +322,28 @@ class Orchestrator:
         # Collect work items: (thread, model_name, model, task_type)
         work_items = []
         assigned_thread_ids = set()
+        selected_seed_ids = set()  # Track seeds selected this cycle to avoid duplicates
 
         for model_name, model in available_models.items():
             # Select a thread not already assigned to another model
-            thread = self.thread_manager.select_thread(exclude_ids=assigned_thread_ids)
+            thread = self.thread_manager.select_thread(
+                exclude_ids=assigned_thread_ids,
+                exclude_seeds=selected_seed_ids,
+            )
 
             if thread is None:
-                # Spawn a new thread if none available
-                thread = self.thread_manager.spawn_new_thread()
+                # Spawn a new thread if none available, excluding already-selected seeds
+                thread = self.thread_manager.spawn_new_thread(exclude_seeds=selected_seed_ids)
                 log.info(
                     "exploration.thread.spawned",
                     thread_id=thread.id,
                     topic=thread.topic[:60],
                 )
+                # Track the seed used by this thread to prevent duplicate selection
+                if thread.primary_question_id:
+                    selected_seed_ids.add(thread.primary_question_id)
+                if thread.related_conjecture_ids:
+                    selected_seed_ids.update(thread.related_conjecture_ids)
 
             assigned_thread_ids.add(thread.id)
 

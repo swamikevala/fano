@@ -694,8 +694,256 @@ class GeminiInterface(BaseLLMInterface):
 
         log.info("browser.gemini.image_upload.started", image_count=len(images))
 
+        # Prepare temp files first
+        temp_files = []
+        filenames = []
         try:
-            # Find the file input element - Gemini may have different selectors
+            for img in images:
+                # Decode base64 data and write to temp file
+                image_data = base64.b64decode(img.data if hasattr(img, 'data') else img['data'])
+                filename = img.filename if hasattr(img, 'filename') else img['filename']
+                filenames.append(filename)
+
+                # Determine extension from filename or media type
+                ext = os.path.splitext(filename)[1]
+                if not ext:
+                    media_type = img.media_type if hasattr(img, 'media_type') else img.get('media_type', 'image/png')
+                    ext_map = {
+                        'image/png': '.png',
+                        'image/jpeg': '.jpg',
+                        'image/gif': '.gif',
+                        'image/webp': '.webp',
+                    }
+                    ext = ext_map.get(media_type, '.png')
+
+                # Create temp file
+                fd, temp_path = tempfile.mkstemp(suffix=ext)
+                os.write(fd, image_data)
+                os.close(fd)
+                temp_files.append(temp_path)
+
+            log.debug("browser.gemini.image_upload.temp_files_created", count=len(temp_files))
+
+            # Try Method 1: Use file_chooser event (handles native file dialogs)
+            upload_success = await self._upload_via_file_chooser(temp_files, filenames)
+            if upload_success:
+                return True
+
+            # Try Method 2: Direct file input (fallback)
+            upload_success = await self._upload_via_file_input(temp_files, filenames)
+            if upload_success:
+                return True
+
+            log.warning("browser.gemini.image_upload.all_methods_failed", image_count=len(images))
+            return False
+
+        except Exception as e:
+            log.error("browser.gemini.image_upload.failed",
+                     image_count=len(images),
+                     error_type=type(e).__name__,
+                     error=str(e))
+            return False
+        finally:
+            # Clean up temp files
+            for temp_path in temp_files:
+                try:
+                    os.unlink(temp_path)
+                except Exception:
+                    pass
+
+    async def _upload_via_file_chooser(self, temp_files: list, filenames: list) -> bool:
+        """
+        Upload files using Playwright's file_chooser event.
+        This handles native file dialogs that don't expose file input elements.
+
+        Gemini's UI flow:
+        1. Click "+" button to open attachment menu
+        2. Click "Upload files" from menu - THIS triggers the file dialog
+        """
+        try:
+            # Step 1: Find the "+" add button using JavaScript for more precision
+            # Look for buttons with add/plus icons near the input area
+            add_button = await self.page.evaluate_handle("""() => {
+                // Find buttons with mat-icon containing 'add' text
+                const buttons = document.querySelectorAll('button');
+                for (const btn of buttons) {
+                    const icon = btn.querySelector('mat-icon');
+                    if (icon) {
+                        const iconText = icon.textContent.trim().toLowerCase();
+                        if (iconText === 'add' || iconText === '+' || iconText === 'add_circle') {
+                            if (btn.offsetParent !== null) { // visible
+                                return btn;
+                            }
+                        }
+                    }
+                    // Also check aria-label
+                    const label = btn.getAttribute('aria-label') || '';
+                    if (label.toLowerCase().includes('add') && btn.offsetParent !== null) {
+                        return btn;
+                    }
+                }
+                return null;
+            }""")
+
+            if not add_button or await add_button.evaluate("el => el === null"):
+                # Fallback to CSS selectors
+                add_button_selectors = [
+                    "button[aria-label='Add']",
+                    "button[aria-label='+']",
+                    "button[data-test-id='add-button']",
+                    ".input-area button:first-of-type",
+                ]
+
+                add_button = None
+                used_selector = None
+                for selector in add_button_selectors:
+                    try:
+                        btn = await self.page.query_selector(selector)
+                        if btn and await btn.is_visible():
+                            add_button = btn
+                            used_selector = selector
+                            break
+                    except Exception:
+                        continue
+
+                if not add_button:
+                    log.debug("browser.gemini.image_upload.no_add_button_found")
+                    return False
+                log.info("browser.gemini.image_upload.found_add_button", selector=used_selector)
+            else:
+                log.info("browser.gemini.image_upload.found_add_button", selector="javascript:mat-icon=add")
+
+            # Click to open the menu
+            await add_button.click()
+            await asyncio.sleep(0.8)  # Wait for menu to appear
+
+            # Step 2: Find "Upload file" menu item using JavaScript
+            upload_item = await self.page.evaluate_handle("""() => {
+                // Look for menu items with "Upload" text
+                const menuItems = document.querySelectorAll('[role="menuitem"], [role="option"], .mat-menu-item, .menu-item');
+                for (const item of menuItems) {
+                    const text = item.textContent.toLowerCase();
+                    if (text.includes('upload') && item.offsetParent !== null) {
+                        return item;
+                    }
+                }
+                // Also check for any visible element with upload text
+                const allElements = document.querySelectorAll('button, div[role="button"], span');
+                for (const el of allElements) {
+                    const text = el.textContent.trim().toLowerCase();
+                    if (text === 'upload file' || text === 'upload files' || text === 'upload') {
+                        if (el.offsetParent !== null) {
+                            return el;
+                        }
+                    }
+                }
+                return null;
+            }""")
+
+            if not upload_item or await upload_item.evaluate("el => el === null"):
+                # Fallback to CSS selectors
+                upload_menu_selectors = [
+                    "[role='menuitem']:has-text('Upload')",
+                    "button:has-text('Upload file')",
+                    "[aria-label*='Upload file']",
+                    "span:has-text('Upload file')",
+                ]
+
+                upload_item = None
+                for selector in upload_menu_selectors:
+                    try:
+                        item = await self.page.query_selector(selector)
+                        if item and await item.is_visible():
+                            upload_item = item
+                            log.info("browser.gemini.image_upload.found_upload_menu", selector=selector)
+                            break
+                    except Exception:
+                        continue
+
+                if not upload_item:
+                    log.debug("browser.gemini.image_upload.no_upload_menu_found")
+                    # Try pressing Escape to close any open menu
+                    await self.page.keyboard.press("Escape")
+                    return False
+            else:
+                log.info("browser.gemini.image_upload.found_upload_menu", selector="javascript:upload-text")
+
+            # Now set up file_chooser and click the upload menu item
+            async with self.page.expect_file_chooser(timeout=5000) as fc_info:
+                await upload_item.click()
+
+            file_chooser = await fc_info.value
+            await file_chooser.set_files(temp_files)
+            log.info("browser.gemini.image_upload.file_chooser_success", file_count=len(temp_files))
+
+            # Wait for upload processing
+            await asyncio.sleep(1.5)
+
+            # Verify upload by checking for preview
+            if await self._verify_image_preview():
+                log.info("browser.gemini.image_upload.verified", filenames=filenames)
+                return True
+
+            # Even if we can't verify preview, the upload might have worked
+            log.info("browser.gemini.image_upload.completed_no_preview", filenames=filenames)
+            return True
+
+        except Exception as e:
+            # TimeoutError means no file dialog appeared - try fallback
+            if "timeout" in str(e).lower():
+                log.debug("browser.gemini.image_upload.no_file_dialog", error=str(e))
+            else:
+                log.warning("browser.gemini.image_upload.file_chooser_error",
+                          error_type=type(e).__name__, error=str(e))
+
+            # Debug: log what buttons/menus are visible
+            try:
+                debug_info = await self.page.evaluate("""() => {
+                    const info = { buttons: [], menuItems: [], matIcons: [] };
+                    // Get all visible buttons with aria-labels
+                    document.querySelectorAll('button').forEach(btn => {
+                        if (btn.offsetParent !== null) {
+                            info.buttons.push({
+                                label: btn.getAttribute('aria-label') || '',
+                                text: btn.textContent.trim().substring(0, 50)
+                            });
+                        }
+                    });
+                    // Get all menu items
+                    document.querySelectorAll('[role="menuitem"]').forEach(item => {
+                        if (item.offsetParent !== null) {
+                            info.menuItems.push(item.textContent.trim().substring(0, 50));
+                        }
+                    });
+                    // Get mat-icon contents
+                    document.querySelectorAll('mat-icon').forEach(icon => {
+                        if (icon.offsetParent !== null) {
+                            info.matIcons.push(icon.textContent.trim());
+                        }
+                    });
+                    return info;
+                }""")
+                log.debug("browser.gemini.image_upload.debug_info",
+                         buttons=debug_info.get('buttons', [])[:5],
+                         menu_items=debug_info.get('menuItems', [])[:5],
+                         mat_icons=debug_info.get('matIcons', [])[:10])
+            except Exception:
+                pass
+
+            # Try pressing Escape to close any open menu
+            try:
+                await self.page.keyboard.press("Escape")
+            except Exception:
+                pass
+            return False
+
+    async def _upload_via_file_input(self, temp_files: list, filenames: list) -> bool:
+        """
+        Upload files by finding and setting file input elements directly.
+        Fallback method when file_chooser doesn't work.
+        """
+        try:
+            # Try to find file input elements directly
             file_input_selectors = [
                 "input[type='file'][accept*='image']",
                 "input[type='file'][multiple]",
@@ -710,145 +958,107 @@ class GeminiInterface(BaseLLMInterface):
                     break
 
             if not file_input:
-                # Gemini uses a two-step process:
-                # 1. Click "+" button (shows "Add files" on hover)
-                # 2. Click "Upload files" from the menu
-
-                # Step 1: Click the "+" / "Add files" button
+                # Try clicking menu buttons to reveal file input
+                # Gemini may use a two-step process: Add files -> Upload files
                 add_button_selectors = [
                     "button[aria-label='Add files']",
                     "button[aria-label*='Add files']",
                     "button[aria-label='+']",
                     "button[aria-label='Add']",
                     "[aria-label='Add files']",
-                    "[aria-label*='Add files']",
-                    # Fallbacks
-                    "button[mattooltip*='Add files']",
-                    "[data-tooltip*='Add files']",
                 ]
 
-                add_button_clicked = False
                 for selector in add_button_selectors:
                     try:
                         btn = await self.page.query_selector(selector)
                         if btn and await btn.is_visible():
-                            log.info("browser.gemini.image_upload.clicking_add_button", selector=selector)
+                            log.info("browser.gemini.image_upload.clicking_add_for_menu", selector=selector)
                             await btn.click()
-                            await asyncio.sleep(0.5)
-                            add_button_clicked = True
-                            break
+                            await asyncio.sleep(0.8)  # Wait for menu
+
+                            # Look for "Upload files" menu item
+                            upload_menu_selectors = [
+                                "text='Upload files'",
+                                "[role='menuitem']:has-text('Upload files')",
+                                "[role='menuitem']:has-text('Upload')",
+                                "button:has-text('Upload files')",
+                                "[aria-label='Upload files']",
+                                "div:has-text('Upload files')",
+                            ]
+
+                            for menu_selector in upload_menu_selectors:
+                                try:
+                                    menu_item = await self.page.query_selector(menu_selector)
+                                    if menu_item and await menu_item.is_visible():
+                                        log.info("browser.gemini.image_upload.clicking_upload_menu", selector=menu_selector)
+                                        await menu_item.click()
+                                        await asyncio.sleep(0.5)
+                                        break
+                                except Exception:
+                                    continue
+
+                            # Check for file input again
+                            for input_sel in file_input_selectors:
+                                file_input = await self.page.query_selector(input_sel)
+                                if file_input:
+                                    log.info("browser.gemini.image_upload.input_found_after_menu", selector=input_sel)
+                                    break
+
+                            if file_input:
+                                break
                     except Exception:
                         continue
 
-                if add_button_clicked:
-                    # Step 2: Click "Upload files" from the menu
-                    upload_menu_selectors = [
-                        "text='Upload files'",
-                        "button:has-text('Upload files')",
-                        "[aria-label='Upload files']",
-                        "div:has-text('Upload files')",
-                        # With paperclip icon
-                        "button:has([data-icon='attach_file']):has-text('Upload')",
-                        # Generic menu item
-                        "[role='menuitem']:has-text('Upload')",
-                        "[role='option']:has-text('Upload')",
-                    ]
-
-                    for selector in upload_menu_selectors:
-                        try:
-                            menu_item = await self.page.query_selector(selector)
-                            if menu_item and await menu_item.is_visible():
-                                log.info("browser.gemini.image_upload.clicking_upload_menu", selector=selector)
-                                await menu_item.click()
-                                await asyncio.sleep(0.5)
-                                break
-                        except Exception:
-                            continue
-
-                    # Now check for file input again
-                    for input_selector in file_input_selectors:
-                        file_input = await self.page.query_selector(input_selector)
-                        if file_input:
-                            log.info("browser.gemini.image_upload.input_found_after_menu", selector=input_selector)
-                            break
-
             if not file_input:
-                log.warning("browser.gemini.image_upload.no_file_input",
-                           image_count=len(images),
-                           tried_selectors=len(file_input_selectors))
+                log.debug("browser.gemini.image_upload.no_file_input_found")
                 return False
 
-            # Create temporary files for each image
-            temp_files = []
-            filenames = []
-            try:
-                for img in images:
-                    # Decode base64 data and write to temp file
-                    image_data = base64.b64decode(img.data if hasattr(img, 'data') else img['data'])
-                    filename = img.filename if hasattr(img, 'filename') else img['filename']
-                    filenames.append(filename)
+            # Upload files
+            await file_input.set_input_files(temp_files)
+            log.info("browser.gemini.image_upload.files_set", file_count=len(temp_files))
 
-                    # Determine extension from filename or media type
-                    ext = os.path.splitext(filename)[1]
-                    if not ext:
-                        media_type = img.media_type if hasattr(img, 'media_type') else img.get('media_type', 'image/png')
-                        ext_map = {
-                            'image/png': '.png',
-                            'image/jpeg': '.jpg',
-                            'image/gif': '.gif',
-                            'image/webp': '.webp',
-                        }
-                        ext = ext_map.get(media_type, '.png')
+            # Wait for upload processing
+            await asyncio.sleep(1.5)
 
-                    # Create temp file
-                    fd, temp_path = tempfile.mkstemp(suffix=ext)
-                    os.write(fd, image_data)
-                    os.close(fd)
-                    temp_files.append(temp_path)
-
-                # Upload all files at once using set_input_files
-                await file_input.set_input_files(temp_files)
-
-                # Wait for upload to process
-                await asyncio.sleep(1.0)
-
-                # Check for image preview to confirm upload
-                preview_found = False
-                preview_selectors = [
-                    "img[src*='blob:']",
-                    "img[alt*='Upload']",
-                    ".uploaded-image",
-                    "[data-image-preview]",
-                    ".image-preview",
-                    "img[src*='data:']",
-                ]
-
-                for selector in preview_selectors:
-                    preview = await self.page.query_selector(selector)
-                    if preview and await preview.is_visible():
-                        preview_found = True
-                        break
-
-                log.info("browser.gemini.image_upload.completed",
-                        image_count=len(temp_files),
-                        filenames=filenames,
-                        preview_detected=preview_found)
+            # Verify upload
+            if await self._verify_image_preview():
+                log.info("browser.gemini.image_upload.verified_via_input", filenames=filenames)
                 return True
 
-            finally:
-                # Clean up temp files
-                for temp_path in temp_files:
-                    try:
-                        os.unlink(temp_path)
-                    except Exception:
-                        pass
+            log.info("browser.gemini.image_upload.completed_via_input", filenames=filenames)
+            return True
 
         except Exception as e:
-            log.error("browser.gemini.image_upload.failed",
-                     image_count=len(images),
-                     error_type=type(e).__name__,
-                     error=str(e))
+            log.warning("browser.gemini.image_upload.file_input_error",
+                       error_type=type(e).__name__, error=str(e))
             return False
+
+    async def _verify_image_preview(self) -> bool:
+        """Check if image preview is visible to confirm upload."""
+        preview_selectors = [
+            "img[src*='blob:']",
+            "img[alt*='Upload']",
+            "img[alt*='preview']",
+            ".uploaded-image",
+            "[data-image-preview]",
+            ".image-preview",
+            "img[src*='data:']",
+            # Gemini-specific preview containers
+            ".attachment-preview",
+            "[data-attachment]",
+            ".file-preview",
+        ]
+
+        for selector in preview_selectors:
+            try:
+                preview = await self.page.query_selector(selector)
+                if preview and await preview.is_visible():
+                    log.debug("browser.gemini.image_upload.preview_found", selector=selector)
+                    return True
+            except Exception:
+                continue
+
+        return False
 
     async def send_message(self, message: str, use_deep_think: bool = False, images: list = None) -> str:
         """

@@ -107,3 +107,52 @@ class AuthResponse(BaseModel):
     """Response from auth request."""
     success: bool
     message: str
+
+
+# ==================== JIT ORCHESTRATOR API MODELS ====================
+
+
+class SubmitImmediateRequest(BaseModel):
+    """Request for JIT immediate submission (bypasses queue)."""
+    backend: str
+    prompt: str
+    idempotency_token: str  # Format: "{task_id}:{attempt}" for deduplication
+    thread_id: Optional[str] = None  # URL for thread navigation
+    thread_title: Optional[str] = None  # Title for sidebar fallback
+    deep_mode: bool = False
+    images: list[ImageAttachment] = Field(default_factory=list)
+
+
+class SubmitImmediateResponse(BaseModel):
+    """Response from submit_immediate."""
+    success: bool
+    request_id: Optional[str] = None
+    error: Optional[str] = None
+    message: Optional[str] = None
+    # If idempotency token matched existing request
+    existing_request_id: Optional[str] = None
+    # Captured after execution - for Orchestrator to save for thread navigation
+    thread_url: Optional[str] = None
+    thread_title: Optional[str] = None
+    # The actual response content
+    response: Optional[str] = None
+    deep_mode_used: bool = False
+
+
+class ActiveRequest(BaseModel):
+    """Information about an active request (for recovery)."""
+    request_id: str
+    backend: str
+    thread_id: Optional[str] = None
+    thread_title: Optional[str] = None
+    chat_url: Optional[str] = None
+    deep_mode: bool = False
+    started_at: float
+    prompt_preview: Optional[str] = None
+
+
+class BackendBusyResponse(BaseModel):
+    """Response from is_backend_busy check."""
+    busy: bool
+    current_request_id: Optional[str] = None
+    elapsed_seconds: Optional[float] = None

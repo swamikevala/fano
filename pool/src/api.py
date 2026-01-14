@@ -14,7 +14,8 @@ from shared.logging import get_logger
 from .models import (
     SendRequest, SendResponse, Backend, Priority,
     BackendStatus, PoolStatus, HealthResponse, AuthResponse,
-    JobSubmitRequest,
+    JobSubmitRequest, SubmitImmediateRequest, SubmitImmediateResponse,
+    ActiveRequest, BackendBusyResponse, SendOptions, ImageAttachment,
 )
 from .state import StateManager
 from .queue import QueueManager, QueueFullError
@@ -46,23 +47,30 @@ class BrowserPool:
         # Initialize queue manager (legacy sync mode)
         self.queues = QueueManager(config)
 
+        # JIT Orchestrator support: priority pause event
+        # When set, legacy workers should yield to allow submit_immediate to run
+        self.priority_pause_event = asyncio.Event()
+
         # Initialize workers (but don't start yet)
         self.workers = {}
         backends_config = config.get("backends", {})
 
         if backends_config.get("gemini", {}).get("enabled", True):
             self.workers["gemini"] = GeminiWorker(
-                config, self.state, self.queues.get_queue("gemini"), self.jobs
+                config, self.state, self.queues.get_queue("gemini"), self.jobs,
+                priority_pause_event=self.priority_pause_event,
             )
 
         if backends_config.get("chatgpt", {}).get("enabled", True):
             self.workers["chatgpt"] = ChatGPTWorker(
-                config, self.state, self.queues.get_queue("chatgpt"), self.jobs
+                config, self.state, self.queues.get_queue("chatgpt"), self.jobs,
+                priority_pause_event=self.priority_pause_event,
             )
 
         if backends_config.get("claude", {}).get("enabled", True):
             self.workers["claude"] = ClaudeWorker(
-                config, self.state, self.queues.get_queue("claude"), self.jobs
+                config, self.state, self.queues.get_queue("claude"), self.jobs,
+                priority_pause_event=self.priority_pause_event,
             )
 
         # Watchdog task for stuck detection
@@ -71,6 +79,18 @@ class BrowserPool:
         self._watchdog_enabled = watchdog_config.get("enabled", True)
         self._watchdog_interval = watchdog_config.get("check_interval_seconds", 60)
         self._backends_config = backends_config
+
+        # Idempotency token tracking for submit_immediate
+        # Maps token -> request_id for deduplication
+        self._idempotency_tokens: dict[str, str] = {}
+        self._idempotency_lock = asyncio.Lock()
+
+        # Per-backend locks for submit_immediate
+        self._backend_locks: dict[str, asyncio.Lock] = {
+            "gemini": asyncio.Lock(),
+            "chatgpt": asyncio.Lock(),
+            "claude": asyncio.Lock(),
+        }
 
     async def startup(self):
         """Start all workers and connect to backends."""
@@ -814,7 +834,403 @@ def create_app(config: dict) -> FastAPI:
             log.warning("pool.recovery.not_found", job_id=job_id)
             return {"success": False, "message": f"Job {job_id} not found"}
 
+    # ==================== JIT ORCHESTRATOR ENDPOINTS ====================
+
+    @app.get("/backend/{backend}/busy", response_model=BackendBusyResponse)
+    async def is_backend_busy(backend: str):
+        """
+        Check if a backend is currently busy processing a request.
+
+        Used by Orchestrator JIT loop to check before submitting.
+
+        Returns:
+            {busy: bool, current_request_id?: str, elapsed_seconds?: float}
+        """
+        if backend not in pool.workers:
+            raise HTTPException(status_code=404, detail=f"Unknown backend: {backend}")
+
+        worker = pool.workers[backend]
+        if worker._current_request_id is not None:
+            elapsed = time.time() - worker._current_start_time if worker._current_start_time else 0
+            return BackendBusyResponse(
+                busy=True,
+                current_request_id=worker._current_request_id,
+                elapsed_seconds=round(elapsed, 1),
+            )
+        return BackendBusyResponse(busy=False)
+
+    @app.post("/submit_immediate", response_model=SubmitImmediateResponse)
+    async def submit_immediate(request: SubmitImmediateRequest):
+        """
+        Submit a request immediately, bypassing the queue.
+
+        This is the JIT submission endpoint for the Orchestrator. It:
+        1. Sets priority_pause_event to signal legacy workers to yield
+        2. Acquires the backend lock
+        3. Executes the request directly
+        4. Returns the result
+
+        Supports idempotency via token - if the same token is submitted again,
+        returns the existing request_id instead of creating a new one.
+
+        Args:
+            request: SubmitImmediateRequest with backend, prompt, token, etc.
+
+        Returns:
+            SubmitImmediateResponse with request_id or error
+        """
+        backend = request.backend
+
+        # Validate backend
+        if backend not in pool.workers:
+            return SubmitImmediateResponse(
+                success=False,
+                error="unknown_backend",
+                message=f"Backend '{backend}' not found",
+            )
+
+        # Check if backend is available (authenticated, not rate limited)
+        if not pool.state.is_available(backend):
+            state = pool.state.get_backend_state(backend)
+            if state.get("rate_limited"):
+                return SubmitImmediateResponse(
+                    success=False,
+                    error="rate_limited",
+                    message=f"{backend} is rate limited",
+                )
+            else:
+                return SubmitImmediateResponse(
+                    success=False,
+                    error="auth_required",
+                    message=f"{backend} requires authentication",
+                )
+
+        # Check idempotency token
+        async with pool._idempotency_lock:
+            if request.idempotency_token in pool._idempotency_tokens:
+                existing_id = pool._idempotency_tokens[request.idempotency_token]
+                log.info("pool.submit_immediate.idempotent",
+                        backend=backend,
+                        token=request.idempotency_token,
+                        existing_id=existing_id)
+                return SubmitImmediateResponse(
+                    success=True,
+                    request_id=existing_id,
+                    existing_request_id=existing_id,
+                )
+
+        # Try to acquire the backend lock
+        backend_lock = pool._backend_locks.get(backend)
+        if not backend_lock:
+            return SubmitImmediateResponse(
+                success=False,
+                error="internal_error",
+                message=f"No lock for backend {backend}",
+            )
+
+        # Set priority pause event to signal legacy workers
+        pool.priority_pause_event.set()
+
+        try:
+            # Wait briefly for legacy workers to yield
+            await asyncio.sleep(0.1)
+
+            # Try to acquire lock with timeout
+            try:
+                acquired = await asyncio.wait_for(
+                    backend_lock.acquire(),
+                    timeout=5.0
+                )
+            except asyncio.TimeoutError:
+                return SubmitImmediateResponse(
+                    success=False,
+                    error="busy",
+                    message=f"{backend} is busy and could not be acquired",
+                )
+
+            try:
+                # Generate request ID
+                import uuid
+                request_id = str(uuid.uuid4())
+
+                # Register idempotency token
+                async with pool._idempotency_lock:
+                    pool._idempotency_tokens[request.idempotency_token] = request_id
+
+                log.info("pool.submit_immediate.start",
+                        backend=backend,
+                        request_id=request_id,
+                        token=request.idempotency_token,
+                        thread_id=request.thread_id,
+                        deep_mode=request.deep_mode)
+
+                worker = pool.workers[backend]
+
+                # Navigate to thread if thread_id (URL) provided
+                if request.thread_id and worker.browser and worker.browser.page:
+                    nav_success = await _navigate_to_thread(
+                        worker.browser,
+                        request.thread_id,
+                        request.thread_title,
+                        backend
+                    )
+                    if not nav_success:
+                        return SubmitImmediateResponse(
+                            success=False,
+                            error="navigation_failed",
+                            message=f"Failed to navigate to thread {request.thread_id}",
+                        )
+
+                # Build SendRequest
+                send_request = SendRequest(
+                    backend=Backend(backend),
+                    prompt=request.prompt,
+                    options=SendOptions(
+                        deep_mode=request.deep_mode,
+                        new_chat=not bool(request.thread_id),  # New chat if no thread_id
+                        priority=Priority.HIGH,
+                        timeout_seconds=3600,
+                    ),
+                    thread_id=request.thread_id,
+                    images=request.images,
+                )
+
+                # Track the request
+                worker._current_request_id = request_id
+                worker._current_prompt = request.prompt
+                worker._current_start_time = time.time()
+
+                # Process the request
+                response = await worker._process_request(send_request)
+
+                # Capture URL and title after execution
+                thread_url = None
+                thread_title = None
+                if worker.browser and worker.browser.page:
+                    try:
+                        thread_url = worker.browser.page.url
+                        thread_title = await worker.browser.page.title()
+                    except Exception as e:
+                        log.warning("pool.submit_immediate.capture_failed",
+                                   backend=backend, error=str(e))
+
+                # Clear tracking
+                worker._current_request_id = None
+                worker._current_prompt = None
+                worker._current_start_time = None
+
+                if response.success:
+                    log.info("pool.submit_immediate.complete",
+                            backend=backend,
+                            request_id=request_id,
+                            response_length=len(response.response or ""),
+                            thread_url=thread_url,
+                            thread_title=thread_title)
+                    return SubmitImmediateResponse(
+                        success=True,
+                        request_id=request_id,
+                        thread_url=thread_url,
+                        thread_title=thread_title,
+                        response=response.response,
+                        deep_mode_used=response.metadata.deep_mode_used if response.metadata else False,
+                    )
+                else:
+                    log.error("pool.submit_immediate.failed",
+                             backend=backend,
+                             request_id=request_id,
+                             error=response.error,
+                             message=response.message)
+                    return SubmitImmediateResponse(
+                        success=False,
+                        request_id=request_id,
+                        error=response.error,
+                        message=response.message,
+                    )
+
+            finally:
+                backend_lock.release()
+
+        finally:
+            # Clear priority pause event
+            pool.priority_pause_event.clear()
+
+    @app.get("/active_requests")
+    async def get_active_requests():
+        """
+        Get all currently active requests across all backends.
+
+        Used by Orchestrator on startup for reconciliation:
+        - Re-attach to tasks that are RUNNING in Orchestrator AND in Pool
+        - Mark FAILED tasks that are RUNNING in Orchestrator but NOT in Pool
+        - Kill zombie requests in Pool that Orchestrator doesn't know about
+
+        Returns:
+            {"requests": [ActiveRequest, ...]}
+        """
+        requests = []
+
+        for backend, worker in pool.workers.items():
+            if worker._current_request_id:
+                elapsed = time.time() - worker._current_start_time if worker._current_start_time else 0
+                prompt_preview = (worker._current_prompt[:200] + "...") if worker._current_prompt and len(worker._current_prompt) > 200 else worker._current_prompt
+
+                # Get chat URL from state or job
+                chat_url = None
+                thread_title = None
+                deep_mode = False
+
+                if worker._current_job:
+                    chat_url = worker._current_job.chat_url
+                    deep_mode = worker._current_job.deep_mode
+                else:
+                    active_work = pool.state.get_active_work(backend, check_staleness=False)
+                    if active_work:
+                        chat_url = active_work.get("chat_url")
+                        deep_mode = active_work.get("options", {}).get("deep_mode", False)
+
+                # Try to get title from browser
+                if worker.browser and worker.browser.page:
+                    try:
+                        thread_title = await worker.browser.page.title()
+                    except Exception:
+                        pass
+
+                requests.append(ActiveRequest(
+                    request_id=worker._current_request_id,
+                    backend=backend,
+                    thread_id=worker._current_job.thread_id if worker._current_job else None,
+                    thread_title=thread_title,
+                    chat_url=chat_url,
+                    deep_mode=deep_mode,
+                    started_at=worker._current_start_time or time.time(),
+                    prompt_preview=prompt_preview,
+                ))
+
+        log.info("pool.active_requests.list", count=len(requests))
+        return {"requests": requests}
+
     return app
+
+
+async def _navigate_to_thread(browser, thread_url: str, thread_title: Optional[str], backend: str) -> bool:
+    """
+    Navigate to a thread URL with sidebar fallback.
+
+    Args:
+        browser: Browser interface instance
+        thread_url: URL to navigate to (e.g., https://chatgpt.com/c/123-abc)
+        thread_title: Title to search for in sidebar if URL fails
+        backend: Backend name for logging
+
+    Returns:
+        True if navigation succeeded, False otherwise
+    """
+    if not browser.page:
+        log.error("pool.navigate.no_page", backend=backend)
+        return False
+
+    try:
+        # Step A: Direct URL navigation
+        log.info("pool.navigate.direct", backend=backend, url=thread_url)
+        response = await browser.page.goto(thread_url, wait_until="networkidle")
+
+        # Check if navigation succeeded (not 404)
+        if response and response.status == 200:
+            await asyncio.sleep(1)  # Let page settle
+            log.info("pool.navigate.success", backend=backend, url=thread_url)
+            return True
+
+        # Step B: Sidebar fallback if we have a title
+        if thread_title:
+            log.info("pool.navigate.sidebar_fallback",
+                    backend=backend,
+                    title=thread_title,
+                    status=response.status if response else None)
+            return await _navigate_via_sidebar(browser, thread_title, backend)
+
+        log.warning("pool.navigate.failed",
+                   backend=backend,
+                   url=thread_url,
+                   status=response.status if response else None)
+        return False
+
+    except Exception as e:
+        log.error("pool.navigate.error", backend=backend, url=thread_url, error=str(e))
+
+        # Try sidebar fallback on exception too
+        if thread_title:
+            log.info("pool.navigate.sidebar_fallback_on_error", backend=backend, title=thread_title)
+            try:
+                return await _navigate_via_sidebar(browser, thread_title, backend)
+            except Exception as e2:
+                log.error("pool.navigate.sidebar_error", backend=backend, error=str(e2))
+
+        return False
+
+
+async def _navigate_via_sidebar(browser, thread_title: str, backend: str) -> bool:
+    """
+    Navigate to a thread by finding it in the sidebar.
+
+    Searches the sidebar for a thread matching the given title and clicks it.
+
+    Args:
+        browser: Browser interface instance
+        thread_title: Title to search for
+        backend: Backend name for logging
+
+    Returns:
+        True if thread was found and clicked, False otherwise
+    """
+    if not browser.page:
+        return False
+
+    try:
+        # Different selectors for different backends
+        if backend == "chatgpt":
+            # ChatGPT sidebar structure
+            sidebar_selector = "nav[aria-label='Chat history']"
+            item_selector = "a[href^='/c/']"
+        elif backend == "gemini":
+            # Gemini sidebar structure (may need adjustment)
+            sidebar_selector = "[role='navigation']"
+            item_selector = "a[href*='/app/']"
+        else:
+            # Claude or unknown - try generic
+            sidebar_selector = "nav"
+            item_selector = "a"
+
+        # Wait for sidebar
+        await browser.page.wait_for_selector(sidebar_selector, timeout=5000)
+
+        # Find all chat items
+        items = await browser.page.query_selector_all(item_selector)
+
+        for item in items:
+            try:
+                text = await item.inner_text()
+                # Check if title matches (partial match OK)
+                if thread_title.lower() in text.lower() or text.lower() in thread_title.lower():
+                    log.info("pool.navigate.sidebar_found",
+                            backend=backend,
+                            title=thread_title,
+                            found_text=text[:50])
+                    await item.click()
+                    await browser.page.wait_for_load_state("networkidle")
+                    await asyncio.sleep(1)
+                    return True
+            except Exception:
+                continue  # Try next item
+
+        log.warning("pool.navigate.sidebar_not_found",
+                   backend=backend,
+                   title=thread_title,
+                   items_checked=len(items))
+        return False
+
+    except Exception as e:
+        log.error("pool.navigate.sidebar_error", backend=backend, error=str(e))
+        return False
 
 
 def load_config() -> dict:

@@ -28,6 +28,26 @@ def check_pool_health(host: str = "127.0.0.1", port: int = 9000) -> bool:
         return False
 
 
+def check_orchestrator_health(host: str = "127.0.0.1", port: int = 9001) -> bool:
+    """Check if orchestrator is responding to health checks."""
+    try:
+        import urllib.request
+        with urllib.request.urlopen(f"http://{host}:{port}/health", timeout=2) as resp:
+            return resp.status == 200
+    except Exception:
+        return False
+
+
+def get_orchestrator_status(host: str = "127.0.0.1", port: int = 9001) -> dict:
+    """Get orchestrator status from its API."""
+    try:
+        import urllib.request
+        with urllib.request.urlopen(f"http://{host}:{port}/status", timeout=2) as resp:
+            return json.loads(resp.read().decode())
+    except Exception:
+        return None
+
+
 def get_stats() -> dict:
     """Get statistics from logs and data directories."""
     stats = {
@@ -124,6 +144,12 @@ def api_status():
     # Check researcher status
     researcher_running = pm.is_running("researcher") if pm else False
 
+    # Check orchestrator status
+    orchestrator_proc_running = pm.is_running("orchestrator") if pm else False
+    orchestrator_responding = check_orchestrator_health()
+    orchestrator_running = orchestrator_proc_running or orchestrator_responding
+    orchestrator_status = get_orchestrator_status() if orchestrator_running else None
+
     # Get backend status
     backends = {}
     llm_config = config.get("llm", {}).get("backends", {})
@@ -170,6 +196,12 @@ def api_status():
             "pid": pm.get_pid("pool") if pm else None,
             "external": pool_responding and not pool_proc_running,
         },
+        "orchestrator": {
+            "running": orchestrator_running,
+            "pid": pm.get_pid("orchestrator") if pm else None,
+            "external": orchestrator_responding and not orchestrator_proc_running,
+            "status": orchestrator_status,
+        },
         "explorer": {
             "running": explorer_running,
             "pid": pm.get_pid("explorer") if pm else None,
@@ -190,7 +222,7 @@ def api_status():
 @bp.route("/logs/<component>")
 def api_logs(component: str):
     """Get recent logs for a component."""
-    if component not in ["pool", "explorer", "documenter", "llm"]:
+    if component not in ["pool", "explorer", "documenter", "orchestrator", "llm", "researcher"]:
         return jsonify({"error": f"Unknown component: {component}"}), 400
 
     log_file = LOGS_DIR / f"{component}.jsonl"

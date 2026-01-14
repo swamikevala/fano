@@ -31,6 +31,7 @@ class ProcessManager:
     # Service dependencies - which services must be running before others can start
     SERVICE_DEPENDENCIES = {
         "pool": [],
+        "orchestrator": ["pool"],
         "explorer": ["pool"],
         "documenter": ["pool"],
         "researcher": ["pool"],
@@ -40,6 +41,7 @@ class ProcessManager:
         self._lock = threading.Lock()
         self._processes = {
             "pool": None,
+            "orchestrator": None,
             "explorer": None,
             "documenter": None,
             "researcher": None,
@@ -139,6 +141,52 @@ class ProcessManager:
         )
         self.set("researcher", proc)
         return proc
+
+    def start_orchestrator(self) -> subprocess.Popen:
+        """Start the unified orchestrator."""
+        log_file = self._open_log_file("orchestrator")
+        orchestrator_script = FANO_ROOT / "run_orchestrator.py"
+        proc = subprocess.Popen(
+            [sys.executable, str(orchestrator_script)],
+            cwd=str(FANO_ROOT),
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+        )
+        self.set("orchestrator", proc)
+        return proc
+
+    def wait_for_orchestrator_health(
+        self,
+        host: str = "127.0.0.1",
+        port: int = 9001,
+        timeout_seconds: int = 30,
+        poll_interval: float = 1.0,
+    ) -> bool:
+        """
+        Wait for orchestrator /health endpoint to respond.
+
+        Args:
+            host: Orchestrator host address
+            port: Orchestrator port
+            timeout_seconds: Max time to wait
+            poll_interval: Time between checks
+
+        Returns:
+            True if orchestrator became healthy within timeout, False otherwise.
+        """
+        start = time.time()
+        url = f"http://{host}:{port}/health"
+
+        while time.time() - start < timeout_seconds:
+            try:
+                with urllib.request.urlopen(url, timeout=2) as resp:
+                    if resp.status == 200:
+                        return True
+            except (urllib.error.URLError, TimeoutError, OSError):
+                pass
+            time.sleep(poll_interval)
+
+        return False
 
     def _close_log_file(self, component: str):
         """Close the log file for a component if open."""
@@ -272,6 +320,8 @@ class ProcessManager:
                 )
                 if dep == "pool":
                     self.start_pool()
+                elif dep == "orchestrator":
+                    self.start_orchestrator()
                 elif dep == "explorer":
                     self.start_explorer()
                 elif dep == "documenter":
@@ -310,6 +360,8 @@ class ProcessManager:
         try:
             if component == "pool":
                 return self.start_pool() is not None
+            elif component == "orchestrator":
+                return self.start_orchestrator() is not None
             elif component == "explorer":
                 return self.start_explorer() is not None
             elif component == "documenter":

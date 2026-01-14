@@ -32,7 +32,14 @@ class BaseWorker:
     backend_name: str = "base"
     deep_mode_method: Optional[str] = None  # Override in subclass: "enable_deep_think", "enable_pro_mode"
 
-    def __init__(self, config: dict, state: StateManager, queue: RequestQueue, jobs: Optional[JobStore] = None):
+    def __init__(
+        self,
+        config: dict,
+        state: StateManager,
+        queue: RequestQueue,
+        jobs: Optional[JobStore] = None,
+        priority_pause_event: Optional[asyncio.Event] = None,
+    ):
         self.config = config
         self.state = state
         self.queue = queue
@@ -40,6 +47,10 @@ class BaseWorker:
         self._running = False
         self._task: Optional[asyncio.Task] = None
         self.browser = None  # Set by subclasses
+
+        # JIT Orchestrator support: pause event
+        # When set, this worker should yield to allow submit_immediate to run
+        self._priority_pause_event = priority_pause_event
 
         # Track current work
         self._current_request_id: Optional[str] = None
@@ -72,6 +83,12 @@ class BaseWorker:
         """Main worker loop - process jobs and legacy queue requests."""
         while self._running:
             try:
+                # Check priority pause event - yield to submit_immediate if set
+                if self._priority_pause_event and self._priority_pause_event.is_set():
+                    log.debug("pool.worker.priority_pause", backend=self.backend_name)
+                    await asyncio.sleep(2)  # Yield to high priority work
+                    continue
+
                 # Check if we're available
                 if not self.state.is_available(self.backend_name):
                     await asyncio.sleep(1)
@@ -553,8 +570,15 @@ class GeminiWorker(BaseWorker):
     backend_name = "gemini"
     deep_mode_method = "enable_deep_think"
 
-    def __init__(self, config: dict, state: StateManager, queue: RequestQueue, jobs: Optional[JobStore] = None):
-        super().__init__(config, state, queue, jobs)
+    def __init__(
+        self,
+        config: dict,
+        state: StateManager,
+        queue: RequestQueue,
+        jobs: Optional[JobStore] = None,
+        priority_pause_event: Optional[asyncio.Event] = None,
+    ):
+        super().__init__(config, state, queue, jobs, priority_pause_event)
         self._session_id = None
 
     async def connect(self):
@@ -716,8 +740,15 @@ class ChatGPTWorker(BaseWorker):
     backend_name = "chatgpt"
     deep_mode_method = "enable_pro_mode"
 
-    def __init__(self, config: dict, state: StateManager, queue: RequestQueue, jobs: Optional[JobStore] = None):
-        super().__init__(config, state, queue, jobs)
+    def __init__(
+        self,
+        config: dict,
+        state: StateManager,
+        queue: RequestQueue,
+        jobs: Optional[JobStore] = None,
+        priority_pause_event: Optional[asyncio.Event] = None,
+    ):
+        super().__init__(config, state, queue, jobs, priority_pause_event)
 
     async def connect(self):
         """Connect to ChatGPT."""
@@ -875,8 +906,15 @@ class ClaudeWorker(BaseWorker):
     backend_name = "claude"
     deep_mode_method = "enable_extended_thinking"
 
-    def __init__(self, config: dict, state: StateManager, queue: RequestQueue, jobs: Optional[JobStore] = None):
-        super().__init__(config, state, queue, jobs)
+    def __init__(
+        self,
+        config: dict,
+        state: StateManager,
+        queue: RequestQueue,
+        jobs: Optional[JobStore] = None,
+        priority_pause_event: Optional[asyncio.Event] = None,
+    ):
+        super().__init__(config, state, queue, jobs, priority_pause_event)
 
     async def connect(self):
         """Connect to Claude browser."""

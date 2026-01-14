@@ -66,7 +66,11 @@ class ThreadManager:
 
         return threads[: self.config.get("max_active_threads", 5)]
 
-    def select_thread(self, exclude_ids: Optional[Set[str]] = None) -> Optional[ExplorationThread]:
+    def select_thread(
+        self,
+        exclude_ids: Optional[Set[str]] = None,
+        exclude_seeds: Optional[Set[str]] = None,
+    ) -> Optional[ExplorationThread]:
         """
         Select an active thread to work on, or return None if a higher-priority
         unexplored seed should be spawned instead.
@@ -78,6 +82,8 @@ class ThreadManager:
         Args:
             exclude_ids: Set of thread IDs to exclude from selection.
                         Used when assigning multiple threads to different models.
+            exclude_seeds: Set of seed IDs to exclude from priority comparison.
+                          Used when seeds are already selected for spawning this cycle.
 
         Returns:
             Selected thread, or None if no threads available or if a
@@ -109,7 +115,7 @@ class ThreadManager:
                 break
 
         # Check if there's a higher-priority unexplored seed
-        next_seed = self.select_next_seed()
+        next_seed = self.select_next_seed(exclude_seeds=exclude_seeds)
         if next_seed:
             seed_priority = getattr(next_seed, 'priority', 0)
             if seed_priority > best_thread_priority:
@@ -146,18 +152,22 @@ class ThreadManager:
                     pass
         return None
 
-    def spawn_new_thread(self) -> ExplorationThread:
+    def spawn_new_thread(self, exclude_seeds: Optional[Set[str]] = None) -> ExplorationThread:
         """
         Create a new exploration thread focused on a single seed.
 
         The thread will focus on ONE question or conjecture, with axioms
         always included as foundational context.
 
+        Args:
+            exclude_seeds: Set of seed IDs to exclude from selection
+                          (used when spawning multiple threads in parallel)
+
         Returns:
             Newly created thread.
         """
         # Select the single seed to focus on
-        focus_seed = self.select_next_seed()
+        focus_seed = self.select_next_seed(exclude_seeds=exclude_seeds)
 
         # Get axiom IDs (always included as foundational context)
         axioms = self.axioms.get_axioms()
@@ -255,7 +265,7 @@ class ThreadManager:
 
         return explored
 
-    def select_next_seed(self):
+    def select_next_seed(self, exclude_seeds: Optional[Set[str]] = None):
         """
         Select the next unexplored seed to focus on.
 
@@ -264,9 +274,15 @@ class ThreadManager:
         2. Unexplored conjectures (by priority, highest first)
         3. If all explored, return highest-priority seed for re-exploration
 
+        Args:
+            exclude_seeds: Set of seed IDs to exclude from selection
+                          (used when spawning multiple threads in parallel)
+
         Returns:
             SeedAphorism to focus on, or None if no seeds exist.
         """
+        exclude_seeds = exclude_seeds or set()
+
         # Get questions and conjectures (not axioms - those are always context)
         questions = self.axioms.get_questions()
         conjectures = self.axioms.get_conjectures()
@@ -278,18 +294,19 @@ class ThreadManager:
 
         # Try unexplored questions first (already sorted by priority)
         for q in questions:
-            if q.id not in explored:
+            if q.id not in explored and q.id not in exclude_seeds:
                 log.info(f"[seeds] Selected unexplored question: {q.id} (P{q.priority})")
                 return q
 
         # Then unexplored conjectures
         for c in conjectures:
-            if c.id not in explored:
+            if c.id not in explored and c.id not in exclude_seeds:
                 log.info(f"[seeds] Selected unexplored conjecture: {c.id} (P{c.priority})")
                 return c
 
-        # All explored - return highest priority for re-exploration
+        # All explored - return highest priority for re-exploration (excluding already selected)
         all_seeds = questions + conjectures
+        all_seeds = [s for s in all_seeds if s.id not in exclude_seeds]
         all_seeds.sort(key=lambda s: s.priority, reverse=True)
         if all_seeds:
             log.info(f"[seeds] All seeds explored, re-exploring: {all_seeds[0].id}")

@@ -50,3 +50,4 @@ tmpclaude-*-cwd
 .claude/scripts/
 
 fano.egg-info/
+data/

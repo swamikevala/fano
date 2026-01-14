@@ -136,6 +136,14 @@
             background: var(--success);
         }
 
+        .dot.idle {
+            background: var(--warning);
+        }
+
+        .dot.stopped {
+            background: var(--text-dim);
+        }
+
         /* Restart button in navbar */
         .nav-restart-btn {
             margin-left: auto;
@@ -1978,6 +1986,7 @@
         <div class="nav-brand"><img src="/static/favicon-32.png" alt="Fano" style="height: 24px; vertical-align: middle; margin-right: 8px;">FANO</div>
         <div class="nav-tabs">
             <button class="nav-tab active" onclick="showPage('dashboard')">Dashboard</button>
+            <button class="nav-tab" onclick="showPage('orchestrator')">Orchestrator</button>
             <button class="nav-tab" onclick="showPage('explorer')">Explorer</button>
             <button class="nav-tab" onclick="showPage('researcher')">Researcher</button>
             <button class="nav-tab" onclick="showPage('document')">Document</button>
@@ -1987,6 +1996,10 @@
             <div class="nav-status-item" title="Pool Service">
                 <span class="dot" id="nav-pool-dot"></span>
                 <span>Pool</span>
+            </div>
+            <div class="nav-status-item" title="Orchestrator">
+                <span class="dot" id="nav-orchestrator-dot"></span>
+                <span>Orch</span>
             </div>
             <div class="nav-status-item" title="Explorer">
                 <span class="dot" id="nav-explorer-dot"></span>
@@ -2208,6 +2221,110 @@
                         </div>
                         <div class="logs-container" id="quick-logs-container">
                             <div class="log-entry" style="color: var(--text-dim);">Select a log source above...</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Orchestrator Page -->
+        <div id="page-orchestrator" class="page">
+            <div class="container">
+                <div class="grid" style="grid-template-columns: 1fr 1fr;">
+                    <!-- Orchestrator Status Card -->
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>Orchestrator</h3>
+                            <span id="orchestrator-status" class="status-badge status-stopped">Stopped</span>
+                        </div>
+                        <div class="card-body">
+                            <div class="component-actions">
+                                <button id="orchestrator-start" class="btn btn-success" onclick="startComponent('orchestrator')">Start</button>
+                                <button id="orchestrator-stop" class="btn btn-danger" onclick="stopComponent('orchestrator')" disabled>Stop</button>
+                            </div>
+                            <div id="orchestrator-info" style="margin-top: 1rem; display: none;">
+                                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 0.5rem;">
+                                    <div class="stat-item">
+                                        <span class="stat-label">Pending</span>
+                                        <span class="stat-value" id="orch-pending">0</span>
+                                    </div>
+                                    <div class="stat-item">
+                                        <span class="stat-label">Running</span>
+                                        <span class="stat-value" id="orch-running">0</span>
+                                    </div>
+                                    <div class="stat-item">
+                                        <span class="stat-label">Completed</span>
+                                        <span class="stat-value" id="orch-completed">0</span>
+                                    </div>
+                                    <div class="stat-item">
+                                        <span class="stat-label">Failed</span>
+                                        <span class="stat-value" id="orch-failed">0</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Module Weights Card -->
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>Module Weights</h3>
+                        </div>
+                        <div class="card-body">
+                            <div style="margin-bottom: 1rem;">
+                                <label style="display: flex; justify-content: space-between; margin-bottom: 0.25rem;">
+                                    <span>Explorer</span>
+                                    <span id="weight-explorer-value">1.0</span>
+                                </label>
+                                <input type="range" id="weight-explorer" min="0" max="2" step="0.1" value="1.0"
+                                       style="width: 100%;" onchange="updateWeightValue('explorer', this.value)">
+                            </div>
+                            <div style="margin-bottom: 1rem;">
+                                <label style="display: flex; justify-content: space-between; margin-bottom: 0.25rem;">
+                                    <span>Documenter</span>
+                                    <span id="weight-documenter-value">1.0</span>
+                                </label>
+                                <input type="range" id="weight-documenter" min="0" max="2" step="0.1" value="1.0"
+                                       style="width: 100%;" onchange="updateWeightValue('documenter', this.value)">
+                            </div>
+                            <button class="btn btn-primary" onclick="applyWeights()" style="width: 100%;">Apply Weights</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Quota Usage Section -->
+                <div class="card" style="margin-top: 1rem;">
+                    <div class="card-header">
+                        <h3>Quota Usage (Deep Modes)</h3>
+                    </div>
+                    <div class="card-body">
+                        <div id="quota-content" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.5rem;">
+                            <div style="color: var(--text-dim);">Orchestrator not running</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Workers Section -->
+                <div class="card" style="margin-top: 1rem;">
+                    <div class="card-header">
+                        <h3>Workers</h3>
+                    </div>
+                    <div class="card-body">
+                        <div id="workers-content" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem;">
+                            <div style="color: var(--text-dim);">Orchestrator not running</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Recent Tasks Section -->
+                <div class="card" style="margin-top: 1rem;">
+                    <div class="card-header">
+                        <h3>Recent Tasks</h3>
+                        <button class="btn btn-sm" onclick="refreshOrchestratorTasks()">Refresh</button>
+                    </div>
+                    <div class="card-body">
+                        <div id="tasks-content" style="max-height: 400px; overflow-y: auto;">
+                            <div style="color: var(--text-dim);">Orchestrator not running</div>
                         </div>
                     </div>
                 </div>
@@ -2612,6 +2729,7 @@
         let currentLogsSource = 'pool';
         let currentPipelineStage = 'seeds';  // seeds, exploring, synthesizing, reviewing, attested, noted, disputed, rejected
         let allLogs = [];
+        let orchestratorRunning = false;
         let explorerStats = {};
         let pipelineData = {};
 
@@ -2673,10 +2791,11 @@
                 loadActiveThreadsCount();
             }
             if (currentPage === 'llm-activity') loadLLMActivityDetail();
+            if (currentPage === 'orchestrator' && orchestratorRunning) refreshOrchestratorTasks();
         }, 2000);
 
         // Restore page from URL hash
-        const validPages = ['dashboard', 'explorer', 'seeds', 'document', 'logs', 'llm-activity', 'researcher'];
+        const validPages = ['dashboard', 'orchestrator', 'explorer', 'seeds', 'document', 'logs', 'llm-activity', 'researcher'];
         const hashPage = location.hash.slice(1);
         if (hashPage && validPages.includes(hashPage)) {
             showPage(hashPage);
@@ -2942,6 +3061,37 @@
                     topEl.innerHTML = '<span style="color: var(--text-dim);">No data yet</span>';
                 }
             }
+
+            // Orchestrator status
+            if (data.orchestrator) {
+                orchestratorRunning = data.orchestrator.running;
+                updateComponentStatus('orchestrator', data.orchestrator.running, data.orchestrator.external);
+                document.getElementById('nav-orchestrator-dot').className = 'dot' + (data.orchestrator.running ? ' running' : '');
+
+                // Show/hide orchestrator info and update UI
+                const orchInfo = document.getElementById('orchestrator-info');
+                if (data.orchestrator.running && data.orchestrator.status) {
+                    orchInfo.style.display = 'block';
+                    const status = data.orchestrator.status;
+                    // Update queue stats
+                    document.getElementById('orch-pending').textContent = status.queue?.by_state?.pending || 0;
+                    document.getElementById('orch-running').textContent = status.queue?.by_state?.running || 0;
+                    document.getElementById('orch-completed').textContent = status.queue?.by_state?.completed || 0;
+                    document.getElementById('orch-failed').textContent = status.queue?.by_state?.failed || 0;
+
+                    // Update quotas display
+                    updateOrchestratorQuotas(status.quotas);
+
+                    // Update workers display
+                    updateOrchestratorWorkers(status.workers);
+                } else {
+                    orchInfo.style.display = 'none';
+                    // Reset quota, worker, and tasks displays
+                    document.getElementById('quota-content').innerHTML = '<div style="color: var(--text-dim);">Orchestrator not running</div>';
+                    document.getElementById('workers-content').innerHTML = '<div style="color: var(--text-dim);">Orchestrator not running</div>';
+                    document.getElementById('tasks-content').innerHTML = '<div style="color: var(--text-dim);">Orchestrator not running</div>';
+                }
+            }
         }
 
         function updateComponentStatus(component, running, external = false) {
@@ -2960,6 +3110,135 @@
                 startBtn.disabled = false;
                 stopBtn.disabled = true;
             }
+        }
+
+        // Orchestrator-specific functions
+        function updateWeightValue(module, value) {
+            document.getElementById(`weight-${module}-value`).textContent = parseFloat(value).toFixed(1);
+        }
+
+        async function applyWeights() {
+            const explorer = parseFloat(document.getElementById('weight-explorer').value);
+            const documenter = parseFloat(document.getElementById('weight-documenter').value);
+            try {
+                const resp = await fetch('/api/orchestrator/weights', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ explorer, documenter })
+                });
+                const data = await resp.json();
+                if (data.error) {
+                    alert(`Error: ${data.error}`);
+                } else {
+                    alert('Weights updated successfully');
+                }
+            } catch (e) {
+                alert(`Failed to update weights: ${e}`);
+            }
+        }
+
+        function updateOrchestratorQuotas(quotas) {
+            const container = document.getElementById('quota-content');
+            if (!quotas || Object.keys(quotas).length === 0) {
+                container.innerHTML = '<div style="color: var(--text-dim);">No quota data available</div>';
+                return;
+            }
+            let html = '';
+            for (const [backend, modules] of Object.entries(quotas)) {
+                html += `<div class="quota-backend">
+                    <h4 style="margin: 0 0 0.5rem 0; text-transform: capitalize;">${backend.replace('_', ' ')}</h4>`;
+                for (const [module, data] of Object.entries(modules)) {
+                    const used = data.used || 0;
+                    const budget = data.budget || 0;
+                    const pct = budget > 0 ? Math.round((used / budget) * 100) : 0;
+                    const color = pct > 80 ? 'var(--danger)' : pct > 50 ? 'var(--warning)' : 'var(--success)';
+                    html += `<div style="margin-bottom: 0.5rem;">
+                        <div style="display: flex; justify-content: space-between; font-size: 0.85rem; margin-bottom: 0.25rem;">
+                            <span style="text-transform: capitalize;">${module}</span>
+                            <span>${used}/${budget}</span>
+                        </div>
+                        <div style="background: var(--bg-secondary); border-radius: 4px; height: 8px; overflow: hidden;">
+                            <div style="width: ${pct}%; height: 100%; background: ${color}; transition: width 0.3s;"></div>
+                        </div>
+                    </div>`;
+                }
+                html += '</div>';
+            }
+            container.innerHTML = html;
+        }
+
+        function updateOrchestratorWorkers(workers) {
+            const container = document.getElementById('workers-content');
+            if (!workers || Object.keys(workers).length === 0) {
+                container.innerHTML = '<div style="color: var(--text-dim);">No workers available</div>';
+                return;
+            }
+            let html = '';
+            for (const [backend, info] of Object.entries(workers)) {
+                const running = info.running || false;
+                const task = info.current_task;
+                const dotClass = running ? (task ? 'running' : 'idle') : 'stopped';
+                const status = running ? (task ? `Running: ${task.substring(0, 12)}...` : 'Idle') : 'Stopped';
+                html += `<div style="display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem; background: var(--bg-secondary); border-radius: 4px;">
+                    <span class="dot ${dotClass}"></span>
+                    <span style="text-transform: capitalize; font-weight: 500;">${backend}</span>
+                    <span style="color: var(--text-dim); font-size: 0.85rem; margin-left: auto;">${status}</span>
+                </div>`;
+            }
+            container.innerHTML = html;
+        }
+
+        async function refreshOrchestratorTasks() {
+            if (!orchestratorRunning) {
+                document.getElementById('tasks-content').innerHTML = '<div style="color: var(--text-dim);">Orchestrator not running</div>';
+                return;
+            }
+            try {
+                const resp = await fetch('/api/orchestrator/tasks?limit=20');
+                const data = await resp.json();
+                if (data.error) {
+                    // Show friendly message for connection errors
+                    if (data.error.includes('not available')) {
+                        document.getElementById('tasks-content').innerHTML = '<div style="color: var(--text-dim);">Orchestrator not responding</div>';
+                    } else {
+                        document.getElementById('tasks-content').innerHTML = `<div style="color: var(--danger);">Error: ${data.error}</div>`;
+                    }
+                    return;
+                }
+                const tasks = data.tasks || [];
+                if (tasks.length === 0) {
+                    document.getElementById('tasks-content').innerHTML = '<div style="color: var(--text-dim);">No tasks yet</div>';
+                    return;
+                }
+                let html = '<table style="width: 100%; border-collapse: collapse; font-size: 0.85rem;">';
+                html += '<tr style="border-bottom: 1px solid var(--border);"><th style="text-align: left; padding: 0.5rem;">ID</th><th style="text-align: left;">Module</th><th style="text-align: left;">Type</th><th style="text-align: left;">State</th><th style="text-align: right;">Time</th></tr>';
+                for (const task of tasks) {
+                    const stateClass = task.state === 'completed' ? 'success' : task.state === 'failed' ? 'danger' : task.state === 'running' ? 'warning' : '';
+                    const timeAgo = formatTimeAgo(task.created_at || task.submitted_at);
+                    html += `<tr style="border-bottom: 1px solid var(--border);">
+                        <td style="padding: 0.5rem; font-family: monospace;">${(task.id || '').substring(0, 8)}</td>
+                        <td style="text-transform: capitalize;">${task.module || '-'}</td>
+                        <td>${task.task_type || '-'}</td>
+                        <td><span class="status-badge status-${stateClass}" style="font-size: 0.75rem;">${task.state || '-'}</span></td>
+                        <td style="text-align: right; color: var(--text-dim);">${timeAgo}</td>
+                    </tr>`;
+                }
+                html += '</table>';
+                document.getElementById('tasks-content').innerHTML = html;
+            } catch (e) {
+                document.getElementById('tasks-content').innerHTML = '<div style="color: var(--text-dim);">Orchestrator not responding</div>';
+            }
+        }
+
+        function formatTimeAgo(timestamp) {
+            if (!timestamp) return '-';
+            const now = Date.now();
+            const then = new Date(timestamp).getTime();
+            const diff = Math.floor((now - then) / 1000);
+            if (diff < 60) return `${diff}s ago`;
+            if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+            if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+            return `${Math.floor(diff / 86400)}d ago`;
         }
 
         async function startComponent(component) {

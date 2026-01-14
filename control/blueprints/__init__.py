@@ -8,6 +8,7 @@ from .annotations import bp as annotations_bp
 from .explorer import bp as explorer_bp
 from .researcher import bp as researcher_bp
 from .pool import bp as pool_bp
+from .orchestrator import bp as orchestrator_bp
 
 __all__ = [
     "ui_bp",
@@ -18,4 +19,5 @@ __all__ = [
     "explorer_bp",
     "researcher_bp",
     "pool_bp",
+    "orchestrator_bp",
 ]
