@@ -1,0 +1,257 @@
+---
+
+# Fano Orchestration Layer: Unified Design Specification (v4.0)
+
+**Version:** 4.0 (Final / Implementation Ready)
+**Date:** 2026-01-14
+**Status:** **APPROVED FOR IMPLEMENTATION**
+**Architecture:** Polling Orchestrator + JIT Pool Gateway + Delta WAL
+**Critical Constraint:** Server-Side Thread Persistence
+
+---
+
+## 1. Executive Summary
+
+### 1.1 The Problem
+
+The current architecture suffers from "Split-Brain" scheduling. The **Pool Service** autonomously pulls work from legacy queues, while **Modules** (Explorer, Documenter) attempt to manage their own flows. This causes:
+
+1. **Priority Inversion:** High-stakes tasks wait behind low-priority batch jobs.
+2. **Resource Starvation:** A single module can consume all scarce "Deep Mode" quotas (e.g., Gemini's 20/day).
+3. **Zombie Processes:** Crashes leave orphaned tasks running in the Pool.
+
+### 1.2 The Solution
+
+We introduce a unified **Orchestrator** that holds all tasks in a single priority queue and leases LLM backends on a **Just-In-Time (JIT)** basis.
+
+* **JIT Submission:** Orchestrator holds tasks in memory; submits to Pool *only* when a backend is strictly free.
+* **Quota Rationing:** Strict budgets prevent any single module from exhausting Deep Mode.
+* **Server-Side Threads:** We rely on LLM provider UUIDs (with Sidebar fallback) for continuity.
+
+---
+
+## 2. Architecture Overview
+
+```mermaid
+graph TD
+    subgraph "Orchestrator Process (Asyncio)"
+        SCH[Scheduler<br/>Priority Queue]
+        STATE[State Manager<br/>WAL + Checkpoint]
+        ALLOC[Allocator<br/>Quota Budgets]
+        
+        subgraph "Legacy Adapters"
+            EXP[Explorer Adapter]
+            DOC[Documenter Adapter]
+        end
+        
+        WORK[JIT Worker Loops<br/>(One per Backend)]
+    end
+    
+    subgraph "Pool Service (Legacy)"
+        API[API Gateway]
+        LOCK[Backend Locks]
+        NAV[Thread Navigator]
+        BG[Legacy Workers<br/>(Low Priority)]
+    end
+
+    EXP -->|Poll Tasks<br/>(Thread Offload)| SCH
+    DOC -->|Poll Tasks<br/>(Thread Offload)| SCH
+    SCH -->|Next High Prio| ALLOC
+    ALLOC -->|Approve/Deny| WORK
+    WORK -->|Submit Immediate<br/>+ Thread ID| API
+    
+    API -->|Set Pause Event| BG
+    API -->|Acquire Lock| LOCK
+    LOCK -->|Navigate URL| NAV
+    NAV -->|Execute| BG
+    
+    BG -.->|Check Event<br/>(Sleep if Set)| LOCK
+
+```
+
+### 2.1 Concurrency Model
+
+* **Single Process Asyncio:** Orchestrator runs on a single event loop.
+* **Legacy Adapters:** Existing blocking code in modules **must** be wrapped in `run_in_executor` to prevent the Orchestrator from freezing.
+
+---
+
+## 3. Task Model & Stability
+
+### 3.1 Task Definition
+
+```python
+@dataclass
+class Task:
+    id: str
+    key: str                    # Deduplication key
+    module: str                 # "explorer", "documenter"
+    priority: int               # Computed score
+    state: TaskState            # PENDING | RUNNING | FAILED | COMPLETED
+    
+    # Context
+    payload: dict
+    conversation: ConversationState # Stores 'external_thread_id' (URL) + 'thread_title'
+    
+    # Recovery Handles
+    pool_request_id: Optional[str] = None 
+    attempts: int = 0
+
+```
+
+### 3.2 Submit-If-Absent
+
+The Scheduler maintains `active_task_keys` for all non-terminal tasks. `submit(task)` is ignored if `task.key` is already active.
+
+### 3.3 The Failure Cache
+
+To prevent infinite retry loops for deterministic failures:
+
+* Maintain a `RecentFailureCache` (LRU, 1-hour TTL).
+* Reject submission if `key` is in cache unless `force_retry=True`.
+
+---
+
+## 4. Scheduling & Conversation Strategy
+
+### 4.1 Orchestrator-Owned Priority
+
+The Orchestrator holds the **only** valid priority queue. Pool is a dumb executor.
+
+### 4.2 JIT (Just-In-Time) Execution
+
+Each backend has a dedicated worker loop:
+
+1. Check `pool.is_busy(backend)`.
+2. If free, get next task from Scheduler.
+3. **Check Quota:** Allocator verifies if module has remaining budget for the requested model.
+4. Call `pool.submit_immediate(backend, payload, thread_id)`.
+
+### 4.3 Conversation Continuity (Critical)
+
+**We explicitly reject "Context Replay" (re-pasting history).**
+
+* **Mechanism:** Server-Side State (URLs).
+* **Protocol:**
+1. **Turn 1:** Task starts. Pool starts new chat.
+2. **Capture:** Pool executes prompt. **After execution**, Pool captures `window.location.href` (URL) and `document.title` (Title). Returns both in metadata.
+3. **Save:** Orchestrator persists URL + Title in `ConversationState`.
+4. **Turn 2+:** Orchestrator sends URL + Title to Pool.
+5. **Pool Navigation Strategy:**
+* **Step A (Direct):** `page.goto(thread_url)`.
+* **Step B (Fallback):** If 404, scan Sidebar for `thread_title` and click.
+
+
+
+
+* **Failure:** If Navigation & Sidebar fallback both fail => **Fail Task**. Do not re-paste context.
+
+---
+
+## 5. Pool Integration Requirements
+
+### 5.1 New APIs
+
+* `is_backend_busy(backend) -> bool`: Checks lock state.
+* `submit_immediate(backend, payload, token, thread_id=None) -> request_id`:
+* Sets `priority_pause_event` (Signals legacy workers to yield).
+* Acquires lock.
+* Executes Navigation + Prompt.
+* Clears `priority_pause_event`.
+
+
+* `get_active_requests()`: For recovery.
+
+### 5.2 Preemption Mechanism (The "Pause Button")
+
+Legacy workers in `pool/src/workers.py` typically run in a tight loop. To ensure `submit_immediate` wins:
+
+1. **Shared Event:** `pool.priority_pause_event` (asyncio.Event).
+2. **Legacy Worker Update:**
+```python
+# In legacy worker loop
+while True:
+    if priority_pause_event.is_set():
+        await asyncio.sleep(2) # Yield to high priority
+        continue 
+
+    async with lock:
+        # Check queue...
+
+```
+
+
+3. **JIT API:** Sets the event -> Waits 100ms -> Acquires lock.
+
+### 5.3 Quota Safety (The "Gemini" Fix)
+
+* **Scarcity:** Gemini Deep Think is limited to ~20/day.
+* **Rationing Logic:** Allocator maintains "Budgets".
+* *Documenter Reserve:* 5 slots/day (Guaranteed).
+* *Explorer Budget:* 10 slots/day.
+* *Buffer:* 5 slots/day.
+
+
+* If Explorer hits 10 slots, it is blocked from Deep Mode even if global quota remains.
+
+---
+
+## 6. Persistence: Snapshot + Delta WAL
+
+### 6.1 The Protocol
+
+1. **WAL (Deltas):** Record only changes (`MSG_APPEND`, `STATE_CHANGE`) since last checkpoint.
+2. **Checkpoint:** Serialize **Full In-Memory State** every 60s.
+3. **Atomic Writes:** `.tmp` -> `fsync` -> `replace`.
+
+---
+
+## 7. Recovery & Reconciliation
+
+### 7.1 Startup Reconciliation
+
+1. **Query:** `pool.get_active_requests()`.
+2. **Load:** Restore Checkpoint + WAL.
+3. **Match:**
+* Task RUNNING locally + RUNNING in Pool -> **Re-attach**.
+* Task RUNNING locally + MISSING in Pool -> **Mark FAILED** (Lost).
+* Request in Pool + UNKNOWN locally -> **Kill Request** (Zombie).
+
+
+
+---
+
+## 8. Migration Strategy
+
+1. **Phase 1: Pool Gateway:** Implement `submit_immediate`, `priority_pause_event`, and **Sidebar Navigation Fallback**.
+2. **Phase 2: Orchestrator Core:** Scheduler, State Manager, JIT Loops, and **Quota Allocator**.
+3. **Phase 3: Adapters:** Wrap legacy module logic.
+4. **Phase 4: Switchover.** (Researcher Module deferred).
+
+---
+
+## 9. Configuration
+
+```yaml
+orchestrator:
+  state:
+    checkpoint_dir: "data/orchestrator"
+    checkpoint_interval: 60
+  scheduler:
+    jit_poll_interval: 1.0
+  quotas:
+    # Quota Budgets (Reservations)
+    gemini_deep:
+      daily_limit: 20
+      reserves:
+        documenter: 5
+        explorer: 10
+    
+pool:
+  url: "http://localhost:8000"
+  timeout: 3600
+  capabilities:
+    thread_navigation: true
+    gemini_sidebar_fallback: true
+
+```
