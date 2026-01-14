@@ -27,12 +27,19 @@ class TaskType(str, Enum):
     SYNTHESIS = "synthesis"
     REVIEW = "review"
 
-    # Documenter tasks
+    # Documenter tasks (legacy v2)
     ADDRESS_COMMENT = "address_comment"
     INCORPORATE_INSIGHT = "incorporate_insight"
     REVIEW_SECTION = "review_section"
     DRAFT_SECTION = "draft_section"
     DRAFT_PREREQUISITE = "draft_prerequisite"
+
+    # Documenter tasks (v3 multi-phase)
+    INCORPORATE_INSIGHT_PLAN = "incorporate_insight_plan"      # Architect decision
+    INCORPORATE_INSIGHT_DRAFT = "incorporate_insight_draft"    # Mason drafting
+    INCORPORATE_INSIGHT_REVIEW = "incorporate_insight_review"  # Consensus Board
+    GENERATE_DIAGRAM = "generate_diagram"                      # Illustrator
+    GLOBAL_REFACTOR = "global_refactor"                        # Architect reorganization
 
     # Shared
     CONSENSUS = "consensus"
