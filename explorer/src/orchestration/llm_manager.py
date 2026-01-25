@@ -232,3 +232,16 @@ class LLMManager:
 
         # deep_mode_used is always False with API access
         return response, False
+
+    async def check_recovered_responses(self, load_thread_fn=None) -> None:
+        """
+        Check for recovered responses from a previous session.
+
+        With API access, there are no recovered responses to check.
+        This method is kept for backward compatibility.
+
+        Args:
+            load_thread_fn: Ignored (kept for compatibility)
+        """
+        # No-op: API calls don't have recoverable responses
+        pass
