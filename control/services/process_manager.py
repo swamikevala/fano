@@ -29,12 +29,13 @@ class ProcessManager:
     """
 
     # Service dependencies - which services must be running before others can start
+    # Note: Pool is no longer needed - all LLM access is via API
     SERVICE_DEPENDENCIES = {
-        "pool": [],
-        "orchestrator": ["pool"],
-        "explorer": ["pool"],
-        "documenter": ["pool"],
-        "researcher": ["pool"],
+        "pool": [],  # Deprecated - kept for compatibility
+        "orchestrator": [],
+        "explorer": [],
+        "documenter": [],
+        "researcher": [],
     }
 
     def __init__(self):

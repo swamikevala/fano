@@ -1,7 +1,7 @@
-# Browser automation
-playwright>=1.40.0
+# LLM APIs (via OpenRouter - no browser automation needed)
+# aiohttp is used for HTTP requests
 
-# Anthropic Claude API
+# Anthropic Claude API (optional, OpenRouter preferred)
 anthropic>=0.39.0
 
 # Environment variables

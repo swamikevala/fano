@@ -1,70 +1,47 @@
-"""Pool Blueprint - Proxy routes for pool service data."""
+"""Pool Blueprint - Deprecated, pool is no longer used.
 
-import requests
-from flask import Blueprint, jsonify, current_app
+All LLM access is now via OpenRouter API directly.
+These endpoints are kept for API compatibility but return deprecation notices.
+"""
+
+from flask import Blueprint, jsonify
 
 bp = Blueprint("pool", __name__, url_prefix="/api/pool")
 
 
-def get_pool_url() -> str:
-    """Get pool URL from config or fall back to default."""
-    config = current_app.config.get("fano_config", {})
-    pool_config = config.get("pool", {})
-    host = pool_config.get("host", "127.0.0.1")
-    port = pool_config.get("port", 9000)
-    return f"http://{host}:{port}"
+def _deprecated_response():
+    """Return a deprecation notice."""
+    return jsonify({
+        "error": "Pool is deprecated",
+        "message": "LLM access is now via OpenRouter API. Pool is no longer needed.",
+    }), 410  # 410 Gone
 
 
 @bp.route("/activity")
 def api_pool_activity():
-    """Proxy to pool /activity endpoint."""
-    try:
-        resp = requests.get(f"{get_pool_url()}/activity", timeout=2)
-        resp.raise_for_status()
-        return jsonify(resp.json())
-    except requests.RequestException:
-        return jsonify({"error": "Pool not available"}), 503
+    """Pool activity endpoint - deprecated."""
+    return _deprecated_response()
 
 
 @bp.route("/activity/detail")
 def api_pool_activity_detail():
-    """Proxy to pool /activity/detail endpoint."""
-    try:
-        resp = requests.get(f"{get_pool_url()}/activity/detail", timeout=2)
-        resp.raise_for_status()
-        return jsonify(resp.json())
-    except requests.RequestException:
-        return jsonify({"error": "Pool not available"}), 503
+    """Pool activity detail endpoint - deprecated."""
+    return _deprecated_response()
 
 
 @bp.route("/status")
 def api_pool_status():
-    """Proxy to pool /status endpoint."""
-    try:
-        resp = requests.get(f"{get_pool_url()}/status", timeout=2)
-        resp.raise_for_status()
-        return jsonify(resp.json())
-    except requests.RequestException:
-        return jsonify({"error": "Pool not available"}), 503
+    """Pool status endpoint - deprecated."""
+    return _deprecated_response()
 
 
 @bp.route("/kick/<backend>", methods=["POST"])
 def api_pool_kick(backend):
-    """Kick a stuck worker - takes screenshot, fails job, reconnects browser."""
-    try:
-        resp = requests.post(f"{get_pool_url()}/kick/{backend}", timeout=30)
-        resp.raise_for_status()
-        return jsonify(resp.json())
-    except requests.RequestException as e:
-        return jsonify({"error": f"Pool not available: {e}"}), 503
+    """Pool kick endpoint - deprecated."""
+    return _deprecated_response()
 
 
 @bp.route("/recovery/status")
 def api_pool_recovery_status():
-    """Proxy to pool /recovery/status endpoint."""
-    try:
-        resp = requests.get(f"{get_pool_url()}/recovery/status", timeout=2)
-        resp.raise_for_status()
-        return jsonify(resp.json())
-    except requests.RequestException:
-        return jsonify({"error": "Pool not available"}), 503
+    """Pool recovery status endpoint - deprecated."""
+    return _deprecated_response()

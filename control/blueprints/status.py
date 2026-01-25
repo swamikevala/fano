@@ -19,13 +19,12 @@ def get_process_manager():
 
 
 def check_pool_health(host: str = "127.0.0.1", port: int = 9000) -> bool:
-    """Check if pool is responding to health checks."""
-    try:
-        import urllib.request
-        with urllib.request.urlopen(f"http://{host}:{port}/health", timeout=2) as resp:
-            return resp.status == 200
-    except Exception:
-        return False
+    """
+    Pool health check is deprecated - LLM access is via API.
+
+    Always returns False since pool is no longer used.
+    """
+    return False
 
 
 def check_orchestrator_health(host: str = "127.0.0.1", port: int = 9001) -> bool:
@@ -160,32 +159,12 @@ def api_status():
             "available": False,  # Will be updated by pool status check
         }
 
-    # Check pool API if running
-    if pool_running:
-        try:
-            import urllib.request
-            with urllib.request.urlopen(f"http://{pool_host}:{pool_port}/status", timeout=2) as resp:
-                pool_status = json.loads(resp.read().decode())
-                # Update backend availability from pool status
-                if pool_status.get("gemini"):
-                    backends.get("gemini", {})["available"] = pool_status["gemini"].get("available", False)
-                    backends.get("gemini", {})["authenticated"] = pool_status["gemini"].get("authenticated", False)
-                if pool_status.get("chatgpt"):
-                    backends.get("chatgpt", {})["available"] = pool_status["chatgpt"].get("available", False)
-                    backends.get("chatgpt", {})["authenticated"] = pool_status["chatgpt"].get("authenticated", False)
-                if pool_status.get("claude"):
-                    backends.get("claude", {})["available"] = pool_status["claude"].get("available", False)
-                    backends.get("claude", {})["authenticated"] = pool_status["claude"].get("authenticated", False)
-        except Exception:
-            pass
-
-    # Check API backends (Claude/OpenRouter can be available without pool)
-    if os.environ.get("ANTHROPIC_API_KEY"):
-        if "claude" in backends:
-            backends["claude"]["available"] = True
-    if os.environ.get("OPENROUTER_API_KEY"):
-        if "openrouter" in backends:
-            backends["openrouter"]["available"] = True
+    # All LLM access is now via OpenRouter API
+    openrouter_available = bool(os.environ.get("OPENROUTER_API_KEY"))
+    for backend_name in ["gemini", "chatgpt", "claude", "deepseek"]:
+        if backend_name in backends:
+            backends[backend_name]["available"] = openrouter_available
+            backends[backend_name]["type"] = "api"
 
     # Get stats from logs
     stats = get_stats()

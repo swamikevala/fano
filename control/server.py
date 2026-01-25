@@ -94,34 +94,12 @@ def _check_pool_health(host: str, port: int) -> bool:
 
 def _ensure_pool_running(pm: ProcessManager, config: dict) -> None:
     """
-    Ensure pool is running and healthy.
+    Pool auto-start is disabled - all LLM access is now via API.
 
-    If pool is not running, starts it and waits for it to become healthy.
-    Logs warnings but does not raise - server can function without pool.
+    This function is kept for compatibility but does nothing.
     """
-    pool_cfg = config.get("llm", {}).get("pool", {})
-    host = pool_cfg.get("host", "127.0.0.1")
-    port = pool_cfg.get("port", 9000)
-
-    # Check if already running (external or managed)
-    if _check_pool_health(host, port):
-        log.info("control.pool.already_running", host=host, port=port)
-        return
-
-    # Check if pool process exists but not healthy yet
-    if pm.is_running("pool"):
-        log.info("control.pool.waiting_for_healthy", host=host, port=port)
-    else:
-        # Start pool
-        log.info("control.pool.auto_starting")
-        pm.start_pool()
-
-    # Wait for healthy
-    timeout = config.get("services", {}).get("pool", {}).get("health_timeout_seconds", 30)
-    if pm.wait_for_pool_health(host, port, timeout):
-        log.info("control.pool.started", host=host, port=port)
-    else:
-        log.warning("control.pool.startup_timeout", timeout=timeout)
+    # Pool is no longer needed - LLM access is via OpenRouter API
+    log.info("control.pool.skipped", reason="LLM access via API, pool not needed")
 
 
 def create_app(process_manager: Optional[ProcessManager] = None) -> Flask:
