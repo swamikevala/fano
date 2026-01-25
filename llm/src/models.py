@@ -11,13 +11,7 @@ class Backend(str, Enum):
     GEMINI = "gemini"
     CHATGPT = "chatgpt"
     CLAUDE = "claude"
-
-
-class Priority(str, Enum):
-    """Request priority levels."""
-    LOW = "low"
-    NORMAL = "normal"
-    HIGH = "high"
+    DEEPSEEK = "deepseek"
 
 
 @dataclass
@@ -68,28 +62,12 @@ class LLMResponse:
 
     # Metadata
     backend: Optional[str] = None
-    deep_mode_used: bool = False
+    model: Optional[str] = None
+    deep_mode_used: bool = False  # Legacy - kept for compatibility
     response_time_seconds: float = 0.0
-    session_id: Optional[str] = None
 
     # Rate limiting
     retry_after_seconds: Optional[int] = None
-
-    @classmethod
-    def from_pool_response(cls, data: dict) -> "LLMResponse":
-        """Create from pool service response."""
-        metadata = data.get("metadata", {}) or {}
-        return cls(
-            success=data.get("success", False),
-            text=data.get("response"),
-            error=data.get("error"),
-            message=data.get("message"),
-            backend=metadata.get("backend"),
-            deep_mode_used=metadata.get("deep_mode_used", False),
-            response_time_seconds=metadata.get("response_time_seconds", 0.0),
-            session_id=metadata.get("session_id"),
-            retry_after_seconds=data.get("retry_after_seconds"),
-        )
 
 
 @dataclass

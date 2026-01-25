@@ -117,12 +117,14 @@ class DocumenterAdapterV3(ModuleInterface):
             self.repository = DocumentRepository(base_path)
             self.repository.initialize()
 
-            # Initialize LLM client
-            pool_config = self.config.get("llm", {}).get("pool", {})
-            pool_host = pool_config.get("host", "127.0.0.1")
-            pool_port = pool_config.get("port", 9000)
-            pool_url = f"http://{pool_host}:{pool_port}"
-            self.llm_client = LLMClient(pool_url=pool_url)
+            # Initialize LLM client (API-based via OpenRouter)
+            import os
+            llm_config = self.config.get("llm", {})
+            models = llm_config.get("models", {})
+            self.llm_client = LLMClient(
+                openrouter_api_key=os.environ.get("OPENROUTER_API_KEY"),
+                models=models if models else None,
+            )
 
             # Initialize agents
             self.architect = Architect(

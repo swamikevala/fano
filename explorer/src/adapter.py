@@ -271,7 +271,7 @@ class ExplorerAdapter(ModuleInterface):
             prompt, images = self.exploration_engine._build_exploration_prompt(thread)
             return PromptContext(
                 prompt=prompt,
-                images=[{"data": img} for img in images] if images else [],
+                images=[img.to_dict() for img in images] if images else [],
                 requires_deep_mode=self._should_use_deep_mode(thread, "exploration"),
                 metadata={"thread_id": thread.id},
             )
@@ -281,7 +281,7 @@ class ExplorerAdapter(ModuleInterface):
             images = self.exploration_engine._get_thread_images(thread)
             return PromptContext(
                 prompt=prompt,
-                images=[{"data": img} for img in images] if images else [],
+                images=[img.to_dict() for img in images] if images else [],
                 requires_deep_mode=self._should_use_deep_mode(thread, "critique"),
                 preferred_backend="chatgpt",
                 metadata={"thread_id": thread.id},

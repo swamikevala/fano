@@ -51,7 +51,6 @@ def get_status(data_dir: Path) -> ExplorerStatus:
         ExplorerStatus with all current information
     """
     from explorer.src.storage.db import Database
-    from explorer.src.browser.base import get_rate_limit_status
 
     status = ExplorerStatus()
 
@@ -86,17 +85,8 @@ def get_status(data_dir: Path) -> ExplorerStatus:
     if rejected_dir.exists():
         status.rejected_count = len(list(rejected_dir.glob("*.md")))
 
-    # Get rate limit status
-    try:
-        rate_status = get_rate_limit_status()
-        for model, info in rate_status.items():
-            status.rate_limits.append(RateLimitInfo(
-                model=model,
-                limited=info.get("limited", False),
-                retry_at=info.get("retry_at"),
-            ))
-    except Exception as e:
-        log.warning("status.rate_limit_error", error=str(e))
+    # Note: Rate limits are now managed by the LLMClient via OpenRouter API
+    # No local rate limit tracking needed
 
     log.info(
         "status.gathered",

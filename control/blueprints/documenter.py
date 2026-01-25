@@ -7,11 +7,29 @@ import os
 import re
 import threading
 
+import requests
 from flask import Blueprint, current_app, jsonify, request
 
 from ..services import DOC_PATH, FANO_ROOT, LOGS_DIR
+from ..services.config import load_config
 
 bp = Blueprint("documenter", __name__, url_prefix="/api")
+
+# Default orchestrator settings
+_DEFAULT_ORCHESTRATOR_HOST = "127.0.0.1"
+_DEFAULT_ORCHESTRATOR_PORT = 9001
+
+
+def get_orchestrator_url() -> str:
+    """Get orchestrator URL from config or use defaults."""
+    config = load_config()
+    host = config.get("orchestrator", {}).get("host", _DEFAULT_ORCHESTRATOR_HOST)
+    port = config.get("orchestrator", {}).get("port", _DEFAULT_ORCHESTRATOR_PORT)
+    return f"http://{host}:{port}"
+
+
+# Lock for formatting fix state thread safety
+_formatting_lock = threading.Lock()
 
 
 def get_process_manager():
@@ -119,6 +137,92 @@ def api_documenter_activity():
         activity["error"] = str(e)
 
     return jsonify(activity)
+
+
+@bp.route("/documenter/pipeline")
+def api_documenter_pipeline():
+    """Get documenter task pipeline grouped by insight.
+
+    Shows all documenter tasks with their phases: Plan -> Draft -> Review.
+    Tasks are grouped by insight_id for visualization.
+    """
+    try:
+        # Fetch all documenter tasks from orchestrator
+        orchestrator_url = get_orchestrator_url()
+        resp = requests.get(
+            f"{orchestrator_url}/tasks",
+            params={"module": "documenter", "limit": "100"},
+            timeout=5,
+        )
+        resp.raise_for_status()
+        tasks = resp.json().get("tasks", [])
+    except requests.RequestException as e:
+        return jsonify({"error": f"Orchestrator not available: {e}", "pipelines": []}), 503
+
+    # Group tasks by insight_id
+    pipelines = {}
+
+    for task in tasks:
+        payload = task.get("payload", {})
+        task_type = task.get("task_type", "")
+
+        # Extract insight_id from payload (handle nested opportunity structure)
+        insight_id = payload.get("insight_id")
+        insight_text = payload.get("insight_text", "")
+
+        # Check nested opportunity structure (legacy incorporate_insight tasks)
+        opportunity = payload.get("opportunity", {})
+        if not insight_id and opportunity:
+            insight_id = opportunity.get("insight_id")
+            insight_text = opportunity.get("text", "")
+
+        if not insight_id:
+            # Fallback: extract from key
+            key = task.get("key", "")
+            if ":" in key:
+                insight_id = key.split(":")[-1]
+
+        if not insight_id:
+            insight_id = task.get("id", "unknown")[:8]
+
+        # Initialize pipeline entry
+        if insight_id not in pipelines:
+            pipelines[insight_id] = {
+                "insight_id": insight_id,
+                "insight_text": insight_text[:100] if insight_text else "",
+                "phases": {
+                    "plan": None,
+                    "draft": None,
+                    "review": None,
+                },
+                "created_at": task.get("created_at"),
+            }
+
+        # Map task type to phase
+        phase = None
+        if "plan" in task_type:
+            phase = "plan"
+        elif "draft" in task_type:
+            phase = "draft"
+        elif "review" in task_type:
+            phase = "review"
+        elif task_type == "incorporate_insight":
+            # Legacy single-phase task
+            phase = "draft"
+
+        if phase:
+            pipelines[insight_id]["phases"][phase] = {
+                "task_id": task.get("id"),
+                "state": task.get("state", "pending"),
+                "started_at": task.get("started_at"),
+                "completed_at": task.get("completed_at"),
+            }
+
+    # Convert to list and sort by creation time (newest first)
+    pipeline_list = list(pipelines.values())
+    pipeline_list.sort(key=lambda p: p.get("created_at") or "", reverse=True)
+
+    return jsonify({"pipelines": pipeline_list})
 
 
 @bp.route("/document/versions")
@@ -309,12 +413,14 @@ def api_document_fix_formatting():
     """Start fixing math formatting issues (runs in background)."""
     formatting_fix_state = get_formatting_state()
 
-    if formatting_fix_state["in_progress"]:
-        return jsonify({"success": True, "status": "already_running"})
+    # Use lock for thread-safe check-then-act
+    with _formatting_lock:
+        if formatting_fix_state["in_progress"]:
+            return jsonify({"success": True, "status": "already_running"})
 
-    # Start background thread
-    formatting_fix_state["in_progress"] = True
-    formatting_fix_state["result"] = None
+        # Start background thread
+        formatting_fix_state["in_progress"] = True
+        formatting_fix_state["result"] = None
 
     # Need to pass app to background thread for context
     app = current_app._get_current_object()
@@ -329,16 +435,18 @@ def api_document_fix_formatting_status():
     """Check formatting fix status (for polling)."""
     formatting_fix_state = get_formatting_state()
 
-    if formatting_fix_state["in_progress"]:
-        response = {"status": "in_progress"}
-        if formatting_fix_state["progress"]:
-            response["progress"] = formatting_fix_state["progress"]
-        response["sections_fixed"] = formatting_fix_state.get("sections_fixed", 0)
-        return jsonify(response)
-    elif formatting_fix_state["result"]:
-        result = formatting_fix_state["result"]
-        # Clear result after reading
-        formatting_fix_state["result"] = None
-        return jsonify({"status": "complete", **result})
-    else:
-        return jsonify({"status": "idle"})
+    # Use lock for thread-safe access
+    with _formatting_lock:
+        if formatting_fix_state["in_progress"]:
+            response = {"status": "in_progress"}
+            if formatting_fix_state["progress"]:
+                response["progress"] = formatting_fix_state["progress"]
+            response["sections_fixed"] = formatting_fix_state.get("sections_fixed", 0)
+            return jsonify(response)
+        elif formatting_fix_state["result"]:
+            result = formatting_fix_state["result"]
+            # Clear result after reading
+            formatting_fix_state["result"] = None
+            return jsonify({"status": "complete", **result})
+        else:
+            return jsonify({"status": "idle"})

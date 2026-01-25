@@ -5,10 +5,8 @@ from datetime import datetime
 
 from llm.src.models import (
     Backend,
-    Priority,
     LLMResponse,
-    BackendStatus,
-    PoolStatus,
+    ImageAttachment,
     ReviewResponse,
     ConsensusResult,
 )
@@ -21,19 +19,11 @@ class TestBackendEnum:
         assert Backend.GEMINI.value == "gemini"
         assert Backend.CHATGPT.value == "chatgpt"
         assert Backend.CLAUDE.value == "claude"
+        assert Backend.DEEPSEEK.value == "deepseek"
 
     def test_backend_is_string_enum(self):
         assert isinstance(Backend.GEMINI, str)
         assert Backend.GEMINI == "gemini"
-
-
-class TestPriorityEnum:
-    """Tests for Priority enum."""
-
-    def test_priority_values(self):
-        assert Priority.LOW.value == "low"
-        assert Priority.NORMAL.value == "normal"
-        assert Priority.HIGH.value == "high"
 
 
 class TestLLMResponse:
@@ -62,37 +52,6 @@ class TestLLMResponse:
         assert response.error == "rate_limited"
         assert response.retry_after_seconds == 3600
 
-    def test_from_pool_response_success(self, mock_pool_response):
-        response = LLMResponse.from_pool_response(mock_pool_response)
-
-        assert response.success is True
-        assert response.text == "Hello from pool!"
-        assert response.backend == "gemini"
-        assert response.deep_mode_used is False
-        assert response.response_time_seconds == 1.5
-        assert response.session_id == "session-123"
-
-    def test_from_pool_response_error(self, mock_pool_error_response):
-        response = LLMResponse.from_pool_response(mock_pool_error_response)
-
-        assert response.success is False
-        assert response.error == "rate_limited"
-        assert response.message == "Too many requests"
-        assert response.retry_after_seconds == 3600
-
-    def test_from_pool_response_no_metadata(self):
-        data = {
-            "success": True,
-            "response": "Hello",
-            "metadata": None,
-        }
-        response = LLMResponse.from_pool_response(data)
-
-        assert response.success is True
-        assert response.text == "Hello"
-        assert response.backend is None
-        assert response.deep_mode_used is False
-
     def test_default_values(self):
         response = LLMResponse(success=True)
         assert response.text is None
@@ -100,124 +59,39 @@ class TestLLMResponse:
         assert response.deep_mode_used is False
         assert response.response_time_seconds == 0.0
 
-
-class TestBackendStatus:
-    """Tests for BackendStatus dataclass."""
-
-    def test_from_dict_complete(self):
-        data = {
-            "available": True,
-            "authenticated": True,
-            "rate_limited": False,
-            "rate_limit_resets_at": "2024-01-01T12:00:00",
-            "queue_depth": 5,
-            "deep_mode_uses_today": 10,
-            "deep_mode_limit": 20,
-        }
-        status = BackendStatus.from_dict(data)
-
-        assert status.available is True
-        assert status.authenticated is True
-        assert status.rate_limited is False
-        assert status.rate_limit_resets_at == datetime.fromisoformat("2024-01-01T12:00:00")
-        assert status.queue_depth == 5
-        assert status.deep_mode_uses_today == 10
-        assert status.deep_mode_limit == 20
-
-    def test_from_dict_minimal(self):
-        data = {}
-        status = BackendStatus.from_dict(data)
-
-        assert status.available is False
-        assert status.authenticated is False
-        assert status.rate_limited is False
-        assert status.rate_limit_resets_at is None
-        assert status.queue_depth == 0
-
-    def test_from_dict_invalid_datetime(self):
-        data = {
-            "available": True,
-            "rate_limit_resets_at": "not-a-date",
-        }
-        status = BackendStatus.from_dict(data)
-
-        assert status.rate_limit_resets_at is None
-
-    def test_from_dict_pro_mode(self):
-        data = {
-            "available": True,
-            "authenticated": True,
-            "rate_limited": False,
-            "pro_mode_uses_today": 50,
-            "pro_mode_limit": 100,
-        }
-        status = BackendStatus.from_dict(data)
-
-        assert status.pro_mode_uses_today == 50
-        assert status.pro_mode_limit == 100
+    def test_with_model(self):
+        response = LLMResponse(
+            success=True,
+            text="Hello",
+            backend="claude",
+            model="anthropic/claude-3-opus",
+        )
+        assert response.model == "anthropic/claude-3-opus"
 
 
-class TestPoolStatus:
-    """Tests for PoolStatus dataclass."""
+class TestImageAttachment:
+    """Tests for ImageAttachment dataclass."""
 
-    def test_from_dict_complete(self):
-        data = {
-            "gemini": {
-                "available": True,
-                "authenticated": True,
-                "rate_limited": False,
-            },
-            "chatgpt": {
-                "available": False,
-                "authenticated": True,
-                "rate_limited": True,
-            },
-            "claude": {
-                "available": True,
-                "authenticated": True,
-                "rate_limited": False,
-            },
-        }
-        status = PoolStatus.from_dict(data)
+    def test_basic_creation(self):
+        attachment = ImageAttachment(
+            filename="test.png",
+            data="base64encodeddata",
+            media_type="image/png",
+        )
+        assert attachment.filename == "test.png"
+        assert attachment.data == "base64encodeddata"
+        assert attachment.media_type == "image/png"
 
-        assert status.gemini is not None
-        assert status.gemini.available is True
-        assert status.chatgpt is not None
-        assert status.chatgpt.rate_limited is True
-        assert status.claude is not None
-
-    def test_from_dict_partial(self):
-        data = {
-            "gemini": {
-                "available": True,
-                "authenticated": True,
-                "rate_limited": False,
-            },
-        }
-        status = PoolStatus.from_dict(data)
-
-        assert status.gemini is not None
-        assert status.chatgpt is None
-        assert status.claude is None
-
-    def test_get_available_backends(self):
-        data = {
-            "gemini": {"available": True, "authenticated": True, "rate_limited": False},
-            "chatgpt": {"available": False, "authenticated": True, "rate_limited": True},
-            "claude": {"available": True, "authenticated": True, "rate_limited": False},
-        }
-        status = PoolStatus.from_dict(data)
-
-        available = status.get_available_backends()
-
-        assert "gemini" in available
-        assert "chatgpt" not in available
-        assert "claude" in available
-
-    def test_get_available_backends_empty(self):
-        status = PoolStatus()
-        available = status.get_available_backends()
-        assert available == []
+    def test_to_dict(self):
+        attachment = ImageAttachment(
+            filename="test.jpg",
+            data="base64data",
+            media_type="image/jpeg",
+        )
+        data = attachment.to_dict()
+        assert data["filename"] == "test.jpg"
+        assert data["data"] == "base64data"
+        assert data["media_type"] == "image/jpeg"
 
 
 class TestReviewResponse:

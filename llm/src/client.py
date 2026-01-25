@@ -1,14 +1,13 @@
 """
-LLM Client - Unified interface for LLM access.
+LLM Client - Unified interface for LLM access via OpenRouter.
 
-Routes requests appropriately:
-- Browser backends (Gemini, ChatGPT) → Pool service
-- API backends (Claude, OpenRouter) → Direct API calls
+All backends route through OpenRouter API for simplicity.
+Supports: gemini, chatgpt, claude, deepseek, and any other OpenRouter model.
 """
 
 import asyncio
 import os
-from pathlib import Path
+import time
 from typing import Optional
 
 import aiohttp
@@ -17,82 +16,115 @@ from shared.logging import get_logger
 
 from .models import (
     LLMResponse,
-    Backend,
-    Priority,
-    PoolStatus,
-    BackendStatus,
     ImageAttachment,
 )
 
 log = get_logger("llm", "client")
 
-# Backends that require browser automation (go through pool)
-BROWSER_BACKENDS = {"gemini", "chatgpt", "claude"}
 
-# Backends that use direct API calls
-API_BACKENDS = {"openrouter"}
+# Default model mappings (backend alias -> OpenRouter model ID)
+DEFAULT_MODELS = {
+    "gemini": "google/gemini-2.0-flash-thinking-exp-01-21",
+    "chatgpt": "openai/gpt-4o",
+    "claude": "anthropic/claude-sonnet-4-20250514",
+    "deepseek": "deepseek/deepseek-r1",
+}
+
+# Rate limits (requests per minute) - conservative defaults
+DEFAULT_RATE_LIMITS = {
+    "gemini": 10,
+    "chatgpt": 60,
+    "claude": 50,
+    "deepseek": 10,
+}
 
 
-class PoolUnavailableError(Exception):
-    """Raised when the pool service is not available."""
-    pass
+class RateLimiter:
+    """Simple token bucket rate limiter per backend."""
+
+    def __init__(self, limits: dict[str, int] | None = None):
+        self._limits = limits or DEFAULT_RATE_LIMITS
+        self._tokens: dict[str, float] = {}
+        self._last_update: dict[str, float] = {}
+
+    async def acquire(self, backend: str) -> None:
+        """Wait until we can make a request to this backend."""
+        limit = self._limits.get(backend, 60)  # Default 60 rpm
+        tokens_per_second = limit / 60.0
+
+        now = time.time()
+
+        # Initialize if first request
+        if backend not in self._tokens:
+            self._tokens[backend] = limit
+            self._last_update[backend] = now
+
+        # Refill tokens based on time elapsed
+        elapsed = now - self._last_update[backend]
+        self._tokens[backend] = min(limit, self._tokens[backend] + elapsed * tokens_per_second)
+        self._last_update[backend] = now
+
+        # Wait if no tokens available
+        if self._tokens[backend] < 1:
+            wait_time = (1 - self._tokens[backend]) / tokens_per_second
+            log.info("llm.rate_limit.waiting", backend=backend, wait_seconds=wait_time)
+            await asyncio.sleep(wait_time)
+            self._tokens[backend] = 0
+        else:
+            self._tokens[backend] -= 1
 
 
 class LLMClient:
     """
-    Unified client for LLM access.
+    Unified client for LLM access via OpenRouter.
 
-    Routes requests to the appropriate backend:
-    - Gemini/ChatGPT: Via Pool service (browser automation)
-    - Claude: Direct API call
-    - OpenRouter: Direct API call (for DeepSeek, etc.)
+    All backends route through OpenRouter API using model mappings.
+    No browser automation or pool service required.
 
     Usage:
         client = LLMClient()
 
-        # Send to browser-based LLM (uses pool)
+        # Send using backend alias
         response = await client.send("gemini", "Hello!")
+        response = await client.send("claude", "Explain this...")
 
-        # Send to API-based LLM (direct call)
-        response = await client.send("claude", "Hello!")
+        # Send using specific model
+        response = await client.send("claude", "Hello!", model="anthropic/claude-3-opus")
     """
 
     def __init__(
         self,
-        pool_url: str = "http://127.0.0.1:9000",
-        anthropic_api_key: Optional[str] = None,
         openrouter_api_key: Optional[str] = None,
+        models: Optional[dict[str, str]] = None,
+        rate_limits: Optional[dict[str, int]] = None,
+        base_url: str = "https://openrouter.ai/api/v1",
     ):
         """
         Initialize the client.
 
         Args:
-            pool_url: URL of the pool service (for browser backends)
-            anthropic_api_key: API key for Claude (or uses ANTHROPIC_API_KEY env var)
             openrouter_api_key: API key for OpenRouter (or uses OPENROUTER_API_KEY env var)
+            models: Override default model mappings (backend -> OpenRouter model ID)
+            rate_limits: Override rate limits per backend (requests per minute)
+            base_url: OpenRouter API base URL
         """
-        self.pool_url = pool_url.rstrip("/")
+        self._openrouter_key = openrouter_api_key or os.environ.get("OPENROUTER_API_KEY")
+        self._base_url = base_url.rstrip("/")
         self._http_session: Optional[aiohttp.ClientSession] = None
 
-        # API keys (from args or environment)
-        self._anthropic_key = anthropic_api_key or os.environ.get("ANTHROPIC_API_KEY")
-        self._openrouter_key = openrouter_api_key or os.environ.get("OPENROUTER_API_KEY")
+        # Model mappings
+        self._models = {**DEFAULT_MODELS}
+        if models:
+            self._models.update(models)
 
-        # Lazy-loaded API clients
-        self._anthropic_client = None
+        # Rate limiter
+        self._rate_limiter = RateLimiter(rate_limits)
 
     async def _get_http_session(self) -> aiohttp.ClientSession:
-        """Get or create HTTP session for pool/API calls."""
+        """Get or create HTTP session."""
         if self._http_session is None or self._http_session.closed:
             self._http_session = aiohttp.ClientSession()
         return self._http_session
-
-    def _get_anthropic_client(self):
-        """Get or create Anthropic client."""
-        if self._anthropic_client is None and self._anthropic_key:
-            import anthropic
-            self._anthropic_client = anthropic.Anthropic(api_key=self._anthropic_key)
-        return self._anthropic_client
 
     async def close(self):
         """Close HTTP session."""
@@ -100,170 +132,43 @@ class LLMClient:
             await self._http_session.close()
             self._http_session = None
 
-    # --- Pool Service Methods (for browser backends) ---
+    def get_model(self, backend: str) -> str:
+        """Get OpenRouter model ID for a backend alias."""
+        return self._models.get(backend.lower(), backend)
 
-    async def is_pool_available(self) -> bool:
-        """Check if the pool service is running."""
-        try:
-            session = await self._get_http_session()
-            async with session.get(
-                f"{self.pool_url}/health",
-                timeout=aiohttp.ClientTimeout(total=5),
-            ) as resp:
-                return resp.status == 200
-        except Exception:
-            return False
+    def set_model(self, backend: str, model: str) -> None:
+        """Set the model for a backend alias."""
+        self._models[backend.lower()] = model
 
-    async def get_pool_status(self) -> PoolStatus:
-        """Get status of browser backends from pool."""
-        try:
-            session = await self._get_http_session()
-            async with session.get(
-                f"{self.pool_url}/status",
-                timeout=aiohttp.ClientTimeout(total=10),
-            ) as resp:
-                if resp.status != 200:
-                    raise PoolUnavailableError(f"Pool returned status {resp.status}")
-                data = await resp.json()
-                return PoolStatus.from_dict(data)
-        except aiohttp.ClientError as e:
-            raise PoolUnavailableError(f"Could not connect to pool: {e}")
-
-    async def _send_via_pool(
-        self,
-        backend: str,
-        prompt: str,
-        deep_mode: bool,
-        new_chat: bool,
-        timeout_seconds: int,
-        priority: str,
-        thread_id: Optional[str] = None,
-        images: Optional[list[ImageAttachment]] = None,
-    ) -> LLMResponse:
-        """
-        Send request via pool service (legacy sync mode).
-
-        Note: For robust handling of long-running requests, use send_async() instead.
-        This method is kept for backward compatibility.
-        """
-        request_data = {
-            "backend": backend,
-            "prompt": prompt,
-            "options": {
-                "deep_mode": deep_mode,
-                "new_chat": new_chat,
-                "timeout_seconds": timeout_seconds,
-                "priority": priority,
-            },
-            "thread_id": thread_id,
-            "images": [img.to_dict() for img in images] if images else [],
-        }
-
-        max_retries = 2
-        retry_delay = 5
-
-        for attempt in range(max_retries + 1):
-            try:
-                session = await self._get_http_session()
-                async with session.post(
-                    f"{self.pool_url}/send",
-                    json=request_data,
-                    timeout=aiohttp.ClientTimeout(total=timeout_seconds + 30),
-                ) as resp:
-                    data = await resp.json()
-                    return LLMResponse.from_pool_response(data)
-
-            except aiohttp.ClientError as e:
-                log.warning("llm.pool.connection_error",
-                           backend=backend,
-                           attempt=attempt + 1,
-                           max_retries=max_retries,
-                           error=str(e))
-
-                # Retry if attempts remain
-                if attempt < max_retries:
-                    log.info("llm.pool.retry_attempt",
-                            attempt=attempt + 1,
-                            delay=retry_delay)
-                    await asyncio.sleep(retry_delay)
-                    retry_delay *= 2  # Exponential backoff
-                    continue
-
-                # Out of retries
-                log.error("llm.pool.request_failed", backend=backend, error=str(e))
-                raise PoolUnavailableError(f"Could not connect to pool after {max_retries + 1} attempts: {e}")
-
-            except asyncio.TimeoutError:
-                return LLMResponse(
-                    success=False,
-                    error="timeout",
-                    message=f"Request timed out after {timeout_seconds} seconds",
-                )
-
-    # --- Direct API Methods ---
-
-    async def _send_to_claude(
-        self,
-        prompt: str,
-        model: str = "claude-sonnet-4-20250514",
-        max_tokens: int = 8192,
-        timeout_seconds: int = 300,
-    ) -> LLMResponse:
-        """Send request directly to Claude API."""
-        import time
-
-        client = self._get_anthropic_client()
-        if not client:
-            return LLMResponse(
-                success=False,
-                error="auth_required",
-                message="ANTHROPIC_API_KEY not configured",
-            )
-
-        start_time = time.time()
-
-        try:
-            # Run sync API call in thread pool
-            response = await asyncio.to_thread(
-                client.messages.create,
-                model=model,
-                max_tokens=max_tokens,
-                messages=[{"role": "user", "content": prompt}],
-            )
-
-            elapsed = time.time() - start_time
-
-            return LLMResponse(
-                success=True,
-                text=response.content[0].text,
-                backend="claude",
-                response_time_seconds=elapsed,
-            )
-
-        except Exception as e:
-            error_str = str(e)
-            if "rate" in error_str.lower() or "429" in error_str:
-                return LLMResponse(
-                    success=False,
-                    error="rate_limited",
-                    message=str(e),
-                    retry_after_seconds=60,
-                )
-            return LLMResponse(
-                success=False,
-                error="api_error",
-                message=str(e),
-            )
+    # --- OpenRouter API Method ---
 
     async def _send_to_openrouter(
         self,
         prompt: str,
-        model: str = "deepseek/deepseek-r1",
+        model: str,
+        backend: str,
+        system_prompt: Optional[str] = None,
+        images: Optional[list[ImageAttachment]] = None,
+        temperature: float = 0.7,
+        max_tokens: int = 8192,
         timeout_seconds: int = 300,
     ) -> LLMResponse:
-        """Send request directly to OpenRouter API."""
-        import time
+        """
+        Send request to OpenRouter API.
 
+        Args:
+            prompt: User message
+            model: OpenRouter model ID (e.g., "anthropic/claude-sonnet-4-20250514")
+            backend: Backend alias for logging/tracking
+            system_prompt: Optional system message
+            images: Optional image attachments
+            temperature: Sampling temperature
+            max_tokens: Maximum response tokens
+            timeout_seconds: Request timeout
+
+        Returns:
+            LLMResponse with result or error
+        """
         if not self._openrouter_key:
             return LLMResponse(
                 success=False,
@@ -271,53 +176,152 @@ class LLMClient:
                 message="OPENROUTER_API_KEY not configured",
             )
 
+        # Apply rate limiting
+        await self._rate_limiter.acquire(backend)
+
         start_time = time.time()
 
-        try:
-            session = await self._get_http_session()
-            async with session.post(
-                "https://openrouter.ai/api/v1/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {self._openrouter_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": model,
-                    "messages": [{"role": "user", "content": prompt}],
-                },
-                timeout=aiohttp.ClientTimeout(total=timeout_seconds),
-            ) as resp:
-                data = await resp.json()
+        # Build messages
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
 
-                if resp.status != 200:
+        # Handle images if present
+        if images:
+            content = [{"type": "text", "text": prompt}]
+            for img in images:
+                content.append({
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:{img.media_type};base64,{img.data}"
+                    }
+                })
+            messages.append({"role": "user", "content": content})
+        else:
+            messages.append({"role": "user", "content": prompt})
+
+        request_body = {
+            "model": model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+
+        log.info("llm.openrouter.request",
+                 backend=backend,
+                 model=model,
+                 prompt_length=len(prompt),
+                 image_count=len(images) if images else 0)
+
+        max_retries = 3
+        retry_delay = 1.0
+
+        for attempt in range(max_retries):
+            try:
+                session = await self._get_http_session()
+                async with session.post(
+                    f"{self._base_url}/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {self._openrouter_key}",
+                        "Content-Type": "application/json",
+                        "HTTP-Referer": "https://github.com/fano-project",
+                        "X-Title": "Fano Mathematical Explorer",
+                    },
+                    json=request_body,
+                    timeout=aiohttp.ClientTimeout(total=timeout_seconds),
+                ) as resp:
+                    data = await resp.json()
+
+                    # Handle rate limiting
+                    if resp.status == 429:
+                        retry_after = int(resp.headers.get("Retry-After", 60))
+                        if attempt < max_retries - 1:
+                            log.warning("llm.openrouter.rate_limited",
+                                       backend=backend,
+                                       retry_after=retry_after,
+                                       attempt=attempt + 1)
+                            await asyncio.sleep(min(retry_after, 60))
+                            continue
+                        return LLMResponse(
+                            success=False,
+                            error="rate_limited",
+                            message="Rate limited by OpenRouter",
+                            backend=backend,
+                            retry_after_seconds=retry_after,
+                        )
+
+                    # Handle other errors
+                    if resp.status != 200:
+                        error_msg = data.get("error", {}).get("message", str(data))
+                        log.error("llm.openrouter.error",
+                                 backend=backend,
+                                 status=resp.status,
+                                 error=error_msg)
+                        return LLMResponse(
+                            success=False,
+                            error="api_error",
+                            message=error_msg,
+                            backend=backend,
+                        )
+
+                    # Extract response
+                    elapsed = time.time() - start_time
+                    text = data["choices"][0]["message"]["content"]
+
+                    log.info("llm.openrouter.success",
+                            backend=backend,
+                            model=model,
+                            response_length=len(text),
+                            duration_seconds=round(elapsed, 2))
+
                     return LLMResponse(
-                        success=False,
-                        error="api_error",
-                        message=data.get("error", {}).get("message", str(data)),
+                        success=True,
+                        text=text,
+                        backend=backend,
+                        response_time_seconds=elapsed,
                     )
 
-                elapsed = time.time() - start_time
-                text = data["choices"][0]["message"]["content"]
-
+            except asyncio.TimeoutError:
+                if attempt < max_retries - 1:
+                    log.warning("llm.openrouter.timeout_retry",
+                               backend=backend,
+                               attempt=attempt + 1)
+                    await asyncio.sleep(retry_delay)
+                    retry_delay *= 2
+                    continue
                 return LLMResponse(
-                    success=True,
-                    text=text,
-                    backend="openrouter",
-                    response_time_seconds=elapsed,
+                    success=False,
+                    error="timeout",
+                    message=f"Request timed out after {timeout_seconds} seconds",
+                    backend=backend,
                 )
 
-        except asyncio.TimeoutError:
-            return LLMResponse(
-                success=False,
-                error="timeout",
-                message=f"Request timed out after {timeout_seconds} seconds",
-            )
-        except Exception as e:
-            return LLMResponse(
-                success=False,
-                error="api_error",
-                message=str(e),
-            )
+            except aiohttp.ClientError as e:
+                if attempt < max_retries - 1:
+                    log.warning("llm.openrouter.connection_error",
+                               backend=backend,
+                               error=str(e),
+                               attempt=attempt + 1)
+                    await asyncio.sleep(retry_delay)
+                    retry_delay *= 2
+                    continue
+                return LLMResponse(
+                    success=False,
+                    error="connection_error",
+                    message=str(e),
+                    backend=backend,
+                )
+
+            except Exception as e:
+                log.error("llm.openrouter.unexpected_error",
+                         backend=backend,
+                         error=str(e))
+                return LLMResponse(
+                    success=False,
+                    error="api_error",
+                    message=str(e),
+                    backend=backend,
+                )
 
     # --- Unified Send Method ---
 
@@ -326,74 +330,70 @@ class LLMClient:
         backend: str,
         prompt: str,
         *,
+        model: Optional[str] = None,
+        system_prompt: Optional[str] = None,
+        images: Optional[list[ImageAttachment]] = None,
+        temperature: float = 0.7,
+        max_tokens: int = 8192,
+        timeout_seconds: int = 300,
+        # Legacy parameters (ignored but accepted for compatibility)
         deep_mode: bool = False,
         new_chat: bool = True,
-        timeout_seconds: int = 300,
         priority: str = "normal",
-        model: Optional[str] = None,
         thread_id: Optional[str] = None,
-        images: Optional[list[ImageAttachment]] = None,
     ) -> LLMResponse:
         """
-        Send a prompt to an LLM backend.
-
-        Automatically routes to pool (browser) or direct API as appropriate.
+        Send a prompt to an LLM backend via OpenRouter.
 
         Args:
-            backend: Which LLM ("gemini", "chatgpt", "claude", "openrouter")
+            backend: Backend alias ("gemini", "chatgpt", "claude", "deepseek")
+                     or full OpenRouter model ID
             prompt: The prompt text
-            deep_mode: Use deep/pro mode (browser backends only)
-            new_chat: Start new session (browser backends only)
+            model: Override model (uses backend's default if not specified)
+            system_prompt: Optional system message
+            images: Optional list of ImageAttachment objects
+            temperature: Sampling temperature (0.0-2.0)
+            max_tokens: Maximum response tokens
             timeout_seconds: Request timeout
-            priority: Request priority (browser backends only)
-            model: Specific model to use (API backends only)
-            thread_id: Thread ID for recovery correlation (browser backends only)
-            images: Optional list of ImageAttachment objects to include
+
+            # Legacy (accepted but ignored - for backward compatibility):
+            deep_mode, new_chat, priority, thread_id
 
         Returns:
             LLMResponse with the result
         """
         backend = backend.lower()
 
-        if backend in BROWSER_BACKENDS:
-            # Route to pool service (gemini, chatgpt, claude)
-            return await self._send_via_pool(
-                backend, prompt, deep_mode, new_chat, timeout_seconds, priority, thread_id, images
-            )
+        # Resolve model: explicit model > backend mapping > backend as model ID
+        resolved_model = model or self._models.get(backend, backend)
 
-        elif backend == "openrouter":
-            # Direct API call
-            return await self._send_to_openrouter(
-                prompt,
-                model=model or "deepseek/deepseek-r1",
-                timeout_seconds=timeout_seconds,
-            )
-
-        else:
-            return LLMResponse(
-                success=False,
-                error="unknown_backend",
-                message=f"Unknown backend: {backend}",
-            )
+        return await self._send_to_openrouter(
+            prompt=prompt,
+            model=resolved_model,
+            backend=backend,
+            system_prompt=system_prompt,
+            images=images,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            timeout_seconds=timeout_seconds,
+        )
 
     async def send_parallel(
         self,
         prompts: dict[str, str],
         *,
-        deep_mode: bool = False,
-        new_chat: bool = True,
         timeout_seconds: int = 300,
-        priority: str = "normal",
+        temperature: float = 0.7,
+        max_tokens: int = 8192,
     ) -> dict[str, LLMResponse]:
         """
         Send prompts to multiple backends in parallel.
 
         Args:
             prompts: Dict mapping backend name to prompt text
-            deep_mode: Use deep/pro mode where available
-            new_chat: Start new sessions
             timeout_seconds: Request timeout per backend
-            priority: Request priority
+            temperature: Sampling temperature
+            max_tokens: Maximum response tokens
 
         Returns:
             Dict mapping backend name to LLMResponse
@@ -403,10 +403,9 @@ class LLMClient:
             tasks[backend] = self.send(
                 backend,
                 prompt,
-                deep_mode=deep_mode,
-                new_chat=new_chat,
                 timeout_seconds=timeout_seconds,
-                priority=priority,
+                temperature=temperature,
+                max_tokens=max_tokens,
             )
 
         results = await asyncio.gather(*tasks.values(), return_exceptions=True)
@@ -427,24 +426,17 @@ class LLMClient:
 
     async def get_available_backends(self) -> list[str]:
         """
-        Get list of currently available backends.
+        Get list of available backends.
 
-        Checks pool for browser backends and API keys for API backends.
+        Returns backends that have API key configured.
         """
-        available = []
-
-        # Check browser backends via pool (gemini, chatgpt, claude)
-        try:
-            status = await self.get_pool_status()
-            available.extend(status.get_available_backends())
-        except PoolUnavailableError:
-            pass  # Pool not running, browser backends unavailable
-
-        # Check API backends
         if self._openrouter_key:
-            available.append("openrouter")
+            return list(self._models.keys())
+        return []
 
-        return available
+    def list_models(self) -> dict[str, str]:
+        """Get current backend -> model mappings."""
+        return dict(self._models)
 
     # --- Convenience Methods ---
 
@@ -452,48 +444,42 @@ class LLMClient:
         self,
         prompt: str,
         *,
-        deep_think: bool = False,
-        new_chat: bool = True,
         timeout_seconds: int = 300,
+        temperature: float = 0.7,
     ) -> LLMResponse:
-        """Send prompt to Gemini (via pool)."""
+        """Send prompt to Gemini via OpenRouter."""
         return await self.send(
             "gemini", prompt,
-            deep_mode=deep_think,
-            new_chat=new_chat,
             timeout_seconds=timeout_seconds,
+            temperature=temperature,
         )
 
     async def chatgpt(
         self,
         prompt: str,
         *,
-        pro_mode: bool = False,
-        new_chat: bool = True,
         timeout_seconds: int = 300,
+        temperature: float = 0.7,
     ) -> LLMResponse:
-        """Send prompt to ChatGPT (via pool)."""
+        """Send prompt to ChatGPT/GPT-4 via OpenRouter."""
         return await self.send(
             "chatgpt", prompt,
-            deep_mode=pro_mode,
-            new_chat=new_chat,
             timeout_seconds=timeout_seconds,
+            temperature=temperature,
         )
 
     async def claude(
         self,
         prompt: str,
         *,
-        extended_thinking: bool = False,
-        new_chat: bool = True,
         timeout_seconds: int = 300,
+        temperature: float = 0.7,
     ) -> LLMResponse:
-        """Send prompt to Claude (via pool browser)."""
+        """Send prompt to Claude via OpenRouter."""
         return await self.send(
             "claude", prompt,
-            deep_mode=extended_thinking,
-            new_chat=new_chat,
             timeout_seconds=timeout_seconds,
+            temperature=temperature,
         )
 
     async def deepseek(
@@ -501,203 +487,22 @@ class LLMClient:
         prompt: str,
         *,
         timeout_seconds: int = 300,
+        temperature: float = 0.7,
     ) -> LLMResponse:
-        """Send prompt to DeepSeek via OpenRouter (direct API)."""
+        """Send prompt to DeepSeek via OpenRouter."""
         return await self.send(
-            "openrouter", prompt,
-            model="deepseek/deepseek-r1",
+            "deepseek", prompt,
             timeout_seconds=timeout_seconds,
+            temperature=temperature,
         )
 
-    # --- Async Job Methods (new robust submission pattern) ---
-
-    async def submit_job(
-        self,
-        backend: str,
-        prompt: str,
-        job_id: str,
-        *,
-        thread_id: Optional[str] = None,
-        task_type: Optional[str] = None,
-        deep_mode: bool = False,
-        new_chat: bool = True,
-        priority: str = "normal",
-        images: Optional[list[ImageAttachment]] = None,
-    ) -> dict:
-        """
-        Submit a job for async processing.
-
-        Returns immediately with job submission status.
-        Use get_job_status() or wait_for_job() to check completion.
-
-        Args:
-            backend: Which LLM ("gemini", "chatgpt", "claude")
-            prompt: The prompt text
-            job_id: Unique job identifier (for deduplication and tracking)
-            thread_id: Optional thread ID for correlation
-            task_type: Type of task ("exploration" or "critique") for recovery
-            deep_mode: Use deep/pro mode
-            new_chat: Start new session
-            priority: Request priority
-            images: Optional list of ImageAttachment objects to include
-
-        Returns:
-            {"status": "queued" | "exists" | "cached", "job_id": str, "cached_job_id"?: str}
-
-        Raises:
-            PoolUnavailableError: If pool is not available or backend unavailable
-        """
-        if backend not in BROWSER_BACKENDS:
-            raise ValueError(f"Async jobs only support browser backends: {BROWSER_BACKENDS}")
-
-        request_data = {
-            "backend": backend,
-            "prompt": prompt,
-            "job_id": job_id,
-            "thread_id": thread_id,
-            "task_type": task_type,
-            "deep_mode": deep_mode,
-            "new_chat": new_chat,
-            "priority": priority,
-            "images": [img.to_dict() for img in images] if images else [],
-        }
-
-        try:
-            session = await self._get_http_session()
-            async with session.post(
-                f"{self.pool_url}/job/submit",
-                json=request_data,
-                timeout=aiohttp.ClientTimeout(total=30),
-            ) as resp:
-                if resp.status == 503:
-                    data = await resp.json()
-                    raise PoolUnavailableError(data.get("detail", "Backend unavailable"))
-                if resp.status == 400:
-                    data = await resp.json()
-                    raise ValueError(data.get("detail", "Bad request"))
-                resp.raise_for_status()
-                return await resp.json()
-
-        except aiohttp.ClientError as e:
-            raise PoolUnavailableError(f"Could not connect to pool: {e}")
-
-    async def get_job_status(self, job_id: str) -> Optional[dict]:
-        """
-        Get the status of a job.
-
-        Args:
-            job_id: The job ID
-
-        Returns:
-            {job_id, status, queue_position, backend, created_at, started_at, completed_at}
-            or None if job not found
-        """
-        try:
-            session = await self._get_http_session()
-            async with session.get(
-                f"{self.pool_url}/job/{job_id}/status",
-                timeout=aiohttp.ClientTimeout(total=10),
-            ) as resp:
-                if resp.status == 404:
-                    return None
-                resp.raise_for_status()
-                return await resp.json()
-
-        except aiohttp.ClientError as e:
-            log.warning("llm.job.status_error", job_id=job_id, error=str(e))
-            return None
-
-    async def get_job_result(self, job_id: str) -> Optional[dict]:
-        """
-        Get the result of a completed job.
-
-        Args:
-            job_id: The job ID
-
-        Returns:
-            {job_id, status, result?, error?, deep_mode_used, backend, thread_id}
-            or None if job not found
-        """
-        try:
-            session = await self._get_http_session()
-            async with session.get(
-                f"{self.pool_url}/job/{job_id}/result",
-                timeout=aiohttp.ClientTimeout(total=10),
-            ) as resp:
-                if resp.status == 404:
-                    return None
-                resp.raise_for_status()
-                return await resp.json()
-
-        except aiohttp.ClientError as e:
-            log.warning("llm.job.result_error", job_id=job_id, error=str(e))
-            return None
-
-    async def wait_for_job(
-        self,
-        job_id: str,
-        *,
-        poll_interval: float = 3.0,
-        timeout_seconds: int = 3600,
-    ) -> LLMResponse:
-        """
-        Wait for a job to complete by polling.
-
-        Args:
-            job_id: The job ID to wait for
-            poll_interval: Seconds between poll attempts
-            timeout_seconds: Maximum wait time before timing out
-
-        Returns:
-            LLMResponse with the result
-        """
-        import time
-        start_time = time.time()
-
-        while True:
-            elapsed = time.time() - start_time
-            if elapsed > timeout_seconds:
-                return LLMResponse(
-                    success=False,
-                    error="timeout",
-                    message=f"Job {job_id} did not complete within {timeout_seconds} seconds",
-                )
-
-            result = await self.get_job_result(job_id)
-
-            if result is None:
-                return LLMResponse(
-                    success=False,
-                    error="not_found",
-                    message=f"Job {job_id} not found",
-                )
-
-            status = result.get("status")
-
-            if status == "complete":
-                return LLMResponse(
-                    success=True,
-                    text=result.get("result", ""),
-                    backend=result.get("backend"),
-                    deep_mode_used=result.get("deep_mode_used", False),
-                )
-
-            if status == "failed":
-                return LLMResponse(
-                    success=False,
-                    error="job_failed",
-                    message=result.get("error", "Unknown error"),
-                    backend=result.get("backend"),
-                )
-
-            # Still queued or processing - wait and poll again
-            await asyncio.sleep(poll_interval)
+    # --- Async Send (compatibility alias) ---
 
     async def send_async(
         self,
         backend: str,
         prompt: str,
-        job_id: str,
+        job_id: str = "",
         *,
         thread_id: Optional[str] = None,
         task_type: Optional[str] = None,
@@ -709,52 +514,27 @@ class LLMClient:
         images: Optional[list[ImageAttachment]] = None,
     ) -> LLMResponse:
         """
-        Submit a job and wait for completion.
+        Send a prompt (compatibility method).
 
-        This is a convenience method that combines submit_job() and wait_for_job().
-        Unlike send(), this uses the async job system which is more robust
-        to pool restarts and timeouts.
+        With API-based access, this is equivalent to send() since all calls
+        are naturally async. The job_id and polling parameters are ignored.
 
         Args:
-            backend: Which LLM ("gemini", "chatgpt", "claude")
+            backend: Which LLM backend
             prompt: The prompt text
-            job_id: Unique job identifier
-            thread_id: Optional thread ID for correlation
-            task_type: Type of task ("exploration" or "critique") for recovery
-            deep_mode: Use deep/pro mode
-            new_chat: Start new session
-            priority: Request priority
-            poll_interval: Seconds between status polls
-            timeout_seconds: Maximum wait time
-            images: Optional list of ImageAttachment objects to include
+            job_id: Ignored (was for pool job tracking)
+            images: Optional image attachments
+            timeout_seconds: Request timeout
+
+            # Legacy parameters (ignored):
+            thread_id, task_type, deep_mode, new_chat, priority, poll_interval
 
         Returns:
             LLMResponse with the result
         """
-        # Handle cached result
-        try:
-            submit_result = await self.submit_job(
-                backend, prompt, job_id,
-                thread_id=thread_id,
-                task_type=task_type,
-                deep_mode=deep_mode,
-                new_chat=new_chat,
-                priority=priority,
-                images=images,
-            )
-        except PoolUnavailableError as e:
-            return LLMResponse(
-                success=False,
-                error="pool_unavailable",
-                message=str(e),
-                backend=backend,
-            )
-
-        # If we got a cached result, fetch from the cached job
-        if submit_result.get("status") == "cached":
-            cached_job_id = submit_result.get("cached_job_id")
-            log.info("llm.job.cache_hit", job_id=job_id, cached_job_id=cached_job_id)
-            return await self.wait_for_job(cached_job_id, poll_interval=poll_interval, timeout_seconds=timeout_seconds)
-
-        # Wait for our job to complete
-        return await self.wait_for_job(job_id, poll_interval=poll_interval, timeout_seconds=timeout_seconds)
+        return await self.send(
+            backend,
+            prompt,
+            images=images,
+            timeout_seconds=timeout_seconds,
+        )

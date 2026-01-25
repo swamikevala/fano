@@ -2,66 +2,33 @@
 # Unified configuration for all components
 
 # =============================================================================
-# LLM BACKENDS
+# LLM BACKENDS (OpenRouter API)
 # =============================================================================
 llm:
-  # Pool service settings (for browser-based backends)
-  pool:
-    host: "127.0.0.1"
-    port: 9000
-    auto_start: true  # Start pool automatically with fano.py
+  # API configuration
+  api_key_env: "OPENROUTER_API_KEY"
+  base_url: "https://openrouter.ai/api/v1"
 
-  # Consensus settings for documenter
-  consensus:
-    use_deep_mode: false  # Disable pro/deep modes (they're slow)
+  # Model mappings (backend alias -> OpenRouter model ID)
+  # Override with your preferred models
+  models:
+    gemini: "google/gemini-2.0-flash-thinking-exp-01-21"
+    chatgpt: "openai/gpt-4o"
+    claude: "anthropic/claude-sonnet-4-20250514"
+    deepseek: "deepseek/deepseek-r1"
 
-  # Backend configuration
-  backends:
-    gemini:
-      enabled: true
-      type: "browser"  # Requires pool service
-      browser_data_dir: "./browser_data/gemini"
-      url: "https://gemini.google.com/app"
-      response_timeout_seconds: 3600
-      deep_mode:
-        name: "Deep Think"
-        daily_limit: 20
-        reset_hour: 0
+  # Default request parameters
+  defaults:
+    temperature: 0.7
+    max_tokens: 8192
+    timeout_seconds: 300
 
-    chatgpt:
-      enabled: true
-      type: "browser"  # Requires pool service
-      browser_data_dir: "./browser_data/chatgpt"
-      url: "https://chatgpt.com"
-      response_timeout_seconds: 3600
-      deep_mode:
-        name: "Pro Mode"
-        daily_limit: 100
-        reset_hour: 0
-
-    claude:
-      enabled: true
-      type: "browser"  # Uses playwright browser automation via pool
-      browser_data_dir: "./browser_data/claude"
-      url: "https://claude.ai"
-      response_timeout_seconds: 3600
-      deep_mode:
-        name: "Extended Thinking"
-        daily_limit: 100
-        reset_hour: 0
-
-    openrouter:
-      enabled: true
-      type: "api"
-      api_key_env: "OPENROUTER_API_KEY"
-      default_model: "deepseek/deepseek-r1"
-
-  # Browser settings (for browser-based backends)
-  browser:
-    headless: false  # Set true for production/server
-    viewport_width: 1280
-    viewport_height: 720
-    slow_mo: 100
+  # Rate limiting (requests per minute per backend)
+  rate_limits:
+    gemini: 10
+    chatgpt: 60
+    claude: 50
+    deepseek: 10
 
 # =============================================================================
 # CONSENSUS SETTINGS
@@ -98,15 +65,12 @@ control:
 # SERVICE DEPENDENCIES AND LIFECYCLE
 # =============================================================================
 services:
-  pool:
-    auto_start: true              # Start pool when control server starts
-    health_timeout_seconds: 30    # Max wait for healthy on startup
   explorer:
-    depends_on: [pool]
+    depends_on: []  # No external service dependencies (API-based)
   documenter:
-    depends_on: [pool]
+    depends_on: []
   researcher:
-    depends_on: [pool]
+    depends_on: []
 
 # =============================================================================
 # EXPLORER SETTINGS

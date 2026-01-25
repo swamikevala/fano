@@ -365,6 +365,82 @@
         .log-level-WARNING { color: var(--warning); }
         .log-level-ERROR { color: var(--error); }
 
+        /* Pipeline View */
+        .pipeline-container {
+            background: var(--accent);
+            padding: 0.75rem;
+            border-radius: 8px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .pipeline-item {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 0.75rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .pipeline-item:last-child {
+            margin-bottom: 0;
+        }
+
+        .pipeline-insight {
+            font-size: 0.85rem;
+            color: var(--text);
+            margin-bottom: 0.5rem;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .pipeline-phases {
+            display: flex;
+            align-items: center;
+            gap: 0.25rem;
+        }
+
+        .pipeline-phase {
+            flex: 1;
+            padding: 0.4rem 0.5rem;
+            border-radius: 4px;
+            text-align: center;
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+
+        .pipeline-phase.pending {
+            background: var(--accent);
+            color: var(--text-dim);
+        }
+
+        .pipeline-phase.running {
+            background: #fff3cd;
+            color: #856404;
+            animation: pulse 1.5s infinite;
+        }
+
+        .pipeline-phase.completed {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .pipeline-phase.failed {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .pipeline-arrow {
+            color: var(--text-dim);
+            font-size: 0.8rem;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+
         /* Document Page */
         /* GitHub-style markdown rendering */
         .document-container {
@@ -2171,6 +2247,11 @@
                         <div id="documenter-events" style="background: var(--accent); padding: 0.75rem; border-radius: 8px; font-size: 0.85rem; max-height: 150px; overflow-y: auto;">
                             <span style="color: var(--text-dim);">No recent events</span>
                         </div>
+
+                        <div class="section-title">Insight Pipeline</div>
+                        <div id="documenter-pipeline" class="pipeline-container">
+                            <span style="color: var(--text-dim);">No tasks in pipeline</span>
+                        </div>
                     </div>
 
                     <!-- Researcher -->
@@ -2728,6 +2809,7 @@
         let currentPage = 'dashboard';
         let currentLogsSource = 'pool';
         let currentPipelineStage = 'seeds';  // seeds, exploring, synthesizing, reviewing, attested, noted, disputed, rejected
+        let currentExplorerStatus = 'pending';  // Legacy: for backwards compatibility
         let allLogs = [];
         let orchestratorRunning = false;
         let explorerStats = {};
@@ -2783,6 +2865,7 @@
         // Refresh intervals
         setInterval(refreshStatus, 10000);
         setInterval(refreshDocumenterActivity, 5000);
+        setInterval(refreshPipeline, 3000);  // Pipeline updates
         setInterval(refreshLLMActivity, 2000);  // More frequent for real-time feel
         setInterval(() => {
             if (currentPage === 'logs') loadFullLogs(currentLogsSource, true);
@@ -2804,6 +2887,7 @@
         // Initial load
         refreshStatus();
         refreshDocumenterActivity();
+        refreshPipeline();
         refreshLLMActivity();
 
         async function refreshStatus() {
@@ -2824,6 +2908,59 @@
             } catch (e) {
                 console.error('Failed to refresh documenter activity:', e);
             }
+        }
+
+        async function refreshPipeline() {
+            try {
+                const resp = await fetch('/api/documenter/pipeline');
+                const data = await resp.json();
+                updatePipeline(data.pipelines || []);
+            } catch (e) {
+                console.error('Failed to refresh pipeline:', e);
+            }
+        }
+
+        function updatePipeline(pipelines) {
+            const container = document.getElementById('documenter-pipeline');
+            if (!container) return;
+
+            if (!pipelines || pipelines.length === 0) {
+                container.innerHTML = '<span style="color: var(--text-dim);">No tasks in pipeline</span>';
+                return;
+            }
+
+            let html = '';
+            for (const p of pipelines.slice(0, 5)) {  // Show max 5
+                const insightText = p.insight_text || p.insight_id || 'Unknown insight';
+                html += `<div class="pipeline-item">
+                    <div class="pipeline-insight" title="${escapeHtml(insightText)}">${escapeHtml(insightText)}</div>
+                    <div class="pipeline-phases">
+                        ${renderPhase('Plan', p.phases.plan)}
+                        <span class="pipeline-arrow">→</span>
+                        ${renderPhase('Draft', p.phases.draft)}
+                        <span class="pipeline-arrow">→</span>
+                        ${renderPhase('Review', p.phases.review)}
+                    </div>
+                </div>`;
+            }
+            container.innerHTML = html;
+        }
+
+        function renderPhase(name, phase) {
+            const state = phase ? phase.state : 'pending';
+            const stateClass = state || 'pending';
+            const icon = {
+                'pending': '○',
+                'running': '⏳',
+                'completed': '✓',
+                'failed': '✗'
+            }[state] || '○';
+            return `<div class="pipeline-phase ${stateClass}" title="${name}: ${state}">${icon} ${name}</div>`;
+        }
+
+        function escapeHtml(text) {
+            if (!text) return '';
+            return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
         }
 
         async function refreshLLMActivity() {

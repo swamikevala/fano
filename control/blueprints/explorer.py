@@ -3,6 +3,7 @@ Explorer Blueprint - Insights management routes.
 """
 
 import json
+import threading
 import uuid
 from dataclasses import asdict
 from datetime import datetime
@@ -21,15 +22,19 @@ from ..services import (
     load_insight_json,
 )
 
-# Initialize AxiomStore for seeds management
+# Initialize AxiomStore for seeds management with thread-safe lazy initialization
 _axiom_store: AxiomStore | None = None
+_axiom_store_lock = threading.Lock()
 
 
 def get_axiom_store() -> AxiomStore:
-    """Get or create the AxiomStore instance."""
+    """Get or create the AxiomStore instance (thread-safe)."""
     global _axiom_store
     if _axiom_store is None:
-        _axiom_store = AxiomStore(EXPLORER_DATA_DIR)
+        with _axiom_store_lock:
+            # Double-check after acquiring lock
+            if _axiom_store is None:
+                _axiom_store = AxiomStore(EXPLORER_DATA_DIR)
     return _axiom_store
 
 bp = Blueprint("explorer", __name__, url_prefix="/api/explorer")

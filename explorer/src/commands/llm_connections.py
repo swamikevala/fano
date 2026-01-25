@@ -1,10 +1,10 @@
 """
 Shared LLM connection management for Explorer commands.
 
-Provides a unified interface for connecting to Gemini, ChatGPT, and Claude
-with consistent error handling and status reporting.
+Provides a unified interface for connecting to LLMs via OpenRouter API.
 """
 
+import os
 from dataclasses import dataclass, field
 from typing import Optional, Callable
 
@@ -24,19 +24,20 @@ class ConnectionStatus:
 @dataclass
 class LLMConnections:
     """
-    Manages connections to LLM providers.
+    Manages connections to LLM providers via API.
 
-    Provides a unified interface for connecting/disconnecting
-    and checking availability of Gemini, ChatGPT, and Claude.
+    Uses OpenRouter for unified access to Gemini, ChatGPT, Claude, and DeepSeek.
     """
+    client: Optional[object] = None
     gemini: Optional[object] = None
     chatgpt: Optional[object] = None
     claude: Optional[object] = None
+    deepseek: Optional[object] = None
     statuses: list[ConnectionStatus] = field(default_factory=list)
 
     def has_any(self) -> bool:
         """Check if any LLM is available."""
-        return bool(self.gemini or self.chatgpt or self.claude)
+        return bool(self.gemini or self.chatgpt or self.claude or self.deepseek)
 
     def available_names(self) -> list[str]:
         """Get names of available LLMs."""
@@ -47,6 +48,8 @@ class LLMConnections:
             names.append("ChatGPT")
         if self.claude:
             names.append("Claude")
+        if self.deepseek:
+            names.append("DeepSeek")
         return names
 
 
@@ -54,7 +57,7 @@ async def connect_llms(
     on_status: Optional[Callable[[ConnectionStatus], None]] = None
 ) -> LLMConnections:
     """
-    Connect to all available LLM providers.
+    Connect to all available LLM providers via OpenRouter API.
 
     Args:
         on_status: Optional callback for status updates during connection.
@@ -63,9 +66,7 @@ async def connect_llms(
     Returns:
         LLMConnections with connected providers (None for failed ones)
     """
-    from explorer.src.browser.gemini import GeminiInterface
-    from explorer.src.browser.chatgpt import ChatGPTInterface
-    from explorer.src.review_panel.claude_api import ClaudeReviewer
+    from llm import LLMClient, GeminiAdapter, ChatGPTAdapter, ClaudeAdapter, DeepSeekAdapter
 
     connections = LLMConnections()
 
@@ -74,53 +75,40 @@ async def connect_llms(
         if on_status:
             on_status(status)
 
-    # Connect Gemini
-    gemini = GeminiInterface()
-    try:
-        await gemini.connect()
-        logged_in = await gemini._check_login_status()
-        if not logged_in:
-            report(ConnectionStatus(
-                "Gemini", False,
-                "Not logged in - run 'python fano_explorer.py auth' first"
-            ))
-            log.warning("llm.connection.not_logged_in", provider="gemini")
-        else:
-            connections.gemini = gemini
-            report(ConnectionStatus("Gemini", True, "Connected"))
-            log.info("llm.connection.success", provider="gemini")
-    except Exception as e:
-        report(ConnectionStatus("Gemini", False, f"Failed: {e}"))
-        log.error("llm.connection.failed", provider="gemini", error=str(e))
+    # Check for API key
+    api_key = os.environ.get("OPENROUTER_API_KEY")
+    if not api_key:
+        report(ConnectionStatus(
+            "OpenRouter", False,
+            "OPENROUTER_API_KEY not set - run 'python fano_explorer.py auth' for info"
+        ))
+        log.error("llm.connection.no_api_key", provider="openrouter")
+        return connections
 
-    # Connect ChatGPT
-    chatgpt = ChatGPTInterface()
-    try:
-        await chatgpt.connect()
-        page_text = await chatgpt.page.inner_text("body")
-        if "log in" in page_text.lower() or "sign up" in page_text.lower():
-            report(ConnectionStatus(
-                "ChatGPT", False,
-                "Not logged in - run 'python fano_explorer.py auth' first"
-            ))
-            log.warning("llm.connection.not_logged_in", provider="chatgpt")
-        else:
-            connections.chatgpt = chatgpt
-            report(ConnectionStatus("ChatGPT", True, "Connected"))
-            log.info("llm.connection.success", provider="chatgpt")
-    except Exception as e:
-        report(ConnectionStatus("ChatGPT", False, f"Failed: {e}"))
-        log.error("llm.connection.failed", provider="chatgpt", error=str(e))
+    # Initialize client
+    client = LLMClient(openrouter_api_key=api_key)
+    connections.client = client
 
-    # Setup Claude API
-    claude = ClaudeReviewer()
-    if claude.api_key:
-        connections.claude = claude
-        report(ConnectionStatus("Claude", True, "API ready"))
-        log.info("llm.connection.success", provider="claude")
-    else:
-        report(ConnectionStatus("Claude", False, "API key not found"))
-        log.warning("llm.connection.no_api_key", provider="claude")
+    # Create adapters (all available if API key is set)
+    connections.gemini = GeminiAdapter(client)
+    await connections.gemini.connect()
+    report(ConnectionStatus("Gemini", True, "API ready"))
+    log.info("llm.connection.success", provider="gemini")
+
+    connections.chatgpt = ChatGPTAdapter(client)
+    await connections.chatgpt.connect()
+    report(ConnectionStatus("ChatGPT", True, "API ready"))
+    log.info("llm.connection.success", provider="chatgpt")
+
+    connections.claude = ClaudeAdapter(client)
+    await connections.claude.connect()
+    report(ConnectionStatus("Claude", True, "API ready"))
+    log.info("llm.connection.success", provider="claude")
+
+    connections.deepseek = DeepSeekAdapter(client)
+    await connections.deepseek.connect()
+    report(ConnectionStatus("DeepSeek", True, "API ready"))
+    log.info("llm.connection.success", provider="deepseek")
 
     return connections
 
@@ -133,17 +121,21 @@ async def disconnect_llms(connections: LLMConnections):
         connections: The LLMConnections to disconnect
     """
     if connections.gemini:
-        try:
-            await connections.gemini.disconnect()
-            log.info("llm.disconnected", provider="gemini")
-        except Exception as e:
-            log.error("llm.disconnect.failed", provider="gemini", error=str(e))
+        await connections.gemini.disconnect()
+        log.info("llm.disconnected", provider="gemini")
 
     if connections.chatgpt:
-        try:
-            await connections.chatgpt.disconnect()
-            log.info("llm.disconnected", provider="chatgpt")
-        except Exception as e:
-            log.error("llm.disconnect.failed", provider="chatgpt", error=str(e))
+        await connections.chatgpt.disconnect()
+        log.info("llm.disconnected", provider="chatgpt")
 
-    # Claude API doesn't need disconnection
+    if connections.claude:
+        await connections.claude.disconnect()
+        log.info("llm.disconnected", provider="claude")
+
+    if connections.deepseek:
+        await connections.deepseek.disconnect()
+        log.info("llm.disconnected", provider="deepseek")
+
+    if connections.client:
+        await connections.client.close()
+        log.info("llm.client.closed")

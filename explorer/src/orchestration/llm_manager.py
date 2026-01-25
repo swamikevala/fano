@@ -2,19 +2,13 @@
 LLM Manager - Handles LLM connections and communication.
 
 This module centralizes:
-- LLM client initialization and connection
+- LLM client initialization
 - Model availability checking
-- Deep mode handling
-- Response recovery from pool restarts
-- Unified message sending with deep mode support
+- Unified message sending interface
 """
 
 import asyncio
-import json
-import time
-import urllib.error
-import urllib.request
-from datetime import datetime
+import os
 from pathlib import Path
 from typing import Optional, Any
 
@@ -22,41 +16,27 @@ import yaml
 
 from shared.logging import get_logger
 
-from llm import LLMClient, GeminiAdapter, ChatGPTAdapter
-
-
-def _get_pool_url() -> str:
-    """Load pool URL from config.yaml."""
-    config_path = Path(__file__).resolve().parent.parent.parent.parent / "config.yaml"
-    if config_path.exists():
-        config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-        pool_config = config.get("llm", {}).get("pool", {})
-        host = pool_config.get("host", "127.0.0.1")
-        port = pool_config.get("port", 9000)
-        return f"http://{host}:{port}"
-    return "http://127.0.0.1:9000"
-
-from explorer.src.browser import (
-    rate_tracker,
-    deep_mode_tracker,
-    select_model,
-    should_use_deep_mode,
-)
-from explorer.src.models import ExplorationThread, ExchangeRole
+from llm import LLMClient, GeminiAdapter, ChatGPTAdapter, ClaudeAdapter, DeepSeekAdapter
+from explorer.src.models import ExplorationThread
 from explorer.src.storage import ExplorerPaths
 
 log = get_logger("explorer", "orchestration.llm")
+
+
+def _load_llm_config() -> dict:
+    """Load LLM config from config.yaml."""
+    config_path = Path(__file__).resolve().parent.parent.parent.parent / "config.yaml"
+    if config_path.exists():
+        config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        return config.get("llm", {})
+    return {}
 
 
 class LLMManager:
     """
     Manages LLM connections and provides a unified interface for message sending.
 
-    Handles:
-    - Connection/disconnection of browser-based LLMs (ChatGPT, Gemini)
-    - Rate limit checking
-    - Deep mode selection and tracking
-    - Response recovery from pool restarts
+    All LLMs are accessed via OpenRouter API - no browser automation needed.
     """
 
     def __init__(self, config: dict, paths: ExplorerPaths):
@@ -64,7 +44,7 @@ class LLMManager:
         Initialize LLM manager.
 
         Args:
-            config: Full configuration dict (needs 'llm' and 'review_panel' sections)
+            config: Full configuration dict
             paths: ExplorerPaths instance for data directories
         """
         self.config = config
@@ -74,50 +54,47 @@ class LLMManager:
         self.llm_client: Optional[LLMClient] = None
         self.chatgpt: Optional[ChatGPTAdapter] = None
         self.gemini: Optional[GeminiAdapter] = None
-
-        # Connection state for reconnection logic
-        self._connection_lock = asyncio.Lock()
-        self._last_reconnect_attempt: float = 0.0
-        self._reconnect_cooldown: float = 30.0  # seconds between attempts
+        self.claude: Optional[ClaudeAdapter] = None
+        self.deepseek: Optional[DeepSeekAdapter] = None
 
     async def connect(self) -> bool:
         """
-        Connect to LLMs via the pool service.
+        Initialize LLM client and adapters.
 
         Returns:
-            True if at least one model is available.
+            True if API key is configured and client is ready.
         """
-        pool_url = _get_pool_url()
-        self.llm_client = LLMClient(pool_url=pool_url)
+        # Load LLM config
+        llm_config = _load_llm_config()
+        models = llm_config.get("models", {})
 
-        # Check if pool service is available
-        pool_available = await self.llm_client.is_pool_available()
-        if not pool_available:
-            log.warning(
-                "Pool service not available. Start it with: cd pool && python browser_pool.py start"
-            )
-            log.warning("Browser-based LLMs (Gemini, ChatGPT) will not be available.")
+        # Initialize client with configured models
+        self.llm_client = LLMClient(
+            openrouter_api_key=os.environ.get("OPENROUTER_API_KEY"),
+            models=models if models else None,
+        )
+
+        # Check if API key is configured
+        if not self.llm_client._openrouter_key:
+            log.warning("llm.manager.no_api_key",
+                       message="OPENROUTER_API_KEY not set. LLMs will not be available.")
             return False
 
-        # Connect to ChatGPT
-        try:
-            self.chatgpt = ChatGPTAdapter(self.llm_client)
-            await self.chatgpt.connect()
-            log.info("Connected to ChatGPT (via pool)")
-        except Exception as e:
-            log.warning(f"Could not connect to ChatGPT: {e}")
-            self.chatgpt = None
+        # Create adapters
+        self.chatgpt = ChatGPTAdapter(self.llm_client)
+        self.gemini = GeminiAdapter(self.llm_client)
+        self.claude = ClaudeAdapter(self.llm_client)
+        self.deepseek = DeepSeekAdapter(self.llm_client)
 
-        # Connect to Gemini
-        try:
-            self.gemini = GeminiAdapter(self.llm_client)
-            await self.gemini.connect()
-            log.info("Connected to Gemini (via pool)")
-        except Exception as e:
-            log.warning(f"Could not connect to Gemini: {e}")
-            self.gemini = None
+        # Mark as connected
+        await self.chatgpt.connect()
+        await self.gemini.connect()
+        await self.claude.connect()
+        await self.deepseek.connect()
 
-        return self.chatgpt is not None or self.gemini is not None
+        log.info("llm.manager.connected",
+                 models=list(self.llm_client.list_models().keys()))
+        return True
 
     async def disconnect(self) -> None:
         """Disconnect from all LLM services."""
@@ -125,125 +102,68 @@ class LLMManager:
             await self.chatgpt.disconnect()
         if self.gemini:
             await self.gemini.disconnect()
+        if self.claude:
+            await self.claude.disconnect()
+        if self.deepseek:
+            await self.deepseek.disconnect()
         if self.llm_client:
             await self.llm_client.close()
 
     async def ensure_connected(self) -> bool:
         """
-        Ensure connected to pool, reconnecting if needed.
-
-        Call this before operations that require LLMs. If we're disconnected
-        (chatgpt and gemini are both None), this will attempt to reconnect.
+        Ensure LLM client is ready.
 
         Returns:
-            True if at least one model is available after this call.
+            True if at least one model is available.
         """
-        # Fast path: already connected
-        if self.chatgpt is not None or self.gemini is not None:
-            return True
-
-        # Try to reconnect
-        return await self._try_reconnect()
-
-    async def _try_reconnect(self) -> bool:
-        """
-        Attempt to reconnect to the pool.
-
-        Uses a cooldown to prevent spamming reconnection attempts.
-
-        Returns:
-            True if reconnection succeeded and at least one model is available.
-        """
-        now = time.time()
-        if now - self._last_reconnect_attempt < self._reconnect_cooldown:
-            # Too soon since last attempt
-            return False
-
-        async with self._connection_lock:
-            # Double-check after acquiring lock (another task may have connected)
-            if self.chatgpt is not None or self.gemini is not None:
-                return True
-
-            self._last_reconnect_attempt = now
-            log.info("llm.manager.reconnect_attempt")
-
-            # Ensure we have a client
-            if self.llm_client is None:
-                pool_url = _get_pool_url()
-                self.llm_client = LLMClient(pool_url=pool_url)
-
-            # Check pool availability
-            try:
-                pool_available = await self.llm_client.is_pool_available()
-            except Exception as e:
-                log.warning("llm.manager.pool_check_failed", error=str(e))
-                return False
-
-            if not pool_available:
-                log.info("llm.manager.pool_unavailable")
-                return False
-
-            # Reconnect ChatGPT
-            try:
-                self.chatgpt = ChatGPTAdapter(self.llm_client)
-                await self.chatgpt.connect()
-                log.info("llm.manager.reconnected", backend="chatgpt")
-            except Exception as e:
-                log.warning("llm.manager.reconnect_failed", backend="chatgpt", error=str(e))
-                self.chatgpt = None
-
-            # Reconnect Gemini
-            try:
-                self.gemini = GeminiAdapter(self.llm_client)
-                await self.gemini.connect()
-                log.info("llm.manager.reconnected", backend="gemini")
-            except Exception as e:
-                log.warning("llm.manager.reconnect_failed", backend="gemini", error=str(e))
-                self.gemini = None
-
-            connected = self.chatgpt is not None or self.gemini is not None
-            if connected:
-                log.info("llm.manager.reconnection_successful")
-            return connected
+        if self.llm_client is None:
+            return await self.connect()
+        return self.chatgpt is not None or self.gemini is not None
 
     def get_available_models(self, check_rate_limits: bool = True) -> dict[str, Any]:
         """
         Get available models as a dict.
 
         Args:
-            check_rate_limits: If True, exclude rate-limited models.
+            check_rate_limits: Ignored (kept for compatibility).
 
         Returns:
             Dict mapping model name to model instance.
         """
         models = {}
-        if self.chatgpt and (not check_rate_limits or rate_tracker.is_available("chatgpt")):
+        if self.chatgpt:
             models["chatgpt"] = self.chatgpt
-        if self.gemini and (not check_rate_limits or rate_tracker.is_available("gemini")):
+        if self.gemini:
             models["gemini"] = self.gemini
+        if self.claude:
+            models["claude"] = self.claude
+        if self.deepseek:
+            models["deepseek"] = self.deepseek
         return models
 
     def get_backlog_model(self) -> tuple[Optional[str], Optional[Any]]:
         """Get an available model for backlog processing (prefers Gemini)."""
-        if self.gemini and rate_tracker.is_available("gemini"):
+        if self.gemini:
             return ("gemini", self.gemini)
-        if self.chatgpt and rate_tracker.is_available("chatgpt"):
+        if self.chatgpt:
             return ("chatgpt", self.chatgpt)
+        if self.claude:
+            return ("claude", self.claude)
         return (None, None)
 
     def get_other_model(self, current: str) -> Optional[tuple[str, Any]]:
         """Get a different model than the current one."""
-        if current == "chatgpt" and self.gemini and rate_tracker.is_available("gemini"):
-            return ("gemini", self.gemini)
-        if current == "gemini" and self.chatgpt and rate_tracker.is_available("chatgpt"):
-            return ("chatgpt", self.chatgpt)
+        models = self.get_available_models()
+        for name, model in models.items():
+            if name != current:
+                return (name, model)
         return None
 
     def select_model_for_task(
         self, task: str, available_models: dict[str, Any] = None
     ) -> Optional[str]:
         """
-        Select a model for a specific task using weighted selection.
+        Select a model for a specific task.
 
         Args:
             task: Task type ('exploration', 'critique', 'synthesis')
@@ -254,7 +174,18 @@ class LLMManager:
         """
         if available_models is None:
             available_models = self.get_available_models()
-        return select_model(task, available_models)
+
+        if not available_models:
+            return None
+
+        # Simple selection: prefer gemini for exploration, chatgpt for critique
+        if task == "exploration" and "gemini" in available_models:
+            return "gemini"
+        if task == "critique" and "chatgpt" in available_models:
+            return "chatgpt"
+
+        # Default: return first available
+        return next(iter(available_models.keys()))
 
     async def send_message(
         self,
@@ -266,147 +197,38 @@ class LLMManager:
         images: list = None,
     ) -> tuple[str, bool]:
         """
-        Send a message to an LLM with deep mode handling.
-
-        This is the unified entry point for all LLM communication, handling:
-        - Deep mode selection based on task and model
-        - Different parameter names for ChatGPT vs Gemini
-        - Deep mode usage tracking
-        - Thread ID passing for recovery
-        - Image attachment passing
+        Send a message to an LLM.
 
         Args:
-            model_name: Name of the model ('chatgpt' or 'gemini')
+            model_name: Name of the model ('chatgpt', 'gemini', 'claude', 'deepseek')
             model: The model adapter instance
             prompt: The prompt to send
-            thread: Optional thread for context (used for deep mode decision and recovery)
+            thread: Optional thread for context (used for logging)
             task_type: Type of task ('exploration', 'critique', 'synthesis')
-            images: Optional list of ImageAttachment objects to include with the prompt
+            images: Optional list of ImageAttachment objects
 
         Returns:
             Tuple of (response_text, deep_mode_used)
+            Note: deep_mode_used is always False with API access (kept for compatibility)
         """
-        # Determine if we should use deep mode
-        use_deep = should_use_deep_mode(model_name, thread, task_type) if thread else False
         thread_id = thread.id if thread else None
 
-        await model.start_new_chat()
+        log.info("llm.manager.send_message",
+                 model=model_name,
+                 thread_id=thread_id,
+                 task_type=task_type,
+                 prompt_length=len(prompt),
+                 image_count=len(images) if images else 0)
 
-        # Send with model-specific parameters
-        if model_name == "chatgpt":
-            response = await model.send_message(
-                prompt,
-                use_pro_mode=use_deep,
-                use_thinking_mode=not use_deep,
-                thread_id=thread_id,
-                task_type=task_type,
-                images=images,
-            )
-        else:
-            response = await model.send_message(
-                prompt,
-                use_deep_think=use_deep,
-                thread_id=thread_id,
-                task_type=task_type,
-                images=images,
-            )
+        response = await model.send_message(
+            prompt,
+            images=images,
+        )
 
-        # Check if deep mode was actually used and record it
-        deep_mode_used = getattr(model, "last_deep_mode_used", False)
-        if deep_mode_used:
-            mode_key = "gemini_deep_think" if model_name == "gemini" else "chatgpt_pro"
-            deep_mode_tracker.record_usage(mode_key)
+        log.info("llm.manager.response_received",
+                 model=model_name,
+                 thread_id=thread_id,
+                 response_length=len(response))
 
-        return response, deep_mode_used
-
-    async def check_recovered_responses(
-        self,
-        load_thread_fn,
-    ) -> None:
-        """
-        Check for any recovered responses from pool restart.
-
-        When the pool restarts while an LLM was generating a response,
-        it attempts to recover the response by navigating back to the chat.
-        Those recovered responses are stored and can be retrieved here.
-
-        Args:
-            load_thread_fn: Function to load a thread by ID (thread_id -> ExplorationThread)
-        """
-        if not self.llm_client:
-            return
-
-        try:
-            # Get pool config
-            pool_config = self.config.get("llm", {}).get("pool", {})
-            pool_host = pool_config.get("host", "127.0.0.1")
-            pool_port = pool_config.get("port", 9000)
-
-            # Query pool for recovered responses
-            url = f"http://{pool_host}:{pool_port}/recovered"
-            with urllib.request.urlopen(url, timeout=5) as resp:
-                data = json.loads(resp.read().decode())
-
-            responses = data.get("responses", [])
-            if not responses:
-                return
-
-            log.info(f"[recovery] Found {len(responses)} recovered responses from pool")
-
-            for item in responses:
-                request_id = item.get("request_id")
-                thread_id = item.get("thread_id")
-                response_text = item.get("response", "")
-                backend = item.get("backend")
-
-                log.info(
-                    f"[recovery] Processing recovered response from {backend}",
-                    extra={
-                        "request_id": request_id,
-                        "thread_id": thread_id,
-                        "response_length": len(response_text),
-                    },
-                )
-
-                # Try to find the associated thread and add the response
-                if thread_id:
-                    try:
-                        thread = load_thread_fn(thread_id)
-                        if thread:
-                            # Determine role from task_type
-                            task_type = item.get("task_type", "exploration")
-                            if task_type == "critique":
-                                role = ExchangeRole.CRITIC
-                            else:
-                                role = ExchangeRole.EXPLORER
-
-                            thread.add_exchange(
-                                role=role,
-                                model=backend,
-                                prompt="[recovered]",  # Prompt not stored in recovery
-                                response=response_text,
-                                deep_mode_used=item.get("deep_mode_used", False),
-                            )
-                            thread.save(self.paths.explorations_dir)
-                            log.info(f"[recovery] Added recovered {task_type} response to thread {thread_id}")
-                    except Exception as e:
-                        log.warning(
-                            f"[recovery] Could not add response to thread {thread_id}: {e}"
-                        )
-
-                # Clear the recovered response from pool
-                try:
-                    clear_url = f"http://{pool_host}:{pool_port}/recovered/{request_id}"
-                    req = urllib.request.Request(clear_url, method="DELETE")
-                    urllib.request.urlopen(req, timeout=5)
-                    log.info(f"[recovery] Cleared recovered response {request_id}")
-                except Exception as e:
-                    log.warning(
-                        f"[recovery] Could not clear recovered response {request_id}: {e}"
-                    )
-
-        except urllib.error.URLError:
-            # Pool not running or not reachable - that's fine
-            pass
-        except Exception as e:
-            log.warning(f"[recovery] Error checking for recovered responses: {e}")
+        # deep_mode_used is always False with API access
+        return response, False

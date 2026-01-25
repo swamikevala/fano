@@ -1,64 +1,59 @@
 """
-Adapters that mimic browser interfaces but use LLMClient.
+API-based adapters for LLM access.
 
-These adapters allow existing code (orchestrator, review_panel, etc.)
-to work with the new LLM library without major refactoring.
+These adapters provide a consistent interface for different LLM backends,
+all routing through OpenRouter API.
 """
 
-import uuid
-from pathlib import Path
 from typing import Optional
 
 from shared.logging import get_logger
 
 from .client import LLMClient
+from .models import ImageAttachment
 
 log = get_logger("llm", "adapters")
 
 
-class BrowserAdapter:
+class APIAdapter:
     """
-    Base adapter that mimics browser interface methods.
+    Base adapter for API-based LLM access.
 
-    Existing code expects objects with:
-    - start_new_chat()
-    - send_message(prompt, use_deep_think=False, ...)
-    - disconnect()
+    Provides a simple interface compatible with existing code that expects:
+    - send_message(prompt, ...)
+    - connect() / disconnect()
     - last_deep_mode_used attribute
-
-    This adapter translates those calls to LLMClient using the async job system
-    for robust handling of timeouts and pool restarts.
     """
 
-    # Override in subclasses with backend-specific rate limit signals
-    rate_limit_signals: list[str] = []
+    # Override in subclasses
+    model_name: str = "unknown"
+    backend: str = "unknown"
 
-    def __init__(self, client: LLMClient, backend: str):
+    def __init__(self, client: LLMClient, model: Optional[str] = None):
         """
         Initialize adapter.
 
         Args:
             client: LLMClient instance
-            backend: Backend name ("gemini", "chatgpt", "claude")
+            model: Override model (uses client's default for backend if not specified)
         """
         self.client = client
-        self.backend = backend
-        self.last_deep_mode_used = False
+        self._model = model
         self._connected = False
+        self.last_deep_mode_used = False  # Legacy compatibility
 
     async def connect(self):
-        """Mark as connected. Pool handles actual connection."""
+        """Mark as connected (no-op for API access)."""
         self._connected = True
-        log.info("llm.adapter.lifecycle", action="connected", backend=self.backend)
+        log.info("llm.adapter.connected", backend=self.backend)
 
     async def disconnect(self):
-        """Mark as disconnected."""
+        """Mark as disconnected (no-op for API access)."""
         self._connected = False
-        log.info("llm.adapter.lifecycle", action="disconnected", backend=self.backend)
+        log.info("llm.adapter.disconnected", backend=self.backend)
 
     async def start_new_chat(self):
-        """Start new chat - passed through to pool."""
-        # Pool handles new_chat via the request options
+        """Start new chat (no-op for API - each request is independent)."""
         pass
 
     async def send_message(
@@ -69,155 +64,143 @@ class BrowserAdapter:
         use_thinking_mode: bool = False,
         thread_id: Optional[str] = None,
         task_type: Optional[str] = None,
-        images: Optional[list] = None,
+        images: Optional[list[ImageAttachment]] = None,
+        system_prompt: Optional[str] = None,
+        temperature: float = 0.7,
+        max_tokens: int = 8192,
+        timeout_seconds: int = 300,
     ) -> str:
         """
-        Send message to LLM using the async job system.
-
-        This uses the robust async job flow which handles pool restarts
-        and long-running requests gracefully.
+        Send message to LLM.
 
         Args:
             prompt: The prompt text
-            use_deep_think: Use Gemini Deep Think mode
-            use_pro_mode: Use ChatGPT Pro mode
-            use_thinking_mode: Use ChatGPT Thinking mode (ignored if pro_mode)
-            thread_id: Thread ID for recovery correlation
-            task_type: Type of task ("exploration" or "critique") for recovery
-            images: Optional list of ImageAttachment objects to include
+            use_deep_think: Legacy flag (ignored)
+            use_pro_mode: Legacy flag (ignored)
+            use_thinking_mode: Legacy flag (ignored)
+            thread_id: Legacy flag (ignored)
+            task_type: Legacy flag (ignored)
+            images: Optional image attachments
+            system_prompt: Optional system message
+            temperature: Sampling temperature
+            max_tokens: Maximum response tokens
+            timeout_seconds: Request timeout
 
         Returns:
             Response text
+
+        Raises:
+            RuntimeError: If the request fails
         """
-        # Determine deep mode based on backend-specific flags
-        deep_mode = use_deep_think or use_pro_mode
-
-        # Generate a unique job ID
-        # Use thread_id as prefix if available for easier correlation
-        job_id = f"{thread_id or 'job'}-{uuid.uuid4().hex[:8]}"
-
-        log.info("llm.adapter.send_async",
+        log.info("llm.adapter.send",
                  backend=self.backend,
-                 job_id=job_id,
-                 thread_id=thread_id,
-                 task_type=task_type,
-                 deep_mode=deep_mode,
                  prompt_length=len(prompt),
                  image_count=len(images) if images else 0)
 
-        response = await self.client.send_async(
+        response = await self.client.send(
             self.backend,
             prompt,
-            job_id=job_id,
-            thread_id=thread_id,
-            task_type=task_type,
-            deep_mode=deep_mode,
-            new_chat=True,  # Each send starts fresh
-            poll_interval=5.0,  # Check every 5 seconds
-            timeout_seconds=3600,  # 1 hour max wait
+            model=self._model,
+            system_prompt=system_prompt,
             images=images,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            timeout_seconds=timeout_seconds,
         )
-
-        # Track whether deep mode was actually used
-        self.last_deep_mode_used = response.deep_mode_used
 
         if not response.success:
             error_msg = f"{response.error}: {response.message}"
             log.error("llm.adapter.request_failed",
                      backend=self.backend,
-                     job_id=job_id,
                      error=response.error,
                      message=response.message)
             raise RuntimeError(error_msg)
 
         log.info("llm.adapter.send_complete",
                  backend=self.backend,
-                 job_id=job_id,
-                 response_length=len(response.text or ""))
+                 response_length=len(response.text or ""),
+                 duration_seconds=response.response_time_seconds)
 
         return response.text or ""
 
     def is_available(self) -> bool:
-        """Check if backend is available."""
-        # This is sync, so we can't check pool status
-        # Assume available if connected
-        return self._connected
-
-    def _check_rate_limit(self, response: str) -> bool:
-        """Check for rate limit signals in response."""
-        response_lower = response.lower()
-        return any(signal in response_lower for signal in self.rate_limit_signals)
+        """Check if backend is available (has API key configured)."""
+        return bool(self.client._openrouter_key)
 
 
-class GeminiAdapter(BrowserAdapter):
-    """Adapter that mimics GeminiInterface."""
+class GeminiAdapter(APIAdapter):
+    """Adapter for Gemini via OpenRouter."""
 
     model_name = "gemini"
-    rate_limit_signals = [
-        "try again tomorrow",
-        "quota exceeded",
-        "rate limit",
-        "too many requests",
-    ]
+    backend = "gemini"
 
-    def __init__(self, client: LLMClient):
-        super().__init__(client, "gemini")
+    def __init__(self, client: LLMClient, model: Optional[str] = None):
+        super().__init__(client, model)
 
     async def enable_deep_think(self):
-        """Deep think is enabled via send_message flag."""
+        """Legacy method (no-op)."""
         pass
 
 
-class ChatGPTAdapter(BrowserAdapter):
-    """Adapter that mimics ChatGPTInterface."""
+class ChatGPTAdapter(APIAdapter):
+    """Adapter for ChatGPT/GPT-4 via OpenRouter."""
 
     model_name = "chatgpt"
-    rate_limit_signals = [
-        "usage cap",
-        "rate limit",
-        "too many requests",
-        "reached the limit",
-    ]
+    backend = "chatgpt"
 
-    def __init__(self, client: LLMClient):
-        super().__init__(client, "chatgpt")
+    def __init__(self, client: LLMClient, model: Optional[str] = None):
+        super().__init__(client, model)
 
     async def enable_pro_mode(self):
-        """Pro mode is enabled via send_message flag."""
+        """Legacy method (no-op)."""
         pass
 
     async def enable_thinking_mode(self):
-        """Thinking mode is enabled via send_message flag."""
+        """Legacy method (no-op)."""
         pass
 
 
-class ClaudeAdapter(BrowserAdapter):
-    """Adapter that mimics ClaudeInterface (via pool browser)."""
+class ClaudeAdapter(APIAdapter):
+    """Adapter for Claude via OpenRouter."""
 
     model_name = "claude"
-    rate_limit_signals = [
-        "rate limit",
-        "too many requests",
-        "usage limit",
-    ]
+    backend = "claude"
 
-    def __init__(self, client: LLMClient):
-        super().__init__(client, "claude")
+    def __init__(self, client: LLMClient, model: Optional[str] = None):
+        super().__init__(client, model)
 
     async def enable_extended_thinking(self):
-        """Extended thinking is enabled via send_message flag."""
+        """Legacy method (no-op)."""
         pass
 
 
-def create_adapters(client: LLMClient) -> dict:
+class DeepSeekAdapter(APIAdapter):
+    """Adapter for DeepSeek via OpenRouter."""
+
+    model_name = "deepseek"
+    backend = "deepseek"
+
+    def __init__(self, client: LLMClient, model: Optional[str] = None):
+        super().__init__(client, model)
+
+
+# Legacy aliases for backward compatibility
+BrowserAdapter = APIAdapter
+GeminiAPIAdapter = GeminiAdapter
+ChatGPTAPIAdapter = ChatGPTAdapter
+ClaudeAPIAdapter = ClaudeAdapter
+
+
+def create_adapters(client: LLMClient) -> dict[str, APIAdapter]:
     """
     Create all adapters from an LLMClient.
 
     Returns:
-        Dict with 'gemini', 'chatgpt', 'claude' adapters
+        Dict with 'gemini', 'chatgpt', 'claude', 'deepseek' adapters
     """
     return {
         "gemini": GeminiAdapter(client),
         "chatgpt": ChatGPTAdapter(client),
         "claude": ClaudeAdapter(client),
+        "deepseek": DeepSeekAdapter(client),
     }

@@ -152,3 +152,9 @@ seeds:
   - chakras
   images:
   - seed-06ff8ba1_ssb_naga_112.jpg
+- text: Do the 112 triangle-point configurations have a natural directed graph structure?
+  type: question
+  priority: 10
+  tags:
+  - chakras
+  - graph

@@ -1,20 +1,23 @@
 """
 LLM Executor abstraction for review panel.
 
-Provides a unified interface for sending prompts to different LLMs,
-abstracting away the differences between browser-based (Gemini, ChatGPT)
-and API-based (Claude) implementations.
+Provides a unified interface for sending prompts to different LLMs
+via the OpenRouter API.
 
 Thinking modes:
 - "standard": Normal mode, no special reasoning
-- "thinking": Light reasoning (ChatGPT Thinking mode)
-- "deep": Deep reasoning (Gemini Deep Think, ChatGPT Pro, Claude Extended Thinking)
+- "thinking": Light reasoning (same as standard for API access)
+- "deep": Deep reasoning (same as standard for API access)
+
+Note: With API access, thinking modes are handled by model selection
+rather than runtime toggles.
 """
 
 from abc import ABC, abstractmethod
 from typing import Optional
 
 from shared.logging import get_logger
+from llm import LLMClient, APIAdapter, GeminiAdapter, ChatGPTAdapter, ClaudeAdapter, DeepSeekAdapter
 
 log = get_logger("explorer", "review_panel.llm_executor")
 
@@ -32,6 +35,7 @@ class LLMExecutor(ABC):
         Args:
             prompt: The prompt to send
             thinking_mode: One of "standard", "thinking", or "deep"
+                          (Note: with API access, these are treated the same)
 
         Returns:
             The LLM's response text
@@ -44,166 +48,124 @@ class LLMExecutor(ABC):
         ...
 
     async def start_fresh(self) -> None:
-        """Start a fresh conversation. Override if needed."""
+        """Start a fresh conversation. No-op for API access."""
         pass
 
 
-class GeminiExecutor(LLMExecutor):
-    """Executor for Gemini via browser automation."""
+class APIExecutor(LLMExecutor):
+    """Executor using API adapter."""
+
+    def __init__(self, adapter: APIAdapter, name: str = None):
+        """
+        Initialize API executor.
+
+        Args:
+            adapter: API adapter instance
+            name: Optional name override
+        """
+        self._adapter = adapter
+        self.name = name or adapter.backend
+
+    def is_available(self) -> bool:
+        return self._adapter is not None and self._adapter.is_available()
+
+    async def send(self, prompt: str, thinking_mode: str = "standard") -> str:
+        """Send prompt via API."""
+        if not self._adapter:
+            raise RuntimeError(f"{self.name} adapter not available")
+
+        log.info(
+            f"llm_executor.{self.name}.send",
+            thinking_mode=thinking_mode,
+            prompt_length=len(prompt),
+        )
+
+        response = await self._adapter.send_message(prompt)
+
+        log.debug(
+            f"llm_executor.{self.name}.response",
+            response_length=len(response),
+        )
+
+        return response
+
+
+class GeminiExecutor(APIExecutor):
+    """Executor for Gemini via API."""
 
     name = "gemini"
 
-    def __init__(self, browser):
+    def __init__(self, adapter: GeminiAdapter = None, client: LLMClient = None):
         """
         Initialize Gemini executor.
 
         Args:
-            browser: GeminiBrowser instance
+            adapter: GeminiAdapter instance, or
+            client: LLMClient to create adapter from
         """
-        self._browser = browser
-
-    def is_available(self) -> bool:
-        return self._browser is not None
-
-    async def start_fresh(self) -> None:
-        """Start a new chat to clear context."""
-        if self._browser:
-            await self._browser.start_new_chat()
-
-    async def send(self, prompt: str, thinking_mode: str = "standard") -> str:
-        """Send prompt to Gemini."""
-        if not self._browser:
-            raise RuntimeError("Gemini browser not available")
-
-        log.info(
-            "llm_executor.gemini.send",
-            thinking_mode=thinking_mode,
-            prompt_length=len(prompt),
-        )
-
-        # Start fresh chat
-        await self._browser.start_new_chat()
-
-        # Enable deep think mode if requested
-        if thinking_mode == "deep":
-            await self._browser.enable_deep_think()
-
-        # Send and return response
-        response = await self._browser.send_message(prompt)
-
-        log.debug(
-            "llm_executor.gemini.response",
-            response_length=len(response),
-        )
-
-        return response
+        if adapter is None and client is not None:
+            adapter = GeminiAdapter(client)
+        super().__init__(adapter, "gemini")
 
 
-class ChatGPTExecutor(LLMExecutor):
-    """Executor for ChatGPT via browser automation."""
+class ChatGPTExecutor(APIExecutor):
+    """Executor for ChatGPT via API."""
 
     name = "chatgpt"
 
-    def __init__(self, browser):
+    def __init__(self, adapter: ChatGPTAdapter = None, client: LLMClient = None):
         """
         Initialize ChatGPT executor.
 
         Args:
-            browser: ChatGPTBrowser instance
+            adapter: ChatGPTAdapter instance, or
+            client: LLMClient to create adapter from
         """
-        self._browser = browser
-
-    def is_available(self) -> bool:
-        return self._browser is not None
-
-    async def start_fresh(self) -> None:
-        """Start a new chat to clear context."""
-        if self._browser:
-            await self._browser.start_new_chat()
-
-    async def send(self, prompt: str, thinking_mode: str = "standard") -> str:
-        """Send prompt to ChatGPT."""
-        if not self._browser:
-            raise RuntimeError("ChatGPT browser not available")
-
-        log.info(
-            "llm_executor.chatgpt.send",
-            thinking_mode=thinking_mode,
-            prompt_length=len(prompt),
-        )
-
-        # Start fresh chat
-        await self._browser.start_new_chat()
-
-        # Configure mode based on thinking_mode
-        use_thinking = thinking_mode in ("thinking", "deep")
-
-        if thinking_mode == "deep":
-            # Try to enable Pro mode for deep thinking
-            try:
-                await self._browser.enable_pro_mode()
-            except Exception as e:
-                log.warning(
-                    "llm_executor.chatgpt.pro_mode_failed",
-                    error=str(e),
-                )
-
-        # Send with appropriate thinking mode
-        response = await self._browser.send_message(prompt, use_thinking_mode=use_thinking)
-
-        log.debug(
-            "llm_executor.chatgpt.response",
-            response_length=len(response),
-        )
-
-        return response
+        if adapter is None and client is not None:
+            adapter = ChatGPTAdapter(client)
+        super().__init__(adapter, "chatgpt")
 
 
-class ClaudeExecutor(LLMExecutor):
+class ClaudeExecutor(APIExecutor):
     """Executor for Claude via API."""
 
     name = "claude"
 
-    def __init__(self, reviewer):
+    def __init__(self, adapter: ClaudeAdapter = None, client: LLMClient = None, reviewer=None):
         """
         Initialize Claude executor.
 
         Args:
-            reviewer: ClaudeReviewer instance
+            adapter: ClaudeAdapter instance, or
+            client: LLMClient to create adapter from, or
+            reviewer: Legacy ClaudeReviewer (ignored, kept for compatibility)
         """
-        self._reviewer = reviewer
+        if adapter is None and client is not None:
+            adapter = ClaudeAdapter(client)
+        super().__init__(adapter, "claude")
 
-    def is_available(self) -> bool:
-        return self._reviewer is not None and self._reviewer.is_available()
 
-    async def send(self, prompt: str, thinking_mode: str = "standard") -> str:
-        """Send prompt to Claude."""
-        if not self._reviewer:
-            raise RuntimeError("Claude reviewer not available")
+class DeepSeekExecutor(APIExecutor):
+    """Executor for DeepSeek via API."""
 
-        log.info(
-            "llm_executor.claude.send",
-            thinking_mode=thinking_mode,
-            prompt_length=len(prompt),
-        )
+    name = "deepseek"
 
-        # Use extended thinking for deep mode
-        extended_thinking = thinking_mode == "deep"
+    def __init__(self, adapter: DeepSeekAdapter = None, client: LLMClient = None):
+        """
+        Initialize DeepSeek executor.
 
-        response = await self._reviewer.send_message(
-            prompt,
-            extended_thinking=extended_thinking,
-        )
-
-        log.debug(
-            "llm_executor.claude.response",
-            response_length=len(response),
-        )
-
-        return response
+        Args:
+            adapter: DeepSeekAdapter instance, or
+            client: LLMClient to create adapter from
+        """
+        if adapter is None and client is not None:
+            adapter = DeepSeekAdapter(client)
+        super().__init__(adapter, "deepseek")
 
 
 def create_executors(
+    client: LLMClient = None,
+    # Legacy parameters (kept for compatibility)
     gemini_browser=None,
     chatgpt_browser=None,
     claude_reviewer=None,
@@ -212,25 +174,34 @@ def create_executors(
     Create executor instances for available LLMs.
 
     Args:
-        gemini_browser: Optional GeminiBrowser instance
-        chatgpt_browser: Optional ChatGPTBrowser instance
-        claude_reviewer: Optional ClaudeReviewer instance
+        client: LLMClient instance (recommended)
+        gemini_browser: Legacy parameter (ignored)
+        chatgpt_browser: Legacy parameter (ignored)
+        claude_reviewer: Legacy parameter (ignored)
 
     Returns:
         Dict mapping LLM name to executor instance
     """
+    if client is None:
+        return {}
+
     executors = {}
 
-    if gemini_browser:
-        executors["gemini"] = GeminiExecutor(gemini_browser)
+    gemini = GeminiExecutor(client=client)
+    if gemini.is_available():
+        executors["gemini"] = gemini
 
-    if chatgpt_browser:
-        executors["chatgpt"] = ChatGPTExecutor(chatgpt_browser)
+    chatgpt = ChatGPTExecutor(client=client)
+    if chatgpt.is_available():
+        executors["chatgpt"] = chatgpt
 
-    if claude_reviewer:
-        executor = ClaudeExecutor(claude_reviewer)
-        if executor.is_available():
-            executors["claude"] = executor
+    claude = ClaudeExecutor(client=client)
+    if claude.is_available():
+        executors["claude"] = claude
+
+    deepseek = DeepSeekExecutor(client=client)
+    if deepseek.is_available():
+        executors["deepseek"] = deepseek
 
     return executors
 
@@ -247,7 +218,7 @@ async def send_to_llm(
     Convenience function for when you need to target a specific LLM.
 
     Args:
-        llm_name: Name of the LLM ("gemini", "chatgpt", "claude")
+        llm_name: Name of the LLM ("gemini", "chatgpt", "claude", "deepseek")
         prompt: The prompt to send
         executors: Dict of available executors
         thinking_mode: One of "standard", "thinking", or "deep"

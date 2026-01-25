@@ -69,15 +69,19 @@ def print_banner():
 
 
 def cmd_auth():
-    """Authenticate with LLM providers."""
-    from explorer.src.browser.base import authenticate_all
-    console.print("\n[bold]Starting authentication...[/bold]\n")
-    console.print("This will open Chrome windows for you to log in to:")
-    console.print("  • ChatGPT (chat.openai.com)")
-    console.print("  • Gemini (gemini.google.com)")
-    console.print("\nLog in manually, then close the browser when done.\n")
-    asyncio.run(authenticate_all())
-    console.print("\n[green]✓ Sessions saved![/green]\n")
+    """Show API key configuration info."""
+    import os
+    console.print("\n[bold]API Configuration[/bold]\n")
+    console.print("Fano now uses API-based LLM access via OpenRouter.\n")
+    console.print("Set the following environment variable:")
+    console.print("  [cyan]OPENROUTER_API_KEY[/cyan] - Your OpenRouter API key\n")
+
+    # Check if key is set
+    if os.environ.get("OPENROUTER_API_KEY"):
+        console.print("[green]✓ OPENROUTER_API_KEY is set[/green]\n")
+    else:
+        console.print("[yellow]⚠ OPENROUTER_API_KEY is not set[/yellow]")
+        console.print("  Get your key at: https://openrouter.ai/keys\n")
 
 
 def cmd_start():

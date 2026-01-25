@@ -13,7 +13,6 @@ from typing import Optional, Any
 
 from shared.logging import get_logger
 
-from explorer.src.browser import GeminiQuotaExhausted
 from explorer.src.models import ExplorationThread
 from explorer.src.chunking import (
     AtomicExtractor,
@@ -312,10 +311,6 @@ class InsightProcessor:
                 # Handle the review outcome
                 await self._handle_review_outcome(insight, review, blessed_store)
 
-            except GeminiQuotaExhausted as e:
-                self._handle_quota_exhausted(insight, e)
-                break
-
             except Exception as e:
                 log.error(f"[{insight.id}] Review failed: {e}")
                 insight.status = InsightStatus.PENDING
@@ -357,19 +352,6 @@ class InsightProcessor:
 
         # Save updated insight
         await asyncio.to_thread(insight.save, self.paths.chunks_dir)
-
-    def _handle_quota_exhausted(self, insight: AtomicInsight, error: GeminiQuotaExhausted) -> None:
-        """Handle Gemini Deep Think quota exhaustion."""
-        log.error(
-            "orchestration.insights.quota_exhausted",
-            insight_id=insight.id,
-            resume_time=str(error.resume_time),
-            service="gemini_deep_think",
-        )
-
-        # Save the insight in its current state (pending)
-        insight.status = InsightStatus.PENDING
-        asyncio.create_task(asyncio.to_thread(insight.save, self.paths.chunks_dir))
 
     def _load_insight_by_id(self, insight_id: str) -> Optional[AtomicInsight]:
         """Load an insight by ID from any status directory."""

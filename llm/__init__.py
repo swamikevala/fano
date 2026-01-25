@@ -1,11 +1,11 @@
 """
-LLM Library - Unified interface for LLM access.
+LLM Library - Unified interface for LLM access via OpenRouter.
 
 This library provides a clean API for all LLM interactions:
-- Single LLM calls (via Pool service)
+- Single LLM calls via OpenRouter API
 - Multi-LLM consensus for reliable validation
-- Automatic rate limiting and queueing
-- Deep mode management
+- Automatic rate limiting
+- Support for multiple backends (Gemini, ChatGPT, Claude, DeepSeek)
 
 Usage:
     from llm import LLMClient, ConsensusReviewer
@@ -19,37 +19,38 @@ Usage:
     result = await reviewer.review(insight_text, tags=["math"])
 """
 
-from .src.client import LLMClient, PoolUnavailableError
+from .src.client import LLMClient
 from .src.models import (
     LLMResponse,
     Backend,
-    Priority,
-    PoolStatus,
-    BackendStatus,
+    ImageAttachment,
 )
 from .src.consensus import ConsensusReviewer
 from .src.adapters import (
-    BrowserAdapter,
+    APIAdapter,
     GeminiAdapter,
     ChatGPTAdapter,
     ClaudeAdapter,
+    DeepSeekAdapter,
     create_adapters,
+    # Legacy aliases
+    BrowserAdapter,
 )
 
 __all__ = [
     "LLMClient",
-    "PoolUnavailableError",
     "LLMResponse",
     "Backend",
-    "Priority",
-    "PoolStatus",
-    "BackendStatus",
+    "ImageAttachment",
     "ConsensusReviewer",
-    "BrowserAdapter",
+    "APIAdapter",
     "GeminiAdapter",
     "ChatGPTAdapter",
     "ClaudeAdapter",
+    "DeepSeekAdapter",
     "create_adapters",
+    # Legacy
+    "BrowserAdapter",
 ]
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
