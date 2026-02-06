@@ -36,9 +36,12 @@ from shared.models import (
     SeedStatus,
     SeedType,
     Source,
+    User,
     generate_id,
 )
 from shared.store import StateStore
+
+TEST_USER_ID = "test-user-001"
 
 
 # ── helpers ──────────────────────────────────────────────────
@@ -63,7 +66,7 @@ def _make_config() -> Config:
 def _make_project(pid: str = "proj-1", **kw) -> Project:
     now = _now()
     defaults = dict(
-        id=pid, name="Test Project", goal="Explore math",
+        id=pid, owner_id=TEST_USER_ID, name="Test Project", goal="Explore math",
         context="Testing context",
         evaluation_criteria=[EvaluationCriterion("rigor", "r", 1.0)],
         exploration_guidance="EG", document_guidance="DG",
@@ -75,6 +78,13 @@ def _make_project(pid: str = "proj-1", **kw) -> Project:
     )
     defaults.update(kw)
     return Project(**defaults)
+
+
+def _make_test_user(uid: str = TEST_USER_ID) -> User:
+    return User(
+        id=uid, username="tester",
+        display_name="Test User", created_at=_now(),
+    )
 
 
 def _make_seed(project_id: str = "proj-1", sid: str | None = None, **kw) -> Seed:
@@ -178,14 +188,19 @@ def app(loop):
     config = _make_config()
     application = create_app(store, bus, config)
     application.config["TESTING"] = True
+    # Create test user for auth
+    loop.run_until_complete(store.create_user(_make_test_user()))
     yield application
     loop.run_until_complete(store.close())
 
 
 @pytest.fixture
 def client(app):
-    """Flask test client."""
-    return app.test_client()
+    """Flask test client with authenticated session."""
+    c = app.test_client()
+    with c.session_transaction() as sess:
+        sess["user_id"] = TEST_USER_ID
+    return c
 
 
 @pytest.fixture
@@ -220,7 +235,10 @@ def seeded_app(app, loop):
 
 @pytest.fixture
 def seeded_client(seeded_app):
-    return seeded_app.test_client()
+    c = seeded_app.test_client()
+    with c.session_transaction() as sess:
+        sess["user_id"] = TEST_USER_ID
+    return c
 
 
 # ── Project endpoints ────────────────────────────────────────

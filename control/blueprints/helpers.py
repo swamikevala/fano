@@ -10,7 +10,7 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Any
 
-from flask import current_app, jsonify, request
+from flask import current_app, g, jsonify, redirect, request, session, url_for
 
 from control.async_utils import run_async
 from shared.models import Event, generate_id
@@ -111,3 +111,40 @@ def publish_event(topic: str, payload: dict, source: str = "control") -> None:
         correlation_id=generate_id(),
     )
     run_async(bus.publish(event))
+
+
+# ── Auth helpers ──────────────────────────────────────────────
+
+
+def get_current_user():
+    """Load the current user from session, caching in g.user."""
+    if hasattr(g, "user"):
+        return g.user
+    user_id = session.get("user_id")
+    if not user_id:
+        g.user = None
+        return None
+    store = get_store()
+    g.user = run_async(store.get_user(user_id))
+    return g.user
+
+
+def require_auth():
+    """Check auth; return a response tuple if unauthorized, or None if OK."""
+    user = get_current_user()
+    if user is not None:
+        return None
+    if request.path.startswith("/api/"):
+        return err("Authentication required", "UNAUTHORIZED", 401)
+    return redirect(url_for("auth.login_page"))
+
+
+def check_project_access(project_id: str):
+    """Verify the current user owns the project. Returns error response or None."""
+    store = get_store()
+    project = run_async(store.get_project(project_id))
+    if project is None:
+        return err("Project not found", "NOT_FOUND", 404)
+    if project.owner_id is not None and project.owner_id != g.user.id:
+        return err("Access denied", "FORBIDDEN", 403)
+    return None

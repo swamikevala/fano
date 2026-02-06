@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from flask import Blueprint, render_template, request
+from flask import Blueprint, g, render_template, request
 
 from control.async_utils import run_async
 from shared.models import AnnotationStatus, ProjectStatus, SectionStatus
 
-from .helpers import get_store
+from .helpers import check_project_access, get_store
 
 bp = Blueprint("ui", __name__, url_prefix="")
 
@@ -24,13 +24,17 @@ def document() -> str:
     """Serve the document viewer with data from the store."""
     store = get_store()
 
-    # Resolve project — explicit param or first active project
+    # Resolve project — explicit param or first active project (scoped to user)
     project_id = request.args.get("project_id")
     project = None
+    owner_id = g.user.id if hasattr(g, "user") and g.user else None
     if project_id:
         project = run_async(store.get_project(project_id))
+        # Verify ownership
+        if project and project.owner_id is not None and owner_id and project.owner_id != owner_id:
+            project = None
     if not project:
-        projects = run_async(store.list_projects(status=ProjectStatus.ACTIVE))
+        projects = run_async(store.list_projects(status=ProjectStatus.ACTIVE, owner_id=owner_id))
         if projects:
             project = projects[0]
             project_id = project.id

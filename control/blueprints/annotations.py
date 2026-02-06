@@ -15,6 +15,7 @@ from shared.models import (
 )
 
 from .helpers import (
+    check_project_access,
     err,
     get_store,
     ok,
@@ -30,6 +31,9 @@ def list_annotations():
     project_id = request.args.get("project_id")
     if not project_id:
         return err("project_id query parameter is required", "VALIDATION_ERROR")
+    denied = check_project_access(project_id)
+    if denied:
+        return denied
 
     store = get_store()
     status_filter = request.args.get("status")
@@ -50,6 +54,9 @@ def get_annotation(annotation_id: str):
     annotation = run_async(store.get_annotation(annotation_id))
     if annotation is None:
         return err("Annotation not found", "NOT_FOUND", 404)
+    denied = check_project_access(annotation.project_id)
+    if denied:
+        return denied
     return ok(serialize(annotation))
 
 
@@ -60,6 +67,9 @@ def create_annotation():
     content = body.get("content", "")
     if not project_id:
         return err("project_id is required", "VALIDATION_ERROR")
+    denied = check_project_access(project_id)
+    if denied:
+        return denied
 
     type_str = body.get("type", "comment")
     try:

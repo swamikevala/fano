@@ -15,6 +15,7 @@ from shared.models import (
 )
 
 from .helpers import (
+    check_project_access,
     err,
     get_pagination,
     get_store,
@@ -42,6 +43,9 @@ def list_insights():
     project_id = request.args.get("project_id")
     if not project_id:
         return err("project_id query parameter is required", "VALIDATION_ERROR")
+    denied = check_project_access(project_id)
+    if denied:
+        return denied
 
     store = get_store()
     status_filter = request.args.get("status")
@@ -65,6 +69,9 @@ def get_insight(insight_id: str):
     insight = run_async(store.get_insight(insight_id))
     if insight is None:
         return err("Insight not found", "NOT_FOUND", 404)
+    denied = check_project_access(insight.project_id)
+    if denied:
+        return denied
     return ok(serialize(insight))
 
 
@@ -74,6 +81,9 @@ def add_comment(insight_id: str):
     insight = run_async(store.get_insight(insight_id))
     if insight is None:
         return err("Insight not found", "NOT_FOUND", 404)
+    denied = check_project_access(insight.project_id)
+    if denied:
+        return denied
 
     body = request.get_json(silent=True) or {}
     type_str = body.get("type", "general")

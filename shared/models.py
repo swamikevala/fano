@@ -160,8 +160,17 @@ class ResearchDomain:
 # ============================================================
 
 @dataclass(frozen=True)
+class User:
+    id: str
+    username: str
+    display_name: str
+    created_at: datetime
+
+
+@dataclass(frozen=True)
 class Project:
     id: str
+    owner_id: str | None
     name: str
     goal: str
     context: str
@@ -509,6 +518,14 @@ class StateStoreInterface(ABC):
     async def transaction(self) -> AsyncIterator[None]:
         yield  # pragma: no cover
 
+    # -- Users --
+    @abstractmethod
+    async def create_user(self, user: User) -> None: ...
+    @abstractmethod
+    async def get_user(self, user_id: str) -> User | None: ...
+    @abstractmethod
+    async def get_user_by_username(self, username: str) -> User | None: ...
+
     # -- Projects --
     @abstractmethod
     async def create_project(self, project: Project) -> None: ...
@@ -517,7 +534,7 @@ class StateStoreInterface(ABC):
     @abstractmethod
     async def update_project(self, project_id: str, **fields: object) -> None: ...
     @abstractmethod
-    async def list_projects(self, status: ProjectStatus | None = None) -> list[Project]: ...
+    async def list_projects(self, status: ProjectStatus | None = None, owner_id: str | None = None) -> list[Project]: ...
 
     # -- Seeds --
     @abstractmethod

@@ -8,6 +8,7 @@ StateStore reads to JSON envelopes.
 from __future__ import annotations
 
 import logging
+import os
 import sys
 import warnings
 from typing import TYPE_CHECKING
@@ -60,6 +61,10 @@ def create_app(
     """
     app = Flask(__name__)
 
+    # Secret key for session cookies
+    secret = config.get("auth.secret_key", "") if hasattr(config, "get") else ""
+    app.secret_key = secret or os.urandom(32)
+
     # Stash dependencies where blueprints can reach them
     app.config["state_store"] = store
     app.config["event_bus"] = event_bus
@@ -68,6 +73,7 @@ def create_app(
     # Import blueprints here (after module fully loads) to avoid circular deps
     from control.blueprints import (
         annotations_bp,
+        auth_bp,
         document_bp,
         insights_bp,
         projects_bp,
@@ -76,6 +82,9 @@ def create_app(
         status_bp,
         ui_bp,
     )
+
+    # Register auth blueprint first
+    app.register_blueprint(auth_bp)
 
     # Register v2 API blueprints
     app.register_blueprint(projects_bp)
@@ -88,6 +97,16 @@ def create_app(
 
     # Register UI page routes
     app.register_blueprint(ui_bp)
+
+    # Auth middleware — enforce login on all routes except /login and /static
+    @app.before_request
+    def enforce_auth():
+        from flask import request
+        skip_prefixes = ("/login", "/static")
+        if any(request.path.startswith(p) for p in skip_prefixes):
+            return None
+        from control.blueprints.helpers import require_auth
+        return require_auth()
 
     # Global error handler for unhandled exceptions
     @app.errorhandler(404)

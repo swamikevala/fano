@@ -27,6 +27,9 @@ dependencies = [
     # Configuration
     "pyyaml>=6.0.0",
 
+    # Authentication
+    "ldap3>=2.9.0",
+
     # Utilities
     "python-ulid>=3.0.0",
     "tenacity>=8.2.0",

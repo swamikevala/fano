@@ -48,6 +48,7 @@ NOW = datetime.now(timezone.utc)
 
 SAMPLE_PROJECT = Project(
     id="proj-001",
+    owner_id=None,
     name="Test Project",
     goal="Explore test hypotheses.",
     context="Test context.",

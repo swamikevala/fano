@@ -6,7 +6,7 @@ from flask import Blueprint, request
 
 from control.async_utils import run_async
 
-from .helpers import err, get_store, ok, serialize
+from .helpers import check_project_access, err, get_store, ok, serialize
 
 bp = Blueprint("document_v2", __name__, url_prefix="/api")
 
@@ -17,6 +17,9 @@ def get_document():
     project_id = request.args.get("project_id")
     if not project_id:
         return err("project_id query parameter is required", "VALIDATION_ERROR")
+    denied = check_project_access(project_id)
+    if denied:
+        return denied
 
     store = get_store()
     sections = run_async(store.list_sections(project_id))
@@ -39,6 +42,9 @@ def list_sections():
     project_id = request.args.get("project_id")
     if not project_id:
         return err("project_id query parameter is required", "VALIDATION_ERROR")
+    denied = check_project_access(project_id)
+    if denied:
+        return denied
 
     store = get_store()
     sections = run_async(store.list_sections(project_id))

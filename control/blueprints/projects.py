@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from flask import Blueprint, request
+from flask import Blueprint, g, request
 
 from control.async_utils import run_async
 from shared.models import (
@@ -15,7 +15,7 @@ from shared.models import (
     generate_id,
 )
 
-from .helpers import err, get_store, ok, serialize
+from .helpers import check_project_access, err, get_store, ok, serialize
 
 bp = Blueprint("projects_v2", __name__, url_prefix="/api")
 
@@ -30,7 +30,8 @@ def list_projects():
             ps = ProjectStatus(status_filter)
         except ValueError:
             return err(f"Invalid status: {status_filter}", "VALIDATION_ERROR")
-    projects = run_async(store.list_projects(status=ps))
+    owner_id = g.user.id if hasattr(g, "user") and g.user else None
+    projects = run_async(store.list_projects(status=ps, owner_id=owner_id))
     data = [serialize(p) for p in projects]
     return ok(data)
 
@@ -65,8 +66,10 @@ def create_project():
         for d in domains_raw
     ]
 
+    owner_id = g.user.id if hasattr(g, "user") and g.user else None
     project = Project(
         id=generate_id(),
+        owner_id=owner_id,
         name=name,
         goal=goal,
         context=body.get("context", ""),
@@ -87,19 +90,21 @@ def create_project():
 
 @bp.route("/projects/<project_id>", methods=["GET"])
 def get_project(project_id: str):
+    denied = check_project_access(project_id)
+    if denied:
+        return denied
     store = get_store()
     project = run_async(store.get_project(project_id))
-    if project is None:
-        return err("Project not found", "NOT_FOUND", 404)
     return ok(serialize(project))
 
 
 @bp.route("/projects/<project_id>", methods=["PUT"])
 def update_project(project_id: str):
+    denied = check_project_access(project_id)
+    if denied:
+        return denied
     store = get_store()
     existing = run_async(store.get_project(project_id))
-    if existing is None:
-        return err("Project not found", "NOT_FOUND", 404)
 
     body = request.get_json(silent=True) or {}
     allowed = {"name", "goal", "context", "exploration_guidance",

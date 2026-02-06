@@ -36,6 +36,7 @@ from shared.models import (
     StateStoreInterface,
     Thread,
     ThreadStatus,
+    User,
 )
 from shared.store_hydrate import (
     _json_load,
@@ -52,6 +53,7 @@ from shared.store_hydrate import (
     hydrate_seed_modification,
     hydrate_source,
     hydrate_thread,
+    hydrate_user,
 )
 from shared.store_schema import DT_COLS, JSON_COLS, SCHEMA, TABLES_WITH_UPDATED_AT
 
@@ -186,6 +188,19 @@ class StateStore(StateStoreInterface):
         except Exception as exc:
             raise StoreError(str(exc)) from exc
 
+    # ── Users ───────────────────────────────────────────────
+
+    async def create_user(self, user: User) -> None:
+        await self._insert("users", asdict(user))
+
+    async def get_user(self, user_id: str) -> User | None:
+        row = await self._get_row("users", "id=?", (user_id,))
+        return hydrate_user(row) if row else None
+
+    async def get_user_by_username(self, username: str) -> User | None:
+        row = await self._get_row("users", "username=?", (username,))
+        return hydrate_user(row) if row else None
+
     # ── Projects ─────────────────────────────────────────────
 
     async def create_project(self, project: Project) -> None:
@@ -198,11 +213,18 @@ class StateStore(StateStoreInterface):
     async def update_project(self, project_id: str, **fields: object) -> None:
         await self._update("projects", "id", project_id, fields)
 
-    async def list_projects(self, status: ProjectStatus | None = None) -> list[Project]:
+    async def list_projects(self, status: ProjectStatus | None = None,
+                            owner_id: str | None = None) -> list[Project]:
+        parts: list[str] = []
+        params: list[Any] = []
         if status:
-            rows = await self._get_rows("projects", "status=?", (_enum_val(status),))
-        else:
-            rows = await self._get_rows("projects")
+            parts.append("status=?")
+            params.append(_enum_val(status))
+        if owner_id:
+            parts.append("owner_id=?")
+            params.append(owner_id)
+        where = " AND ".join(parts) if parts else "1=1"
+        rows = await self._get_rows("projects", where, tuple(params))
         return [hydrate_project(r) for r in rows]
 
     # ── Seeds ────────────────────────────────────────────────

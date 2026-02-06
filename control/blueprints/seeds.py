@@ -16,6 +16,7 @@ from shared.models import (
 )
 
 from .helpers import (
+    check_project_access,
     err,
     get_pagination,
     get_store,
@@ -34,6 +35,9 @@ def list_seeds():
     project_id = request.args.get("project_id")
     if not project_id:
         return err("project_id query parameter is required", "VALIDATION_ERROR")
+    denied = check_project_access(project_id)
+    if denied:
+        return denied
 
     store = get_store()
     status_filter = request.args.get("status")
@@ -58,6 +62,9 @@ def create_seed():
     text = body.get("text")
     if not project_id or not text:
         return err("project_id and text are required", "VALIDATION_ERROR")
+    denied = check_project_access(project_id)
+    if denied:
+        return denied
 
     now = datetime.now(timezone.utc)
     seed_type_str = body.get("type", "conjecture")
@@ -104,6 +111,9 @@ def get_seed(seed_id: str):
     seed = run_async(store.get_seed(seed_id))
     if seed is None:
         return err("Seed not found", "NOT_FOUND", 404)
+    denied = check_project_access(seed.project_id)
+    if denied:
+        return denied
     return ok(serialize(seed))
 
 
@@ -113,6 +123,9 @@ def update_seed(seed_id: str):
     existing = run_async(store.get_seed(seed_id))
     if existing is None:
         return err("Seed not found", "NOT_FOUND", 404)
+    denied = check_project_access(existing.project_id)
+    if denied:
+        return denied
 
     body = request.get_json(silent=True) or {}
     allowed = {"text", "priority", "tags", "confidence", "notes", "status"}
@@ -131,6 +144,9 @@ def delete_seed(seed_id: str):
     existing = run_async(store.get_seed(seed_id))
     if existing is None:
         return err("Seed not found", "NOT_FOUND", 404)
+    denied = check_project_access(existing.project_id)
+    if denied:
+        return denied
 
     run_async(store.update_seed(seed_id, status=SeedStatus.RETIRED.value))
     return ok({"deleted": True})
@@ -142,6 +158,9 @@ def approve_seed(seed_id: str):
     existing = run_async(store.get_seed(seed_id))
     if existing is None:
         return err("Seed not found", "NOT_FOUND", 404)
+    denied = check_project_access(existing.project_id)
+    if denied:
+        return denied
 
     body = request.get_json(silent=True) or {}
     reason = body.get("modification_reason", "")
@@ -162,6 +181,9 @@ def reject_seed(seed_id: str):
     existing = run_async(store.get_seed(seed_id))
     if existing is None:
         return err("Seed not found", "NOT_FOUND", 404)
+    denied = check_project_access(existing.project_id)
+    if denied:
+        return denied
 
     body = request.get_json(silent=True) or {}
     reason = body.get("reason", "")

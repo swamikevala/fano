@@ -6,7 +6,7 @@ from flask import Blueprint, request
 
 from control.async_utils import run_async
 
-from .helpers import err, get_store, ok, publish_event, serialize
+from .helpers import check_project_access, err, get_store, ok, publish_event, serialize
 
 bp = Blueprint("research_v2", __name__, url_prefix="/api/research")
 
@@ -16,6 +16,9 @@ def list_findings():
     project_id = request.args.get("project_id")
     if not project_id:
         return err("project_id query parameter is required", "VALIDATION_ERROR")
+    denied = check_project_access(project_id)
+    if denied:
+        return denied
 
     store = get_store()
     findings = run_async(store.list_findings(project_id))
@@ -27,6 +30,9 @@ def list_sources():
     project_id = request.args.get("project_id")
     if not project_id:
         return err("project_id query parameter is required", "VALIDATION_ERROR")
+    denied = check_project_access(project_id)
+    if denied:
+        return denied
 
     store = get_store()
     sources = run_async(store.list_sources(project_id))
@@ -40,6 +46,9 @@ def research_request():
     query = body.get("query")
     if not project_id or not query:
         return err("project_id and query are required", "VALIDATION_ERROR")
+    denied = check_project_access(project_id)
+    if denied:
+        return denied
 
     publish_event("user.research.requested", {
         "project_id": project_id,

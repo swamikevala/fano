@@ -38,6 +38,7 @@ from shared.models import (
     Source,
     Thread,
     ThreadStatus,
+    User,
 )
 
 
@@ -55,13 +56,23 @@ def _json_load(v: Any) -> Any:
     return v
 
 
+def hydrate_user(row: dict) -> User:
+    return User(
+        id=row["id"],
+        username=row["username"],
+        display_name=row["display_name"],
+        created_at=_from_iso(row["created_at"]),
+    )
+
+
 def hydrate_project(row: dict) -> Project:
     criteria_raw = _json_load(row["evaluation_criteria"])
     criteria = [EvaluationCriterion(**c) if isinstance(c, dict) else c for c in criteria_raw]
     domains_raw = _json_load(row["research_domains"])
     domains = [ResearchDomain(**d) if isinstance(d, dict) else d for d in domains_raw]
     return Project(
-        id=row["id"], name=row["name"], goal=row["goal"], context=row["context"],
+        id=row["id"], owner_id=row.get("owner_id"),
+        name=row["name"], goal=row["goal"], context=row["context"],
         evaluation_criteria=criteria, exploration_guidance=row["exploration_guidance"],
         document_guidance=row["document_guidance"],
         seed_modification_enabled=bool(row["seed_modification_enabled"]),

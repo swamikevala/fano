@@ -23,9 +23,12 @@ from shared.models import (
     ResearchDomain,
     Section,
     SectionStatus,
+    User,
     generate_id,
 )
 from shared.store import StateStore
+
+TEST_USER_ID = "test-user-001"
 
 
 # ── helpers ──────────────────────────────────────────────────
@@ -50,7 +53,8 @@ def _config() -> Config:
 def _make_project(pid: str = "proj-1", **kw) -> Project:
     now = _now()
     defaults = dict(
-        id=pid, name="Fano Plane Research", goal="Explore connections",
+        id=pid, owner_id=TEST_USER_ID, name="Fano Plane Research",
+        goal="Explore connections",
         context="Testing",
         evaluation_criteria=[EvaluationCriterion("rigor", "r", 1.0)],
         exploration_guidance="EG", document_guidance="DG",
@@ -62,6 +66,13 @@ def _make_project(pid: str = "proj-1", **kw) -> Project:
     )
     defaults.update(kw)
     return Project(**defaults)
+
+
+def _make_test_user(uid: str = TEST_USER_ID) -> User:
+    return User(
+        id=uid, username="tester",
+        display_name="Test User", created_at=_now(),
+    )
 
 
 def _make_section(project_id: str = "proj-1", **kw) -> Section:
@@ -110,13 +121,17 @@ def app(loop):
     bus = EventBus(store=None)
     application = create_app(store, bus, _config())
     application.config["TESTING"] = True
+    loop.run_until_complete(store.create_user(_make_test_user()))
     yield application
     loop.run_until_complete(store.close())
 
 
 @pytest.fixture
 def client(app):
-    return app.test_client()
+    c = app.test_client()
+    with c.session_transaction() as sess:
+        sess["user_id"] = TEST_USER_ID
+    return c
 
 
 @pytest.fixture

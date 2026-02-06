@@ -43,6 +43,7 @@ def now() -> datetime:
 def sample_project(now: datetime) -> Project:
     return Project(
         id="test-project-001",
+        owner_id=None,
         name="Test Research Project",
         goal="Explore test hypotheses about mathematical structure.",
         context="This is a test project for unit tests.",

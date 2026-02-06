@@ -33,6 +33,7 @@ from shared.models import (
     Source,
     Thread,
     ThreadStatus,
+    User,
     generate_id,
 )
 from shared.store import StateStore
@@ -47,7 +48,7 @@ def _now() -> datetime:
 def _project(pid: str = "proj-1", **kw) -> Project:
     now = _now()
     defaults = dict(
-        id=pid, name="P", goal="G", context="C",
+        id=pid, owner_id=None, name="P", goal="G", context="C",
         evaluation_criteria=[EvaluationCriterion("rigor", "r", 1.0)],
         exploration_guidance="EG", document_guidance="DG",
         seed_modification_enabled=True,
@@ -693,3 +694,71 @@ async def test_foreign_key_enforcement(store: StateStore):
         await store.create_seed(
             _seed(project_id="nonexistent-project", sid="bad-seed")
         )
+
+
+# ── User CRUD ────────────────────────────────────────────────
+
+
+def _user(uid: str = "user-1", **kw) -> User:
+    now = _now()
+    defaults = dict(
+        id=uid, username="alice",
+        display_name="Alice Doe", created_at=now,
+    )
+    defaults.update(kw)
+    return User(**defaults)
+
+
+async def test_create_and_get_user(store: StateStore):
+    user = _user()
+    await store.create_user(user)
+    fetched = await store.get_user("user-1")
+    assert fetched is not None
+    assert fetched.username == "alice"
+    assert fetched.display_name == "Alice Doe"
+
+
+async def test_get_user_by_username(store: StateStore):
+    user = _user(uid="user-2", username="bob")
+    await store.create_user(user)
+    fetched = await store.get_user_by_username("bob")
+    assert fetched is not None
+    assert fetched.id == "user-2"
+
+
+async def test_get_user_not_found(store: StateStore):
+    result = await store.get_user("nonexistent")
+    assert result is None
+
+
+async def test_get_user_by_username_not_found(store: StateStore):
+    result = await store.get_user_by_username("nobody")
+    assert result is None
+
+
+async def test_project_with_owner_id(store: StateStore):
+    user = _user(uid="owner-1", username="owner")
+    await store.create_user(user)
+    project = _project(pid="proj-owned", owner_id="owner-1")
+    await store.create_project(project)
+    fetched = await store.get_project("proj-owned")
+    assert fetched is not None
+    assert fetched.owner_id == "owner-1"
+
+
+async def test_list_projects_filtered_by_owner(store: StateStore):
+    user_a = _user(uid="u-a", username="user_a")
+    user_b = _user(uid="u-b", username="user_b")
+    await store.create_user(user_a)
+    await store.create_user(user_b)
+    await store.create_project(_project(pid="p-a", owner_id="u-a"))
+    await store.create_project(_project(pid="p-b", owner_id="u-b"))
+    await store.create_project(_project(pid="p-c", owner_id="u-a"))
+
+    a_projects = await store.list_projects(owner_id="u-a")
+    assert len(a_projects) == 2
+    assert {p.id for p in a_projects} == {"p-a", "p-c"}
+
+    b_projects = await store.list_projects(owner_id="u-b")
+    assert len(b_projects) == 1
+    assert b_projects[0].id == "p-b"

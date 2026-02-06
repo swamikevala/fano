@@ -47,7 +47,7 @@ def _now() -> datetime:
 def _project(pid: str = "proj-1") -> Project:
     now = _now()
     return Project(
-        id=pid, name="Test Project", goal="Explore math.",
+        id=pid, owner_id=None, name="Test Project", goal="Explore math.",
         context="Testing context.",
         evaluation_criteria=[EvaluationCriterion("rigor", "r", 1.0)],
         exploration_guidance="Explore.", document_guidance="Write clearly.",

@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fano &mdash; Login</title>
+<style>
+:root {
+  --bg-primary: #0d1117;
+  --bg-secondary: #161b22;
+  --bg-tertiary: #21262d;
+  --bg-hover: #30363d;
+  --border: #30363d;
+  --text-primary: #e6edf3;
+  --text-secondary: #8b949e;
+  --text-muted: #6e7681;
+  --blue: #58a6ff;
+  --red: #f85149;
+  --red-bg: #3d1117;
+  --purple: #bc8cff;
+  --radius: 8px;
+  --radius-sm: 4px;
+  --font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: var(--font-body);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+}
+.login-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 40px 36px;
+  width: 380px;
+  max-width: 90vw;
+}
+.login-header {
+  text-align: center;
+  margin-bottom: 28px;
+}
+.login-header .logo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  background: var(--purple);
+  border-radius: 12px;
+  font-size: 24px;
+  font-weight: 700;
+  color: #fff;
+  margin-bottom: 12px;
+}
+.login-header h1 {
+  font-size: 22px;
+  font-weight: 600;
+}
+.login-header p {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-top: 6px;
+}
+.flash-message {
+  background: var(--red-bg);
+  border: 1px solid rgba(248,81,73,0.3);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  margin-bottom: 16px;
+  font-size: 13px;
+  color: var(--red);
+}
+.form-group {
+  margin-bottom: 16px;
+}
+.form-group label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+.form-input {
+  width: 100%;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  color: var(--text-primary);
+  font-size: 14px;
+  font-family: var(--font-body);
+  outline: none;
+  transition: border-color 0.15s;
+}
+.form-input:focus {
+  border-color: var(--blue);
+}
+.btn-login {
+  width: 100%;
+  padding: 10px;
+  background: var(--blue);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  margin-top: 8px;
+  transition: opacity 0.15s;
+}
+.btn-login:hover {
+  opacity: 0.85;
+}
+</style>
+</head>
+<body>
+
+<div class="login-card">
+  <div class="login-header">
+    <div class="logo">F</div>
+    <h1>Fano</h1>
+    <p>Sign in with your Active Directory account</p>
+  </div>
+
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% for category, message in messages %}
+      <div class="flash-message">{{ message }}</div>
+    {% endfor %}
+  {% endwith %}
+
+  <form method="POST" action="/login">
+    <div class="form-group">
+      <label for="username">Username</label>
+      <input type="text" class="form-input" id="username" name="username"
+             placeholder="Your AD username" required autofocus>
+    </div>
+    <div class="form-group">
+      <label for="password">Password</label>
+      <input type="password" class="form-input" id="password" name="password"
+             placeholder="Your password" required>
+    </div>
+    <button type="submit" class="btn-login">Sign In</button>
+  </form>
+</div>
+
+</body>
+</html>

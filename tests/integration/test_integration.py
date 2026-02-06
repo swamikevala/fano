@@ -117,6 +117,7 @@ NOW = datetime.now(timezone.utc)
 def _make_project() -> Project:
     return Project(
         id="proj-integ-001",
+        owner_id=None,
         name="Integration Test Project",
         goal="Explore mathematical structures in test context.",
         context="This is an integration-test project.",

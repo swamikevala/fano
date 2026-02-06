@@ -14,6 +14,7 @@ JSON_COLS: dict[str, set[str]] = {
 # ── datetime columns per table ───────────────────────────────
 
 DT_COLS: dict[str, set[str]] = {
+    "users": {"created_at"},
     "projects": {"created_at", "updated_at"},
     "seeds": {"created_at", "updated_at"},
     "threads": {"created_at", "updated_at", "retired_at"},
@@ -36,8 +37,16 @@ TABLES_WITH_UPDATED_AT = {"projects", "seeds", "threads", "insights", "sections"
 # ── Schema SQL ───────────────────────────────────────────────
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY,
+    username TEXT UNIQUE NOT NULL,
+    display_name TEXT,
+    created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS projects (
     id TEXT PRIMARY KEY,
+    owner_id TEXT REFERENCES users(id),
     name TEXT NOT NULL,
     goal TEXT NOT NULL,
     context TEXT NOT NULL,
@@ -226,6 +235,14 @@ CREATE TABLE IF NOT EXISTS metrics (
     value REAL NOT NULL,
     labels TEXT DEFAULT '{}',
     recorded_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS project_access (
+    project_id TEXT NOT NULL REFERENCES projects(id),
+    user_id TEXT NOT NULL REFERENCES users(id),
+    role TEXT NOT NULL CHECK(role IN ('owner','editor','viewer')),
+    granted_at TEXT NOT NULL,
+    PRIMARY KEY (project_id, user_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_seeds_project ON seeds(project_id, status);

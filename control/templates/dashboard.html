@@ -1180,6 +1180,14 @@ a:hover { text-decoration: underline; }
         <span class="health-dot"></span> Loading...
       </div>
     </div>
+    {% if g and g.user %}
+    <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between;">
+      <span style="font-size: 12px; color: var(--text-secondary);">{{ g.user.display_name }}</span>
+      <form method="POST" action="/logout" style="margin: 0;">
+        <button type="submit" style="background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-muted); font-size: 11px; padding: 3px 10px; cursor: pointer;">Logout</button>
+      </form>
+    </div>
+    {% endif %}
   </div>
 </nav>
 

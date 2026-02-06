@@ -73,6 +73,11 @@ logging:
   max_bytes: 10485760
   backup_count: 10
 
+auth:
+  ldap_server: "ldap://your-ad-server.company.com"
+  ldap_domain: "COMPANY"
+  secret_key: "change-me-in-production"
+
 control:
   host: "127.0.0.1"
   port: 8080

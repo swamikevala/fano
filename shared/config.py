@@ -181,6 +181,7 @@ class Config:
 
         return Project(
             id=data["id"],
+            owner_id=data.get("owner_id"),
             name=data["name"],
             goal=data["goal"],
             context=data.get("context", ""),

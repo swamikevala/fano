@@ -58,6 +58,7 @@ def _now() -> datetime:
 def _make_project(**overrides) -> Project:
     defaults = dict(
         id="proj-1",
+        owner_id=None,
         name="Test Project",
         goal="Investigate algebraic symmetry.",
         context="Exploring group theory patterns.",

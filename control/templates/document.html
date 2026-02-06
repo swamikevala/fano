@@ -777,6 +777,14 @@ mjx-container[display="true"] {
     <div class="stat-row"><span>Annotations</span> <span class="stat-val">{{ stats.annotations }}</span></div>
     <div class="stat-row"><span>Reviews</span> <span class="stat-val">{{ stats.reviews }}</span></div>
   </div>
+  {% if g and g.user %}
+  <div style="padding: 12px 16px; border-top: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between;">
+    <span style="font-size: 12px; color: var(--text-secondary);">{{ g.user.display_name }}</span>
+    <form method="POST" action="/logout" style="margin: 0;">
+      <button type="submit" style="background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-muted); font-size: 11px; padding: 3px 10px; cursor: pointer;">Logout</button>
+    </form>
+  </div>
+  {% endif %}
 </nav>
 
 <!-- ============================================================
