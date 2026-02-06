@@ -74,6 +74,7 @@ def create_app(
         research_bp,
         seeds_bp,
         status_bp,
+        ui_bp,
     )
 
     # Register v2 API blueprints
@@ -84,6 +85,9 @@ def create_app(
     app.register_blueprint(annotations_bp)
     app.register_blueprint(research_bp)
     app.register_blueprint(status_bp)
+
+    # Register UI page routes
+    app.register_blueprint(ui_bp)
 
     # Global error handler for unhandled exceptions
     @app.errorhandler(404)

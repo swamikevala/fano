@@ -7,6 +7,7 @@ from .document import bp as document_bp
 from .annotations import bp as annotations_bp
 from .research import bp as research_bp
 from .status import bp as status_bp
+from .ui import bp as ui_bp
 
 __all__ = [
     "projects_bp",
@@ -16,4 +17,5 @@ __all__ = [
     "annotations_bp",
     "research_bp",
     "status_bp",
+    "ui_bp",
 ]

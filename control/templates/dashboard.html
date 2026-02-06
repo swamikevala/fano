@@ -1,0 +1,2160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fano Research Dashboard</title>
+<style>
+/* ============================================================
+   CSS Custom Properties
+   ============================================================ */
+:root {
+  /* Base colors */
+  --bg-primary: #0d1117;
+  --bg-secondary: #161b22;
+  --bg-tertiary: #21262d;
+  --bg-hover: #30363d;
+  --border: #30363d;
+  --border-muted: #21262d;
+
+  /* Text */
+  --text-primary: #e6edf3;
+  --text-secondary: #8b949e;
+  --text-muted: #6e7681;
+  --text-link: #58a6ff;
+
+  /* Semantic */
+  --green: #3fb950;
+  --green-bg: #0d3117;
+  --orange: #d29922;
+  --orange-bg: #3d2e00;
+  --red: #f85149;
+  --red-bg: #3d1117;
+  --blue: #58a6ff;
+  --blue-bg: #0c2d6b;
+  --purple: #bc8cff;
+  --purple-bg: #2a1a4e;
+  --cyan: #39d2c0;
+  --cyan-bg: #0a2e2a;
+  --pink: #f778ba;
+  --pink-bg: #3d1132;
+  --yellow: #e3b341;
+
+  /* Sidebar */
+  --sidebar-width: 260px;
+
+  /* Fonts */
+  --font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+
+  /* Spacing */
+  --gap: 16px;
+  --radius: 8px;
+  --radius-sm: 4px;
+}
+
+/* ============================================================
+   Reset & Base
+   ============================================================ */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: var(--font-body);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  line-height: 1.5;
+  font-size: 14px;
+  display: flex;
+  min-height: 100vh;
+}
+
+a { color: var(--text-link); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* ============================================================
+   Sidebar
+   ============================================================ */
+.sidebar {
+  width: var(--sidebar-width);
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--border);
+  padding: 20px 0;
+  display: flex;
+  flex-direction: column;
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  overflow-y: auto;
+  z-index: 100;
+}
+
+.sidebar-header {
+  padding: 0 16px 20px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 12px;
+}
+
+.sidebar-header h1 {
+  font-size: 18px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sidebar-header h1 .logo {
+  width: 24px;
+  height: 24px;
+  background: var(--purple);
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.project-selector {
+  margin-top: 12px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  color: var(--text-primary);
+  font-size: 13px;
+  width: 100%;
+  cursor: pointer;
+}
+
+.nav-section {
+  padding: 8px 0;
+}
+
+.nav-section-title {
+  padding: 4px 16px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+}
+
+.nav-link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 16px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.nav-link:hover { background: var(--bg-hover); color: var(--text-primary); text-decoration: none; }
+.nav-link.active { background: var(--bg-hover); color: var(--text-primary); border-left: 2px solid var(--blue); padding-left: 14px; }
+
+.nav-link .icon {
+  width: 16px;
+  text-align: center;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.nav-link .count {
+  margin-left: auto;
+  background: var(--bg-tertiary);
+  border-radius: 10px;
+  padding: 0 7px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  min-width: 20px;
+  text-align: center;
+}
+
+.sidebar-footer {
+  margin-top: auto;
+  padding: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.health-indicators {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.health-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.health-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.health-dot.green { background: var(--green); box-shadow: 0 0 6px var(--green); }
+.health-dot.orange { background: var(--orange); box-shadow: 0 0 6px var(--orange); }
+.health-dot.red { background: var(--red); box-shadow: 0 0 6px var(--red); }
+
+/* ============================================================
+   Main Content
+   ============================================================ */
+.main {
+  margin-left: var(--sidebar-width);
+  flex: 1;
+  padding: 24px 32px;
+  max-width: 1200px;
+}
+
+.section {
+  margin-bottom: 40px;
+}
+
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.section-header h2 {
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.section-header .section-badge {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+/* ============================================================
+   Badges & Tags
+   ============================================================ */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+/* Insight statuses */
+.badge-extracted     { background: var(--blue-bg); color: var(--blue); border: 1px solid rgba(88,166,255,0.3); }
+.badge-reviewing     { background: var(--orange-bg); color: var(--orange); border: 1px solid rgba(210,153,34,0.3); }
+.badge-attested      { background: var(--green-bg); color: var(--green); border: 1px solid rgba(63,185,80,0.3); }
+.badge-discarded     { background: var(--red-bg); color: var(--red); border: 1px solid rgba(248,81,73,0.3); }
+.badge-disputed      { background: var(--red-bg); color: var(--red); border: 1px solid rgba(248,81,73,0.3); }
+.badge-interesting   { background: var(--cyan-bg); color: var(--cyan); border: 1px solid rgba(57,210,192,0.3); }
+.badge-incorporating { background: var(--purple-bg); color: var(--purple); border: 1px solid rgba(188,140,255,0.3); }
+.badge-incorporated  { background: var(--green-bg); color: var(--green); border: 1px solid rgba(63,185,80,0.3); }
+.badge-shelved       { background: var(--bg-tertiary); color: var(--text-muted); border: 1px solid var(--border); }
+.badge-transient     { background: var(--orange-bg); color: var(--orange); border: 1px solid rgba(210,153,34,0.3); }
+
+/* Seed statuses */
+.badge-active        { background: var(--green-bg); color: var(--green); border: 1px solid rgba(63,185,80,0.3); }
+.badge-explored      { background: var(--blue-bg); color: var(--blue); border: 1px solid rgba(88,166,255,0.3); }
+.badge-evolved       { background: var(--purple-bg); color: var(--purple); border: 1px solid rgba(188,140,255,0.3); }
+.badge-retired       { background: var(--bg-tertiary); color: var(--text-muted); border: 1px solid var(--border); }
+
+/* Seed types */
+.badge-axiom         { background: var(--purple-bg); color: var(--purple); border: 1px solid rgba(188,140,255,0.3); }
+.badge-conjecture    { background: var(--cyan-bg); color: var(--cyan); border: 1px solid rgba(57,210,192,0.3); }
+.badge-question      { background: var(--orange-bg); color: var(--orange); border: 1px solid rgba(210,153,34,0.3); }
+
+/* Annotation statuses */
+.badge-open          { background: var(--blue-bg); color: var(--blue); border: 1px solid rgba(88,166,255,0.3); }
+.badge-attempted     { background: var(--orange-bg); color: var(--orange); border: 1px solid rgba(210,153,34,0.3); }
+.badge-resolved      { background: var(--green-bg); color: var(--green); border: 1px solid rgba(63,185,80,0.3); }
+.badge-needs-review  { background: var(--red-bg); color: var(--red); border: 1px solid rgba(248,81,73,0.3); }
+
+/* Section statuses */
+.badge-stable        { background: var(--green-bg); color: var(--green); border: 1px solid rgba(63,185,80,0.3); }
+.badge-provisional   { background: var(--orange-bg); color: var(--orange); border: 1px solid rgba(210,153,34,0.3); }
+.badge-needs-work    { background: var(--red-bg); color: var(--red); border: 1px solid rgba(248,81,73,0.3); }
+
+/* Confidence */
+.badge-high          { background: var(--green-bg); color: var(--green); border: 1px solid rgba(63,185,80,0.3); }
+.badge-medium        { background: var(--orange-bg); color: var(--orange); border: 1px solid rgba(210,153,34,0.3); }
+.badge-low           { background: var(--red-bg); color: var(--red); border: 1px solid rgba(248,81,73,0.3); }
+
+.tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 11px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  font-family: var(--font-mono);
+}
+
+.tag-establishes { color: var(--green); border-color: rgba(63,185,80,0.3); }
+.tag-requires    { color: var(--orange); border-color: rgba(210,153,34,0.3); }
+
+/* ============================================================
+   1. Overview Section
+   ============================================================ */
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--gap);
+  margin-bottom: 24px;
+}
+
+.stat-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  text-align: center;
+}
+
+.stat-card .value {
+  font-size: 28px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+}
+
+.stat-card .label {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 4px;
+}
+
+/* Pipeline flow */
+.pipeline {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px;
+  margin-bottom: 24px;
+}
+
+.pipeline h3 {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 16px;
+  color: var(--text-secondary);
+}
+
+.pipeline-flow {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  overflow-x: auto;
+  padding-bottom: 8px;
+}
+
+.pipeline-node {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  min-width: 90px;
+  flex-shrink: 0;
+}
+
+.pipeline-node .node-box {
+  width: 56px;
+  height: 56px;
+  border-radius: var(--radius);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  border: 2px solid;
+}
+
+.pipeline-node .node-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  text-align: center;
+}
+
+.pipeline-arrow {
+  color: var(--text-muted);
+  font-size: 18px;
+  flex-shrink: 0;
+  margin: 0 4px;
+  margin-bottom: 18px;
+}
+
+.node-extracted     .node-box { background: var(--blue-bg); color: var(--blue); border-color: rgba(88,166,255,0.4); }
+.node-reviewing     .node-box { background: var(--orange-bg); color: var(--orange); border-color: rgba(210,153,34,0.4); }
+.node-attested      .node-box { background: var(--cyan-bg); color: var(--cyan); border-color: rgba(57,210,192,0.4); }
+.node-interesting   .node-box { background: var(--purple-bg); color: var(--purple); border-color: rgba(188,140,255,0.4); }
+.node-incorporating .node-box { background: var(--pink-bg); color: var(--pink); border-color: rgba(247,120,186,0.4); }
+.node-incorporated  .node-box { background: var(--green-bg); color: var(--green); border-color: rgba(63,185,80,0.4); }
+.node-discarded     .node-box { background: var(--red-bg); color: var(--red); border-color: rgba(248,81,73,0.4); }
+
+/* Activity feed */
+.activity-feed {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+}
+
+.activity-feed h3 {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 12px;
+  color: var(--text-secondary);
+}
+
+.activity-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-muted);
+  font-size: 13px;
+}
+
+.activity-item:last-child { border-bottom: none; }
+
+.activity-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+.activity-icon.explore { background: var(--blue-bg); color: var(--blue); }
+.activity-icon.review  { background: var(--purple-bg); color: var(--purple); }
+.activity-icon.doc     { background: var(--green-bg); color: var(--green); }
+.activity-icon.research { background: var(--cyan-bg); color: var(--cyan); }
+
+.activity-text { flex: 1; color: var(--text-secondary); }
+.activity-text strong { color: var(--text-primary); font-weight: 500; }
+.activity-time { font-size: 11px; color: var(--text-muted); font-family: var(--font-mono); white-space: nowrap; }
+
+/* ============================================================
+   2. Seeds Section
+   ============================================================ */
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.data-table th {
+  text-align: left;
+  padding: 10px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  background: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border);
+}
+
+.data-table td {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-muted);
+  font-size: 13px;
+  vertical-align: top;
+}
+
+.data-table tr:last-child td { border-bottom: none; }
+.data-table tr:hover td { background: rgba(48,54,61,0.3); }
+
+.id-cell {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* Priority bar */
+.priority-bar {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+}
+
+.priority-bar .bar-segment {
+  width: 8px;
+  height: 14px;
+  border-radius: 2px;
+  background: var(--bg-tertiary);
+}
+
+.priority-bar .bar-segment.filled {
+  background: var(--blue);
+}
+
+.priority-bar .bar-segment.filled.high { background: var(--green); }
+.priority-bar .bar-segment.filled.medium { background: var(--orange); }
+.priority-bar .bar-segment.filled.low { background: var(--red); }
+
+/* Lineage chain */
+.lineage {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+}
+
+.lineage .arrow { color: var(--text-muted); }
+
+/* ============================================================
+   3. Insights Section
+   ============================================================ */
+.filter-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.filter-tab {
+  padding: 5px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  cursor: pointer;
+}
+
+.filter-tab:hover { background: var(--bg-hover); color: var(--text-primary); }
+.filter-tab.active { background: var(--bg-hover); color: var(--text-primary); border-color: var(--blue); }
+
+.filter-tab .tab-count {
+  margin-left: 4px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.insight-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: var(--gap);
+}
+
+.insight-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.insight-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.insight-card-header .id-cell { font-size: 11px; }
+
+.insight-card .insight-text {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-primary);
+}
+
+.insight-card .insight-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* Score gauge */
+.score-gauge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.score-gauge .gauge-label {
+  color: var(--text-muted);
+  font-size: 11px;
+  min-width: 65px;
+}
+
+.score-gauge .gauge-bar {
+  width: 60px;
+  height: 6px;
+  background: var(--bg-tertiary);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.score-gauge .gauge-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.3s;
+}
+
+.score-gauge .gauge-fill.high   { background: var(--green); }
+.score-gauge .gauge-fill.medium { background: var(--orange); }
+.score-gauge .gauge-fill.low    { background: var(--red); }
+
+.score-gauge .gauge-value {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-secondary);
+  min-width: 28px;
+}
+
+.insight-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.action-btn {
+  padding: 3px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.action-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+
+/* ============================================================
+   4. Document Section
+   ============================================================ */
+.section-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.doc-section-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 16px 16px 20px;
+  border-left: 4px solid;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.doc-section-card.stable      { border-left-color: var(--green); }
+.doc-section-card.provisional { border-left-color: var(--orange); }
+.doc-section-card.needs-work  { border-left-color: var(--red); }
+
+.doc-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.doc-section-header .order-index {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-muted);
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-sm);
+  padding: 1px 6px;
+  margin-right: 8px;
+}
+
+.doc-section-header h4 {
+  font-size: 14px;
+  font-weight: 600;
+  flex: 1;
+}
+
+.doc-section-body {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+.doc-section-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+
+.doc-section-meta .meta-item {
+  color: var(--text-muted);
+}
+
+.doc-section-meta .meta-item strong {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.concept-tags {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+/* ============================================================
+   5. Annotations Section
+   ============================================================ */
+.annotation-type-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+}
+
+.annotation-type-icon.comment    { background: var(--blue-bg); color: var(--blue); }
+.annotation-type-icon.protected  { background: var(--purple-bg); color: var(--purple); }
+.annotation-type-icon.suggestion { background: var(--cyan-bg); color: var(--cyan); }
+
+.attempt-count {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* ============================================================
+   6. Research Section
+   ============================================================ */
+.research-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--gap);
+}
+
+/* Trust score bar */
+.trust-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.trust-bar .bar-track {
+  width: 80px;
+  height: 6px;
+  background: var(--bg-tertiary);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.trust-bar .bar-fill {
+  height: 100%;
+  border-radius: 3px;
+}
+
+.trust-bar .bar-fill.high   { background: var(--green); }
+.trust-bar .bar-fill.medium { background: var(--orange); }
+.trust-bar .bar-fill.low    { background: var(--red); }
+
+.trust-bar .bar-value {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-secondary);
+  min-width: 28px;
+}
+
+.finding-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.finding-card .finding-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.finding-card .finding-text {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.finding-type {
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.confidence-indicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.confidence-indicator .conf-dots {
+  display: flex;
+  gap: 3px;
+}
+
+.confidence-indicator .conf-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--bg-tertiary);
+}
+
+.confidence-indicator .conf-dot.filled { background: var(--green); }
+.confidence-indicator .conf-dot.filled.medium { background: var(--orange); }
+.confidence-indicator .conf-dot.filled.low { background: var(--red); }
+
+.confidence-indicator .conf-value {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+/* ============================================================
+   7. Status Section
+   ============================================================ */
+.module-health-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--gap);
+  margin-bottom: 24px;
+}
+
+.module-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.module-card .module-stripe {
+  height: 4px;
+}
+
+.module-card .module-stripe.green  { background: var(--green); }
+.module-card .module-stripe.orange { background: var(--orange); }
+.module-card .module-stripe.red    { background: var(--red); }
+
+.module-card .module-body {
+  padding: 14px;
+}
+
+.module-card .module-name {
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 4px;
+}
+
+.module-card .module-status {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.module-card .module-details {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.module-card .module-details span {
+  display: flex;
+  justify-content: space-between;
+}
+
+.module-card .module-details .detail-value {
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+}
+
+/* Event log */
+.event-log {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.event-log h3 {
+  font-size: 14px;
+  font-weight: 600;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-secondary);
+}
+
+.event-log-entry {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 8px 14px;
+  font-size: 12px;
+  border-bottom: 1px solid var(--border-muted);
+  font-family: var(--font-mono);
+}
+
+.event-log-entry:last-child { border-bottom: none; }
+
+.event-log-entry .event-time {
+  color: var(--text-muted);
+  white-space: nowrap;
+  min-width: 70px;
+}
+
+.event-log-entry .event-topic {
+  color: var(--cyan);
+  min-width: 200px;
+}
+
+.event-log-entry .event-source {
+  color: var(--text-muted);
+  min-width: 80px;
+}
+
+.event-log-entry .event-payload {
+  color: var(--text-secondary);
+  flex: 1;
+  word-break: break-all;
+}
+
+/* ============================================================
+   Backend table
+   ============================================================ */
+.backend-table {
+  margin-bottom: 24px;
+}
+
+.backend-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.backend-state .state-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.backend-state .state-dot.closed    { background: var(--green); }
+.backend-state .state-dot.open      { background: var(--red); }
+.backend-state .state-dot.half-open { background: var(--orange); }
+
+/* ============================================================
+   Responsive
+   ============================================================ */
+@media (max-width: 1024px) {
+  .research-grid { grid-template-columns: 1fr; }
+  .insight-grid  { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 768px) {
+  .sidebar {
+    display: none;
+  }
+  .main {
+    margin-left: 0;
+    padding: 16px;
+  }
+  .stat-grid { grid-template-columns: repeat(3, 1fr); }
+  .pipeline-flow { flex-wrap: wrap; justify-content: center; }
+  .module-health-grid { grid-template-columns: 1fr 1fr; }
+}
+
+@media (max-width: 480px) {
+  .stat-grid { grid-template-columns: repeat(2, 1fr); }
+  .module-health-grid { grid-template-columns: 1fr; }
+}
+
+/* ============================================================
+   Modal & Toast & Loading (new)
+   ============================================================ */
+.modal-overlay {
+  position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.6); z-index: 200;
+  display: flex; align-items: center; justify-content: center;
+}
+.modal-overlay.hidden { display: none; }
+.modal {
+  background: var(--bg-secondary); border: 1px solid var(--border);
+  border-radius: var(--radius); width: 480px; max-width: 90vw;
+  max-height: 80vh; overflow-y: auto;
+}
+.modal-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 20px; border-bottom: 1px solid var(--border);
+}
+.modal-header h3 { font-size: 16px; font-weight: 600; }
+.modal-close {
+  background: none; border: none; color: var(--text-muted);
+  font-size: 20px; cursor: pointer; padding: 0 4px;
+}
+.modal-close:hover { color: var(--text-primary); }
+.modal-body { padding: 20px; }
+.form-group { margin-bottom: 14px; }
+.form-group label {
+  display: block; font-size: 12px; font-weight: 600;
+  color: var(--text-secondary); margin-bottom: 4px;
+}
+.form-input, .form-select, .form-textarea {
+  width: 100%; background: var(--bg-tertiary); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); padding: 8px 12px;
+  color: var(--text-primary); font-size: 13px; font-family: var(--font-body);
+}
+.form-textarea { min-height: 80px; resize: vertical; }
+.form-select { cursor: pointer; }
+.form-actions {
+  display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px;
+}
+.form-actions .btn {
+  padding: 6px 16px; border-radius: var(--radius-sm);
+  font-size: 13px; cursor: pointer; border: 1px solid var(--border);
+}
+.form-actions .btn-primary {
+  background: var(--blue); color: #fff; border-color: var(--blue);
+}
+.form-actions .btn-primary:hover { opacity: 0.85; }
+.form-actions .btn-cancel {
+  background: var(--bg-tertiary); color: var(--text-secondary);
+}
+.form-actions .btn-cancel:hover { background: var(--bg-hover); color: var(--text-primary); }
+
+.toast-container {
+  position: fixed; bottom: 20px; right: 20px; z-index: 300;
+  display: flex; flex-direction: column-reverse; gap: 8px;
+}
+.toast {
+  background: var(--bg-secondary); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 12px 16px;
+  font-size: 13px; color: var(--text-primary); min-width: 260px;
+  animation: slideIn 0.3s ease-out;
+  border-left: 4px solid var(--green);
+}
+.toast.error { border-left-color: var(--red); }
+@keyframes slideIn {
+  from { transform: translateX(100%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+.loading-spinner {
+  display: flex; align-items: center; justify-content: center;
+  padding: 60px 0; color: var(--text-muted); font-size: 14px; gap: 10px;
+}
+.spinner {
+  width: 20px; height: 20px; border: 2px solid var(--border);
+  border-top-color: var(--blue); border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.empty-state {
+  padding: 32px; text-align: center; color: var(--text-muted);
+  font-size: 13px; background: var(--bg-secondary);
+  border: 1px solid var(--border); border-radius: var(--radius);
+}
+
+.error-banner {
+  background: var(--red-bg); border: 1px solid rgba(248,81,73,0.3);
+  border-radius: var(--radius); padding: 16px 20px;
+  color: var(--red); display: flex; align-items: center;
+  justify-content: space-between; margin-bottom: 24px;
+}
+.error-banner .btn-retry {
+  padding: 4px 12px; background: var(--bg-tertiary); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); color: var(--text-primary);
+  cursor: pointer; font-size: 12px;
+}
+
+.section-header .header-actions { display: flex; gap: 8px; align-items: center; }
+.header-btn {
+  padding: 4px 12px; border-radius: var(--radius-sm); font-size: 12px;
+  background: var(--bg-tertiary); border: 1px solid var(--border);
+  color: var(--text-secondary); cursor: pointer;
+}
+.header-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+
+.auto-refresh-toggle {
+  display: flex; align-items: center; gap: 6px; font-size: 11px;
+  color: var(--text-muted); cursor: pointer; padding: 4px 8px;
+}
+.auto-refresh-toggle input { cursor: pointer; }
+</style>
+</head>
+<body>
+
+<!-- ============================================================
+     Sidebar
+     ============================================================ -->
+<nav class="sidebar">
+  <div class="sidebar-header">
+    <h1><span class="logo">F</span> Fano</h1>
+    <select class="project-selector" id="project-selector">
+      <option value="">Loading projects...</option>
+    </select>
+  </div>
+
+  <div class="nav-section">
+    <div class="nav-section-title">Pages</div>
+    <a href="/dashboard" class="nav-link active">
+      <span class="icon">&#9673;</span> Dashboard
+    </a>
+    <a href="/document" class="nav-link">
+      <span class="icon">&#128196;</span> Document Viewer
+    </a>
+  </div>
+
+  <div class="nav-section">
+    <div class="nav-section-title">Dashboard</div>
+    <a href="#overview" class="nav-link">
+      <span class="icon">&#9673;</span> Overview
+    </a>
+    <a href="#seeds" class="nav-link">
+      <span class="icon">&#9752;</span> Seeds
+      <span class="count" id="nav-seeds-count">-</span>
+    </a>
+    <a href="#insights" class="nav-link">
+      <span class="icon">&#9733;</span> Insights
+      <span class="count" id="nav-insights-count">-</span>
+    </a>
+    <a href="#document" class="nav-link">
+      <span class="icon">&#9776;</span> Document
+      <span class="count" id="nav-document-count">-</span>
+    </a>
+    <a href="#annotations" class="nav-link">
+      <span class="icon">&#9998;</span> Annotations
+      <span class="count" id="nav-annotations-count">-</span>
+    </a>
+    <a href="#research" class="nav-link">
+      <span class="icon">&#128270;</span> Research
+      <span class="count" id="nav-research-count">-</span>
+    </a>
+    <a href="#status" class="nav-link">
+      <span class="icon">&#9881;</span> Status
+    </a>
+  </div>
+
+  <div class="sidebar-footer">
+    <div class="nav-section-title">System Health</div>
+    <div class="health-indicators" id="sidebar-health">
+      <div class="health-item">
+        <span class="health-dot"></span> Loading...
+      </div>
+    </div>
+  </div>
+</nav>
+
+<!-- ============================================================
+     Main Content
+     ============================================================ -->
+<main class="main">
+
+  <div id="error-banner" class="error-banner" style="display:none;">
+    <span>Failed to load data from the API.</span>
+    <button class="btn-retry" onclick="loadAllData()">Retry</button>
+  </div>
+
+  <!-- ========== 1. Overview ========== -->
+  <div id="overview" class="section">
+    <div class="section-header">
+      <h2>Overview</h2>
+      <div class="header-actions">
+        <span class="section-badge" id="overview-badge">Project: loading...</span>
+        <label class="auto-refresh-toggle">
+          <input type="checkbox" id="auto-refresh-toggle" checked> Auto-refresh
+        </label>
+      </div>
+    </div>
+
+    <div class="stat-grid" id="overview-stats"><!-- JS --></div>
+
+    <div class="pipeline">
+      <h3>Insight Pipeline</h3>
+      <div class="pipeline-flow" id="pipeline-flow"><!-- JS --></div>
+    </div>
+
+    <div class="activity-feed">
+      <h3>Recent Activity</h3>
+      <div id="activity-items"><!-- JS --></div>
+    </div>
+  </div>
+
+  <!-- ========== 2. Seeds ========== -->
+  <div id="seeds" class="section">
+    <div class="section-header">
+      <h2>Seeds</h2>
+      <div class="header-actions">
+        <span class="section-badge" id="seeds-badge">-</span>
+        <button class="header-btn" onclick="showCreateSeedModal()">+ Add Seed</button>
+      </div>
+    </div>
+
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Text</th>
+          <th>Type</th>
+          <th>Priority</th>
+          <th>Lineage</th>
+          <th>Status</th>
+          <th>Explored</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="seeds-tbody"><!-- JS --></tbody>
+    </table>
+  </div>
+
+  <!-- ========== 3. Insights ========== -->
+  <div id="insights" class="section">
+    <div class="section-header">
+      <h2>Insights</h2>
+      <span class="section-badge" id="insights-badge">-</span>
+    </div>
+
+    <div class="filter-tabs" id="insight-filters"><!-- JS --></div>
+    <div class="insight-grid" id="insights-grid"><!-- JS --></div>
+  </div>
+
+  <!-- ========== 4. Document ========== -->
+  <div id="document" class="section">
+    <div class="section-header">
+      <h2>Document</h2>
+      <span class="section-badge" id="document-badge">-</span>
+    </div>
+
+    <div class="section-cards" id="document-cards"><!-- JS --></div>
+  </div>
+
+  <!-- ========== 5. Annotations ========== -->
+  <div id="annotations" class="section">
+    <div class="section-header">
+      <h2>Annotations</h2>
+      <div class="header-actions">
+        <span class="section-badge" id="annotations-badge">-</span>
+        <button class="header-btn" onclick="showCreateAnnotationModal()">+ Add Annotation</button>
+      </div>
+    </div>
+
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Type</th>
+          <th>Section</th>
+          <th>Content</th>
+          <th>Attempts</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody id="annotations-tbody"><!-- JS --></tbody>
+    </table>
+  </div>
+
+  <!-- ========== 6. Research ========== -->
+  <div id="research" class="section">
+    <div class="section-header">
+      <h2>Research</h2>
+      <div class="header-actions">
+        <span class="section-badge" id="research-badge">-</span>
+        <button class="header-btn" onclick="showResearchRequestModal()">+ Request Research</button>
+      </div>
+    </div>
+
+    <div class="research-grid">
+      <div>
+        <h3 style="font-size: 14px; font-weight: 600; margin-bottom: 12px; color: var(--text-secondary);">Sources</h3>
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Title</th>
+              <th>Domain</th>
+              <th>Trust</th>
+            </tr>
+          </thead>
+          <tbody id="sources-tbody"><!-- JS --></tbody>
+        </table>
+      </div>
+
+      <div>
+        <h3 style="font-size: 14px; font-weight: 600; margin-bottom: 12px; color: var(--text-secondary);">Findings</h3>
+        <div id="findings-cards" style="display: flex; flex-direction: column; gap: 12px;"><!-- JS --></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========== 7. Status ========== -->
+  <div id="status" class="section">
+    <div class="section-header">
+      <h2>System Status</h2>
+      <span class="section-badge" id="status-badge">-</span>
+    </div>
+
+    <div class="module-health-grid" id="module-health"><!-- JS --></div>
+
+    <div class="event-log">
+      <h3>Recent Events</h3>
+      <div id="event-log-entries"><!-- JS --></div>
+    </div>
+  </div>
+
+</main>
+
+<!-- Modal -->
+<div id="modal-overlay" class="modal-overlay hidden">
+  <div class="modal">
+    <div class="modal-header">
+      <h3 id="modal-title"></h3>
+      <button class="modal-close" onclick="hideModal()">&times;</button>
+    </div>
+    <div id="modal-body"></div>
+  </div>
+</div>
+
+<!-- Toast container -->
+<div id="toast-container" class="toast-container"></div>
+
+<!-- ============================================================
+     JavaScript
+     ============================================================ -->
+<script>
+/* ================================================================
+   State
+   ================================================================ */
+var state = {
+  projectId: null,
+  projects: [],
+  seeds: [],
+  insights: [],
+  sections: [],
+  annotations: [],
+  sources: [],
+  findings: [],
+  events: [],
+  status: null,
+  insightFilter: 'all',
+  autoRefresh: true,
+  refreshTimer: null
+};
+
+/* ================================================================
+   API Client
+   ================================================================ */
+function apiGet(url) {
+  return fetch(url)
+    .then(function(res) { return res.json(); })
+    .then(function(json) {
+      if (!json.ok) throw new Error(json.error || 'API error');
+      return json.data;
+    });
+}
+
+function apiPost(url, body) {
+  return fetch(url, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body)
+  })
+    .then(function(res) { return res.json(); })
+    .then(function(json) {
+      if (!json.ok) throw new Error(json.error || 'API error');
+      return json.data;
+    });
+}
+
+function apiDelete(url) {
+  return fetch(url, { method: 'DELETE' })
+    .then(function(res) { return res.json(); })
+    .then(function(json) {
+      if (!json.ok) throw new Error(json.error || 'API error');
+      return json.data;
+    });
+}
+
+/* ================================================================
+   Utilities
+   ================================================================ */
+function esc(str) {
+  if (!str) return '';
+  var d = document.createElement('div');
+  d.textContent = str;
+  return d.innerHTML;
+}
+
+function truncate(str, max) {
+  if (!str) return '';
+  return str.length > max ? str.substring(0, max) + '...' : str;
+}
+
+function shortId(id) {
+  if (!id) return '-';
+  return id.length > 8 ? id.substring(0, 6) + '..' + id.substring(id.length - 2) : id;
+}
+
+function formatTime(isoStr) {
+  if (!isoStr) return '-';
+  var d = new Date(isoStr);
+  return d.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', second: '2-digit'});
+}
+
+function formatRelative(isoStr) {
+  if (!isoStr) return '-';
+  var now = Date.now();
+  var then = new Date(isoStr).getTime();
+  var diff = Math.max(0, now - then);
+  var secs = Math.floor(diff / 1000);
+  if (secs < 60) return secs + 's ago';
+  var mins = Math.floor(secs / 60);
+  if (mins < 60) return mins + 'm ago';
+  var hrs = Math.floor(mins / 60);
+  if (hrs < 24) return hrs + 'h ago';
+  return Math.floor(hrs / 24) + 'd ago';
+}
+
+function tierClass(val) {
+  if (val >= 0.7 || val >= 70) return 'high';
+  if (val >= 0.4 || val >= 40) return 'medium';
+  return 'low';
+}
+
+function statusCss(status) {
+  return (status || '').replace(/_/g, '-');
+}
+
+/* ================================================================
+   Data Loading
+   ================================================================ */
+function loadProjects() {
+  return apiGet('/api/projects')
+    .then(function(projects) {
+      state.projects = projects || [];
+      var sel = document.getElementById('project-selector');
+      sel.innerHTML = '';
+      if (state.projects.length === 0) {
+        sel.innerHTML = '<option value="">No projects</option>';
+        return;
+      }
+      state.projects.forEach(function(p) {
+        var opt = document.createElement('option');
+        opt.value = p.id;
+        opt.textContent = p.name;
+        sel.appendChild(opt);
+      });
+      if (!state.projectId && state.projects.length > 0) {
+        state.projectId = state.projects[0].id;
+      }
+      sel.value = state.projectId;
+    });
+}
+
+function loadAllData() {
+  if (!state.projectId) {
+    renderAll();
+    return Promise.resolve();
+  }
+
+  document.getElementById('error-banner').style.display = 'none';
+  var pid = state.projectId;
+
+  return Promise.all([
+    apiGet('/api/seeds?project_id=' + pid + '&limit=100').catch(function() { return []; }),
+    apiGet('/api/insights?project_id=' + pid + '&limit=100').catch(function() { return []; }),
+    apiGet('/api/document/sections?project_id=' + pid).catch(function() { return []; }),
+    apiGet('/api/annotations?project_id=' + pid).catch(function() { return []; }),
+    apiGet('/api/research/sources?project_id=' + pid).catch(function() { return []; }),
+    apiGet('/api/research/findings?project_id=' + pid).catch(function() { return []; }),
+    apiGet('/api/status/events').catch(function() { return []; }),
+    apiGet('/api/status').catch(function() { return null; })
+  ]).then(function(results) {
+    state.seeds = results[0] || [];
+    state.insights = results[1] || [];
+    state.sections = results[2] || [];
+    state.annotations = results[3] || [];
+    state.sources = results[4] || [];
+    state.findings = results[5] || [];
+    state.events = results[6] || [];
+    state.status = results[7] || null;
+    renderAll();
+  }).catch(function() {
+    document.getElementById('error-banner').style.display = 'flex';
+  });
+}
+
+/* ================================================================
+   Render All
+   ================================================================ */
+function renderAll() {
+  renderOverviewStats();
+  renderPipeline();
+  renderActivityFeed();
+  renderSeedsTable();
+  renderInsightFilters();
+  renderInsightsGrid();
+  renderDocumentCards();
+  renderAnnotationsTable();
+  renderSourcesTable();
+  renderFindingsCards();
+  renderModuleHealth();
+  renderEventLog();
+  renderSidebarCounts();
+  renderOverviewBadge();
+}
+
+/* ================================================================
+   1. Overview
+   ================================================================ */
+function renderOverviewBadge() {
+  var proj = state.projects.find(function(p) { return p.id === state.projectId; });
+  var badge = document.getElementById('overview-badge');
+  badge.textContent = proj ? 'Project: ' + (proj.status || 'active') : 'No project';
+}
+
+function renderOverviewStats() {
+  var el = document.getElementById('overview-stats');
+  var stats = [
+    { value: state.seeds.length, label: 'Seeds' },
+    { value: state.insights.length, label: 'Insights' },
+    { value: state.sections.length, label: 'Sections' },
+    { value: state.annotations.length, label: 'Annotations' },
+    { value: state.sources.length, label: 'Sources' },
+    { value: state.findings.length, label: 'Findings' }
+  ];
+  el.innerHTML = stats.map(function(s) {
+    return '<div class="stat-card"><div class="value">' + s.value + '</div><div class="label">' + s.label + '</div></div>';
+  }).join('');
+}
+
+function renderPipeline() {
+  var el = document.getElementById('pipeline-flow');
+  var stages = ['extracted', 'reviewing', 'attested', 'interesting', 'incorporating', 'incorporated', 'discarded'];
+  var counts = {};
+  stages.forEach(function(s) { counts[s] = 0; });
+  state.insights.forEach(function(i) {
+    if (counts.hasOwnProperty(i.status)) counts[i.status]++;
+  });
+
+  var html = '';
+  stages.forEach(function(s, idx) {
+    if (idx > 0 && idx < stages.length - 1) {
+      html += '<span class="pipeline-arrow">&rarr;</span>';
+    } else if (idx === stages.length - 1) {
+      html += '<span class="pipeline-arrow" style="margin-left: 12px;">|</span>';
+    }
+    html += '<div class="pipeline-node node-' + s + '">' +
+      '<div class="node-box">' + counts[s] + '</div>' +
+      '<div class="node-label">' + s.charAt(0).toUpperCase() + s.slice(1) + '</div>' +
+      '</div>';
+  });
+  el.innerHTML = html;
+}
+
+function renderActivityFeed() {
+  var el = document.getElementById('activity-items');
+  var events = (state.events || []).slice(0, 10);
+  if (events.length === 0) {
+    el.innerHTML = '<div style="padding: 12px; color: var(--text-muted); font-size: 13px;">No recent activity</div>';
+    return;
+  }
+  el.innerHTML = events.map(function(evt) {
+    var topic = evt.topic || '';
+    var iconClass = 'explore';
+    var icon = '&#9733;';
+    if (topic.indexOf('documenter') !== -1 || topic.indexOf('document') !== -1 || topic.indexOf('section') !== -1) {
+      iconClass = 'doc'; icon = '&#9776;';
+    } else if (topic.indexOf('consensus') !== -1 || topic.indexOf('review') !== -1) {
+      iconClass = 'review'; icon = '&#10003;';
+    } else if (topic.indexOf('research') !== -1 || topic.indexOf('source') !== -1) {
+      iconClass = 'research'; icon = '&#128270;';
+    }
+    var payload = '';
+    if (evt.payload) {
+      payload = typeof evt.payload === 'string' ? evt.payload : JSON.stringify(evt.payload);
+    }
+    return '<div class="activity-item">' +
+      '<div class="activity-icon ' + iconClass + '">' + icon + '</div>' +
+      '<div class="activity-text"><strong>' + esc(topic) + '</strong> &mdash; ' + esc(truncate(payload, 100)) + '</div>' +
+      '<div class="activity-time">' + formatRelative(evt.timestamp) + '</div>' +
+      '</div>';
+  }).join('');
+}
+
+/* ================================================================
+   2. Seeds
+   ================================================================ */
+function renderSeedsTable() {
+  var el = document.getElementById('seeds-tbody');
+  var badge = document.getElementById('seeds-badge');
+  var active = state.seeds.filter(function(s) { return s.status === 'active'; }).length;
+  badge.textContent = state.seeds.length + ' total' + (active ? ' \u00b7 ' + active + ' active' : '');
+
+  if (state.seeds.length === 0) {
+    el.innerHTML = '<tr><td colspan="8" style="text-align:center; color: var(--text-muted); padding: 24px;">No seeds yet. Click "Add Seed" to create one.</td></tr>';
+    return;
+  }
+  el.innerHTML = state.seeds.map(function(seed) {
+    var priority = seed.priority || 5;
+    var prioClass = priority >= 7 ? 'high' : (priority >= 4 ? 'medium' : 'low');
+    var segments = '';
+    for (var i = 1; i <= 10; i++) {
+      segments += '<div class="bar-segment' + (i <= priority ? ' filled ' + prioClass : '') + '"></div>';
+    }
+    var lineage = '&mdash;';
+    if (seed.parent_seed_id) {
+      lineage = '<div class="lineage"><span>' + esc(shortId(seed.parent_seed_id)) + '</span>' +
+        '<span class="arrow">&rarr;</span><span>' + esc(shortId(seed.id)) + '</span></div>';
+    }
+    return '<tr>' +
+      '<td class="id-cell">' + esc(shortId(seed.id)) + '</td>' +
+      '<td>' + esc(truncate(seed.text, 80)) + '</td>' +
+      '<td><span class="badge badge-' + esc(seed.type || 'conjecture') + '">' + esc(seed.type || 'conjecture') + '</span></td>' +
+      '<td><div class="priority-bar">' + segments + '</div></td>' +
+      '<td>' + lineage + '</td>' +
+      '<td><span class="badge badge-' + esc(statusCss(seed.status)) + '">' + esc(seed.status) + '</span></td>' +
+      '<td class="id-cell">' + (seed.exploration_count || 0) + '</td>' +
+      '<td><button class="action-btn" onclick="deleteSeed(\'' + esc(seed.id) + '\')" title="Delete">&#128465;</button></td>' +
+      '</tr>';
+  }).join('');
+}
+
+/* ================================================================
+   3. Insights
+   ================================================================ */
+function renderInsightFilters() {
+  var el = document.getElementById('insight-filters');
+  var statusCounts = { all: state.insights.length };
+  state.insights.forEach(function(i) {
+    statusCounts[i.status] = (statusCounts[i.status] || 0) + 1;
+  });
+  var tabs = ['all', 'extracted', 'reviewing', 'attested', 'interesting', 'incorporating', 'incorporated', 'discarded'];
+  el.innerHTML = tabs.map(function(tab) {
+    var count = statusCounts[tab] || 0;
+    if (tab !== 'all' && count === 0) return '';
+    var activeClass = state.insightFilter === tab ? ' active' : '';
+    var label = tab.charAt(0).toUpperCase() + tab.slice(1);
+    return '<div class="filter-tab' + activeClass + '" onclick="filterInsights(\'' + tab + '\')">' +
+      label + ' <span class="tab-count">' + count + '</span></div>';
+  }).join('');
+}
+
+function filterInsights(status) {
+  state.insightFilter = status;
+  renderInsightFilters();
+  renderInsightsGrid();
+}
+
+function renderInsightsGrid() {
+  var el = document.getElementById('insights-grid');
+  var badge = document.getElementById('insights-badge');
+  badge.textContent = state.insights.length + ' total';
+
+  var filtered = state.insights;
+  if (state.insightFilter !== 'all') {
+    filtered = filtered.filter(function(i) { return i.status === state.insightFilter; });
+  }
+
+  if (filtered.length === 0) {
+    el.innerHTML = '<div class="empty-state">No insights' + (state.insightFilter !== 'all' ? ' with status "' + state.insightFilter + '"' : '') + '</div>';
+    return;
+  }
+
+  el.innerHTML = filtered.map(function(insight) {
+    var scores = insight.evaluation_scores || {};
+    var scoreKeys = Object.keys(scores);
+    var gaugesHtml = '';
+    if (scoreKeys.length > 0) {
+      gaugesHtml = '<div style="display: flex; flex-direction: column; gap: 4px;">';
+      scoreKeys.forEach(function(key) {
+        var val = scores[key];
+        var pct = Math.round(val * 100);
+        var cls = tierClass(val);
+        gaugesHtml += '<div class="score-gauge">' +
+          '<span class="gauge-label">' + esc(key.charAt(0).toUpperCase() + key.slice(1)) + '</span>' +
+          '<div class="gauge-bar"><div class="gauge-fill ' + cls + '" style="width: ' + pct + '%"></div></div>' +
+          '<span class="gauge-value">' + val.toFixed(2) + '</span></div>';
+      });
+      gaugesHtml += '</div>';
+    }
+
+    var tagsHtml = (insight.tags || []).map(function(t) {
+      return '<span class="tag">' + esc(t) + '</span>';
+    }).join('');
+
+    return '<div class="insight-card">' +
+      '<div class="insight-card-header">' +
+      '<span class="id-cell">' + esc(shortId(insight.id)) + '</span>' +
+      '<span class="badge badge-' + esc(statusCss(insight.status)) + '">' + esc(insight.status) + '</span>' +
+      '</div>' +
+      '<div class="insight-text">' + esc(insight.text) + '</div>' +
+      '<div class="insight-meta">' +
+      '<span class="badge badge-' + esc(insight.confidence || 'medium') + '">' + esc(insight.confidence || 'medium') + '</span>' +
+      tagsHtml +
+      '</div>' +
+      gaugesHtml +
+      '<div class="insight-actions">' +
+      '<button class="action-btn" onclick="endorseInsight(\'' + esc(insight.id) + '\')">Endorse</button>' +
+      '<button class="action-btn" onclick="dismissInsight(\'' + esc(insight.id) + '\')">Dismiss</button>' +
+      '</div>' +
+      '</div>';
+  }).join('');
+}
+
+/* ================================================================
+   4. Document Sections
+   ================================================================ */
+function renderDocumentCards() {
+  var el = document.getElementById('document-cards');
+  var badge = document.getElementById('document-badge');
+  var sorted = state.sections.slice().sort(function(a, b) { return (a.order_index || 0) - (b.order_index || 0); });
+  var stableCount = sorted.filter(function(s) { return s.status === 'stable'; }).length;
+  var provCount = sorted.filter(function(s) { return s.status === 'provisional'; }).length;
+  var nwCount = sorted.filter(function(s) { return s.status === 'needs_work'; }).length;
+  badge.textContent = sorted.length + ' sections' +
+    (stableCount ? ' \u00b7 ' + stableCount + ' stable' : '') +
+    (provCount ? ' \u00b7 ' + provCount + ' provisional' : '') +
+    (nwCount ? ' \u00b7 ' + nwCount + ' needs_work' : '');
+
+  if (sorted.length === 0) {
+    el.innerHTML = '<div class="empty-state">No document sections yet.</div>';
+    return;
+  }
+
+  el.innerHTML = sorted.map(function(sec) {
+    var statusClass = statusCss(sec.status);
+    var conceptTags = '';
+    if (sec.establishes) {
+      conceptTags += sec.establishes.map(function(c) {
+        return '<span class="tag tag-establishes">+ ' + esc(c) + '</span>';
+      }).join('');
+    }
+    if (sec.requires) {
+      conceptTags += sec.requires.map(function(c) {
+        return '<span class="tag tag-requires">&rarr; ' + esc(c) + '</span>';
+      }).join('');
+    }
+
+    return '<div class="doc-section-card ' + statusClass + '">' +
+      '<div class="doc-section-header">' +
+      '<div style="display: flex; align-items: center;">' +
+      '<span class="order-index">#' + ((sec.order_index || 0) + 1) + '</span>' +
+      '<h4>' + esc(sec.title) + '</h4>' +
+      '</div>' +
+      '<span class="badge badge-' + statusClass + '">' + esc(sec.status) + '</span>' +
+      '</div>' +
+      '<div class="doc-section-body">' + esc(truncate(sec.content, 250)) + '</div>' +
+      '<div class="doc-section-meta">' +
+      '<span class="meta-item"><strong>Reviews:</strong> ' + (sec.review_count || 0) + '</span>' +
+      (sec.source_insight_id ? '<span class="meta-item"><strong>Source:</strong> ' + esc(shortId(sec.source_insight_id)) + '</span>' : '') +
+      '</div>' +
+      (conceptTags ? '<div class="concept-tags">' + conceptTags + '</div>' : '') +
+      '</div>';
+  }).join('');
+}
+
+/* ================================================================
+   5. Annotations
+   ================================================================ */
+function renderAnnotationsTable() {
+  var el = document.getElementById('annotations-tbody');
+  var badge = document.getElementById('annotations-badge');
+  var openCount = state.annotations.filter(function(a) { return a.status === 'open'; }).length;
+  var attemptedCount = state.annotations.filter(function(a) { return a.status === 'attempted'; }).length;
+  var resolvedCount = state.annotations.filter(function(a) { return a.status === 'resolved'; }).length;
+  badge.textContent = state.annotations.length + ' total' +
+    (openCount ? ' \u00b7 ' + openCount + ' open' : '') +
+    (attemptedCount ? ' \u00b7 ' + attemptedCount + ' attempted' : '') +
+    (resolvedCount ? ' \u00b7 ' + resolvedCount + ' resolved' : '');
+
+  if (state.annotations.length === 0) {
+    el.innerHTML = '<tr><td colspan="5" style="text-align:center; color: var(--text-muted); padding: 24px;">No annotations yet.</td></tr>';
+    return;
+  }
+
+  var sectionMap = {};
+  state.sections.forEach(function(s) { sectionMap[s.id] = s; });
+
+  el.innerHTML = state.annotations.map(function(ann) {
+    var typeIcon = '&#128172;';
+    if (ann.type === 'protected') typeIcon = '&#128274;';
+    else if (ann.type === 'suggestion') typeIcon = '&#128161;';
+
+    var sec = ann.section_id ? sectionMap[ann.section_id] : null;
+    var secText = sec ? '#' + ((sec.order_index || 0) + 1) + ' ' + esc(sec.title) : 'General';
+
+    return '<tr>' +
+      '<td><span class="annotation-type-icon ' + esc(ann.type) + '" title="' + esc(ann.type) + '">' + typeIcon + '</span></td>' +
+      '<td>' + secText + '</td>' +
+      '<td>' + esc(truncate(ann.content, 120)) + '</td>' +
+      '<td class="attempt-count">' + (ann.attempt_count || 0) + '</td>' +
+      '<td><span class="badge badge-' + esc(statusCss(ann.status)) + '">' + esc(ann.status) + '</span></td>' +
+      '</tr>';
+  }).join('');
+}
+
+/* ================================================================
+   6. Research
+   ================================================================ */
+function renderSourcesTable() {
+  var el = document.getElementById('sources-tbody');
+  if (state.sources.length === 0) {
+    el.innerHTML = '<tr><td colspan="3" style="text-align:center; color: var(--text-muted); padding: 24px;">No sources yet.</td></tr>';
+    return;
+  }
+  el.innerHTML = state.sources.map(function(src) {
+    var trust = src.trust_score || 0;
+    var cls = tierClass(trust);
+    return '<tr>' +
+      '<td>' + esc(src.title || src.url || '-') + '</td>' +
+      '<td class="id-cell">' + esc(src.domain || '-') + '</td>' +
+      '<td><div class="trust-bar">' +
+      '<div class="bar-track"><div class="bar-fill ' + cls + '" style="width: ' + trust + '%"></div></div>' +
+      '<span class="bar-value">' + trust + '</span>' +
+      '</div></td>' +
+      '</tr>';
+  }).join('');
+}
+
+function renderFindingsCards() {
+  var el = document.getElementById('findings-cards');
+  var badge = document.getElementById('research-badge');
+  badge.textContent = state.sources.length + ' sources \u00b7 ' + state.findings.length + ' findings';
+
+  if (state.findings.length === 0) {
+    el.innerHTML = '<div class="empty-state">No findings yet.</div>';
+    return;
+  }
+
+  var typeColors = {
+    corroboration: 'var(--blue)', extension: 'var(--cyan)',
+    context: 'var(--purple)', caution: 'var(--orange)', contradiction: 'var(--red)'
+  };
+
+  el.innerHTML = state.findings.map(function(f) {
+    var conf = f.confidence || 0;
+    var filledCount = Math.round(conf * 5);
+    var cls = tierClass(conf);
+    var dots = '';
+    for (var i = 0; i < 5; i++) {
+      dots += '<div class="conf-dot' + (i < filledCount ? ' filled' + (cls !== 'high' ? ' ' + cls : '') : '') + '"></div>';
+    }
+    var typeColor = typeColors[f.finding_type] || 'var(--text-secondary)';
+    return '<div class="finding-card">' +
+      '<div class="finding-header">' +
+      '<span class="finding-type" style="color: ' + typeColor + ';">' + esc(f.finding_type || 'unknown') + '</span>' +
+      '<div class="confidence-indicator">' +
+      '<div class="conf-dots">' + dots + '</div>' +
+      '<span class="conf-value">' + conf.toFixed(2) + '</span>' +
+      '</div></div>' +
+      '<div class="finding-text">' + esc(f.summary) + '</div>' +
+      '<div style="font-size: 11px; color: var(--text-muted);">' +
+      (f.related_insight_id ? 'Related: ' + esc(shortId(f.related_insight_id)) : '') +
+      (f.domain ? ' \u00b7 Domain: ' + esc(f.domain) : '') +
+      '</div></div>';
+  }).join('');
+}
+
+/* ================================================================
+   7. Status
+   ================================================================ */
+function renderModuleHealth() {
+  var el = document.getElementById('module-health');
+  var badge = document.getElementById('status-badge');
+  if (!state.status || !state.status.modules) {
+    el.innerHTML = '<div class="empty-state">No status data available.</div>';
+    badge.textContent = '-';
+    return;
+  }
+
+  var modules = state.status.modules;
+  var names = Object.keys(modules);
+  var healthyCount = names.filter(function(n) { return modules[n].healthy; }).length;
+  badge.textContent = names.length + ' modules \u00b7 ' + healthyCount + ' healthy';
+
+  el.innerHTML = names.map(function(name) {
+    var mod = modules[name];
+    var stripeClass = mod.healthy ? 'green' : 'orange';
+    var statusText = mod.healthy ? 'Healthy' : 'Degraded';
+    if (mod.message) statusText += ' \u2014 ' + esc(mod.message);
+    return '<div class="module-card">' +
+      '<div class="module-stripe ' + stripeClass + '"></div>' +
+      '<div class="module-body">' +
+      '<div class="module-name">' + esc(name.charAt(0).toUpperCase() + name.slice(1)) + '</div>' +
+      '<div class="module-status">' + statusText + '</div>' +
+      '</div></div>';
+  }).join('');
+}
+
+function renderEventLog() {
+  var el = document.getElementById('event-log-entries');
+  var events = (state.events || []).slice(0, 15);
+  if (events.length === 0) {
+    el.innerHTML = '<div style="padding: 12px 14px; color: var(--text-muted); font-size: 12px; font-family: var(--font-mono);">No events recorded</div>';
+    return;
+  }
+  el.innerHTML = events.map(function(evt) {
+    var payload = '';
+    if (evt.payload) {
+      payload = typeof evt.payload === 'string' ? evt.payload :
+        Object.keys(evt.payload).map(function(k) { return k + '=' + evt.payload[k]; }).join(', ');
+    }
+    return '<div class="event-log-entry">' +
+      '<span class="event-time">' + formatTime(evt.timestamp) + '</span>' +
+      '<span class="event-topic">' + esc(evt.topic || '') + '</span>' +
+      '<span class="event-source">' + esc(evt.source || '') + '</span>' +
+      '<span class="event-payload">' + esc(truncate(payload, 120)) + '</span>' +
+      '</div>';
+  }).join('');
+}
+
+/* ================================================================
+   Sidebar Counts & Health
+   ================================================================ */
+function renderSidebarCounts() {
+  document.getElementById('nav-seeds-count').textContent = state.seeds.length;
+  document.getElementById('nav-insights-count').textContent = state.insights.length;
+  document.getElementById('nav-document-count').textContent = state.sections.length;
+  document.getElementById('nav-annotations-count').textContent = state.annotations.length;
+  document.getElementById('nav-research-count').textContent = state.sources.length + state.findings.length;
+
+  var healthEl = document.getElementById('sidebar-health');
+  if (!state.status || !state.status.modules) {
+    healthEl.innerHTML = '<div class="health-item"><span class="health-dot"></span> No data</div>';
+    return;
+  }
+  var modules = state.status.modules;
+  healthEl.innerHTML = Object.keys(modules).map(function(name) {
+    var mod = modules[name];
+    var dotClass = mod.healthy ? 'green' : 'orange';
+    return '<div class="health-item"><span class="health-dot ' + dotClass + '"></span> ' + esc(name.charAt(0).toUpperCase() + name.slice(1)) + '</div>';
+  }).join('');
+}
+
+/* ================================================================
+   User Actions
+   ================================================================ */
+function endorseInsight(id) {
+  apiPost('/api/insights/' + id + '/comment', { type: 'endorse' })
+    .then(function() { showToast('Insight endorsed'); loadAllData(); })
+    .catch(function(e) { showToast('Error: ' + e.message, true); });
+}
+
+function dismissInsight(id) {
+  apiPost('/api/insights/' + id + '/comment', { type: 'dismiss' })
+    .then(function() { showToast('Insight dismissed'); loadAllData(); })
+    .catch(function(e) { showToast('Error: ' + e.message, true); });
+}
+
+function deleteSeed(id) {
+  if (!confirm('Delete this seed?')) return;
+  apiDelete('/api/seeds/' + id)
+    .then(function() { showToast('Seed deleted'); loadAllData(); })
+    .catch(function(e) { showToast('Error: ' + e.message, true); });
+}
+
+/* ================================================================
+   Modal System
+   ================================================================ */
+function showModal(title, bodyHtml) {
+  document.getElementById('modal-title').textContent = title;
+  document.getElementById('modal-body').innerHTML = bodyHtml;
+  document.getElementById('modal-overlay').classList.remove('hidden');
+}
+
+function hideModal() {
+  document.getElementById('modal-overlay').classList.add('hidden');
+}
+
+/* Close modal on overlay click */
+document.getElementById('modal-overlay').addEventListener('click', function(e) {
+  if (e.target === this) hideModal();
+});
+
+/* ---- Create Seed Modal ---- */
+function showCreateSeedModal() {
+  showModal('Add Seed',
+    '<div class="form-group"><label>Text</label>' +
+    '<textarea class="form-textarea" id="seed-text" placeholder="Enter seed text..." required></textarea></div>' +
+    '<div class="form-group"><label>Type</label>' +
+    '<select class="form-select" id="seed-type"><option value="axiom">Axiom</option><option value="conjecture" selected>Conjecture</option><option value="question">Question</option></select></div>' +
+    '<div class="form-group"><label>Priority (1-10)</label>' +
+    '<input type="range" class="form-input" id="seed-priority" min="1" max="10" value="5" style="padding:4px 0;"> <span id="seed-priority-val" style="font-family:var(--font-mono);font-size:12px;color:var(--text-muted);">5</span></div>' +
+    '<div class="form-group"><label>Tags (comma-separated)</label>' +
+    '<input type="text" class="form-input" id="seed-tags" placeholder="tag1, tag2"></div>' +
+    '<div class="form-actions">' +
+    '<button class="btn btn-cancel" onclick="hideModal()">Cancel</button>' +
+    '<button class="btn btn-primary" onclick="submitCreateSeed()">Create</button></div>'
+  );
+  document.getElementById('seed-priority').addEventListener('input', function() {
+    document.getElementById('seed-priority-val').textContent = this.value;
+  });
+}
+
+function submitCreateSeed() {
+  var text = document.getElementById('seed-text').value.trim();
+  if (!text) { showToast('Seed text is required', true); return; }
+  var tagsStr = document.getElementById('seed-tags').value.trim();
+  var tags = tagsStr ? tagsStr.split(',').map(function(t) { return t.trim(); }).filter(Boolean) : [];
+  apiPost('/api/seeds', {
+    project_id: state.projectId,
+    text: text,
+    type: document.getElementById('seed-type').value,
+    priority: parseInt(document.getElementById('seed-priority').value, 10),
+    tags: tags
+  })
+    .then(function() { hideModal(); showToast('Seed created'); loadAllData(); })
+    .catch(function(e) { showToast('Error: ' + e.message, true); });
+}
+
+/* ---- Create Annotation Modal ---- */
+function showCreateAnnotationModal() {
+  var sectionOpts = '<option value="">General (no section)</option>';
+  state.sections.slice().sort(function(a, b) { return (a.order_index || 0) - (b.order_index || 0); }).forEach(function(s) {
+    sectionOpts += '<option value="' + esc(s.id) + '">#' + ((s.order_index || 0) + 1) + ' ' + esc(s.title) + '</option>';
+  });
+  showModal('Add Annotation',
+    '<div class="form-group"><label>Type</label>' +
+    '<select class="form-select" id="ann-type"><option value="comment">Comment</option><option value="suggestion">Suggestion</option><option value="protected">Protected</option></select></div>' +
+    '<div class="form-group"><label>Section</label>' +
+    '<select class="form-select" id="ann-section">' + sectionOpts + '</select></div>' +
+    '<div class="form-group"><label>Content</label>' +
+    '<textarea class="form-textarea" id="ann-content" placeholder="Enter annotation..." required></textarea></div>' +
+    '<div class="form-actions">' +
+    '<button class="btn btn-cancel" onclick="hideModal()">Cancel</button>' +
+    '<button class="btn btn-primary" onclick="submitCreateAnnotation()">Create</button></div>'
+  );
+}
+
+function submitCreateAnnotation() {
+  var content = document.getElementById('ann-content').value.trim();
+  if (!content) { showToast('Content is required', true); return; }
+  apiPost('/api/annotations', {
+    project_id: state.projectId,
+    type: document.getElementById('ann-type').value,
+    section_id: document.getElementById('ann-section').value || null,
+    content: content
+  })
+    .then(function() { hideModal(); showToast('Annotation created'); loadAllData(); })
+    .catch(function(e) { showToast('Error: ' + e.message, true); });
+}
+
+/* ---- Research Request Modal ---- */
+function showResearchRequestModal() {
+  showModal('Request Research',
+    '<div class="form-group"><label>Query</label>' +
+    '<textarea class="form-textarea" id="research-query" placeholder="What should be researched?" required></textarea></div>' +
+    '<div class="form-group"><label>Domain (optional)</label>' +
+    '<input type="text" class="form-input" id="research-domain" placeholder="e.g. finite geometry, yogic-tantric"></div>' +
+    '<div class="form-actions">' +
+    '<button class="btn btn-cancel" onclick="hideModal()">Cancel</button>' +
+    '<button class="btn btn-primary" onclick="submitResearchRequest()">Submit</button></div>'
+  );
+}
+
+function submitResearchRequest() {
+  var query = document.getElementById('research-query').value.trim();
+  if (!query) { showToast('Query is required', true); return; }
+  apiPost('/api/research/request', {
+    project_id: state.projectId,
+    query: query,
+    domain: document.getElementById('research-domain').value.trim() || undefined
+  })
+    .then(function() { hideModal(); showToast('Research requested'); })
+    .catch(function(e) { showToast('Error: ' + e.message, true); });
+}
+
+/* ================================================================
+   Toast Notifications
+   ================================================================ */
+function showToast(message, isError) {
+  var container = document.getElementById('toast-container');
+  var toast = document.createElement('div');
+  toast.className = 'toast' + (isError ? ' error' : '');
+  toast.textContent = message;
+  container.appendChild(toast);
+  setTimeout(function() { toast.remove(); }, 3000);
+}
+
+/* ================================================================
+   Auto-refresh
+   ================================================================ */
+function setupAutoRefresh() {
+  var toggle = document.getElementById('auto-refresh-toggle');
+  toggle.addEventListener('change', function() {
+    state.autoRefresh = this.checked;
+    if (state.autoRefresh) {
+      startAutoRefresh();
+    } else {
+      stopAutoRefresh();
+    }
+  });
+  startAutoRefresh();
+}
+
+function startAutoRefresh() {
+  stopAutoRefresh();
+  state.refreshTimer = setInterval(function() { loadAllData(); }, 30000);
+}
+
+function stopAutoRefresh() {
+  if (state.refreshTimer) { clearInterval(state.refreshTimer); state.refreshTimer = null; }
+}
+
+/* ================================================================
+   Init
+   ================================================================ */
+document.addEventListener('DOMContentLoaded', function() {
+  loadProjects().then(function() {
+    return loadAllData();
+  }).catch(function() {
+    document.getElementById('error-banner').style.display = 'flex';
+  });
+
+  document.getElementById('project-selector').addEventListener('change', function() {
+    state.projectId = this.value;
+    loadAllData();
+  });
+
+  setupAutoRefresh();
+});
+</script>
+
+</body>
+</html>

@@ -1,0 +1,1099 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fano &mdash; Document Viewer</title>
+<script>
+MathJax = {
+  tex: {
+    inlineMath: [['$', '$']],
+    displayMath: [['$$', '$$']],
+    tags: 'ams'
+  },
+  chtml: {
+    scale: 1,
+    mtextInheritFont: true
+  },
+  startup: {
+    pageReady: function() {
+      return MathJax.startup.defaultPageReady().then(function() {
+        initApp();
+      });
+    }
+  }
+};
+</script>
+<script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+<style>
+/* ============================================================
+   CSS Custom Properties (from dashboard.html design system)
+   ============================================================ */
+:root {
+  --bg-primary: #0d1117;
+  --bg-secondary: #161b22;
+  --bg-tertiary: #21262d;
+  --bg-hover: #30363d;
+  --border: #30363d;
+  --border-muted: #21262d;
+
+  --text-primary: #e6edf3;
+  --text-secondary: #8b949e;
+  --text-muted: #6e7681;
+  --text-link: #58a6ff;
+
+  --green: #3fb950;
+  --green-bg: #0d3117;
+  --orange: #d29922;
+  --orange-bg: #3d2e00;
+  --red: #f85149;
+  --red-bg: #3d1117;
+  --blue: #58a6ff;
+  --blue-bg: #0c2d6b;
+  --purple: #bc8cff;
+  --purple-bg: #2a1a4e;
+  --cyan: #39d2c0;
+  --cyan-bg: #0a2e2a;
+  --pink: #f778ba;
+  --pink-bg: #3d1132;
+  --yellow: #e3b341;
+
+  --sidebar-width: 260px;
+  --annotation-width: 340px;
+
+  --font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+
+  --gap: 16px;
+  --radius: 8px;
+  --radius-sm: 4px;
+}
+
+/* ============================================================
+   Reset & Base
+   ============================================================ */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: var(--font-body);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  line-height: 1.5;
+  font-size: 14px;
+  display: flex;
+  min-height: 100vh;
+  overflow: hidden;
+}
+
+a { color: var(--text-link); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* ============================================================
+   MathJax Dark Theme Overrides
+   ============================================================ */
+mjx-container {
+  color: var(--text-primary) !important;
+}
+
+mjx-container[display="true"] {
+  display: block !important;
+  margin: 16px 0 !important;
+  padding: 12px 16px;
+  background: rgba(22, 27, 34, 0.6);
+  border: 1px solid var(--border-muted);
+  border-radius: var(--radius-sm);
+  overflow-x: auto;
+}
+
+/* ============================================================
+   Left Sidebar (TOC)
+   ============================================================ */
+.sidebar {
+  width: var(--sidebar-width);
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--border);
+  padding: 20px 0;
+  display: flex;
+  flex-direction: column;
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  overflow-y: auto;
+  z-index: 100;
+  flex-shrink: 0;
+}
+
+.sidebar-header {
+  padding: 0 16px 20px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 12px;
+}
+
+.sidebar-header h1 {
+  font-size: 18px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sidebar-header h1 .logo {
+  width: 24px;
+  height: 24px;
+  background: var(--purple);
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.sidebar-header .page-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.nav-section {
+  padding: 8px 0;
+}
+
+.nav-section-title {
+  padding: 4px 16px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+}
+
+.toc-link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  text-decoration: none;
+  border-left: 2px solid transparent;
+}
+
+.toc-link:hover { background: var(--bg-hover); color: var(--text-primary); text-decoration: none; }
+.toc-link.active { background: var(--bg-hover); color: var(--text-primary); border-left-color: var(--blue); }
+
+.toc-link .toc-index {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  min-width: 20px;
+}
+
+.toc-link .toc-title {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ============================================================
+   Badges (reused from dashboard)
+   ============================================================ */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.badge-stable      { background: var(--green-bg); color: var(--green); border: 1px solid rgba(63,185,80,0.3); }
+.badge-provisional { background: var(--orange-bg); color: var(--orange); border: 1px solid rgba(210,153,34,0.3); }
+.badge-needs-work  { background: var(--red-bg); color: var(--red); border: 1px solid rgba(248,81,73,0.3); }
+.badge-open        { background: var(--blue-bg); color: var(--blue); border: 1px solid rgba(88,166,255,0.3); }
+.badge-attempted   { background: var(--orange-bg); color: var(--orange); border: 1px solid rgba(210,153,34,0.3); }
+.badge-resolved    { background: var(--green-bg); color: var(--green); border: 1px solid rgba(63,185,80,0.3); }
+
+.toc-badge {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+/* ============================================================
+   Sidebar Stats
+   ============================================================ */
+.sidebar-stats {
+  margin-top: auto;
+  padding: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.stat-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  color: var(--text-secondary);
+  padding: 3px 0;
+}
+
+.stat-row .stat-val {
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+/* ============================================================
+   Document Pane (Center)
+   ============================================================ */
+.document-pane {
+  margin-left: var(--sidebar-width);
+  margin-right: var(--annotation-width);
+  flex: 1;
+  padding: 32px 40px;
+  overflow-y: auto;
+  height: 100vh;
+  scroll-behavior: smooth;
+}
+
+.doc-title-bar {
+  margin-bottom: 32px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.doc-title-bar h2 {
+  font-size: 22px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.doc-title-bar .doc-subtitle {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+/* Section cards */
+.doc-section {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px 24px 20px 28px;
+  border-left: 4px solid;
+  margin-bottom: 24px;
+}
+
+.doc-section.stable      { border-left-color: var(--green); }
+.doc-section.provisional { border-left-color: var(--orange); }
+.doc-section.needs-work  { border-left-color: var(--red); }
+
+.doc-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.doc-section-header .left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.order-index {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-muted);
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-sm);
+  padding: 1px 6px;
+}
+
+.doc-section-header h3 {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+/* Section metadata (collapsible) */
+.section-meta-toggle {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 2px 8px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.section-meta-toggle:hover {
+  color: var(--text-primary);
+  border-color: var(--text-muted);
+}
+
+.section-meta {
+  display: none;
+  padding: 10px 0 12px;
+  border-bottom: 1px solid var(--border-muted);
+  margin-bottom: 12px;
+}
+
+.section-meta.open { display: block; }
+
+.section-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+.section-meta-row:last-child { margin-bottom: 0; }
+
+.section-meta-row strong {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.concept-tags {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 11px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  font-family: var(--font-mono);
+}
+
+.tag-establishes { color: var(--green); border-color: rgba(63,185,80,0.3); }
+.tag-requires    { color: var(--orange); border-color: rgba(210,153,34,0.3); }
+
+/* Section content */
+.section-content {
+  font-size: 14px;
+  line-height: 1.8;
+  color: var(--text-primary);
+}
+
+.section-content p {
+  margin-bottom: 12px;
+}
+
+.section-content p:last-child { margin-bottom: 0; }
+
+/* ============================================================
+   Inline Highlights
+   ============================================================ */
+.hl-target {
+  position: relative;
+  cursor: pointer;
+  border-radius: 2px;
+  padding: 1px 2px;
+  transition: background 0.2s;
+}
+
+.hl-target.comment {
+  background: rgba(88, 166, 255, 0.1);
+  border-bottom: 2px solid rgba(88, 166, 255, 0.5);
+}
+
+.hl-target.protected {
+  background: rgba(188, 140, 255, 0.1);
+  border-bottom: 2px solid rgba(188, 140, 255, 0.5);
+}
+
+.hl-target.suggestion {
+  background: rgba(57, 210, 192, 0.1);
+  border-bottom: 2px solid rgba(57, 210, 192, 0.5);
+}
+
+.hl-target.active.comment    { background: rgba(88, 166, 255, 0.2); }
+.hl-target.active.protected  { background: rgba(188, 140, 255, 0.2); }
+.hl-target.active.suggestion { background: rgba(57, 210, 192, 0.2); }
+
+.hl-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  font-size: 9px;
+  font-weight: 700;
+  color: #fff;
+  position: relative;
+  top: -6px;
+  margin-left: 2px;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.hl-badge.comment    { background: var(--blue); }
+.hl-badge.protected  { background: var(--purple); }
+.hl-badge.suggestion { background: var(--cyan); }
+
+/* ============================================================
+   Selection Tooltip
+   ============================================================ */
+.selection-tooltip {
+  position: fixed;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  display: none;
+  z-index: 200;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+  cursor: default;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.selection-tooltip .tt-icon {
+  margin-right: 6px;
+}
+
+/* ============================================================
+   Right Annotation Panel
+   ============================================================ */
+.annotation-panel {
+  width: var(--annotation-width);
+  background: var(--bg-secondary);
+  border-left: 1px solid var(--border);
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  z-index: 100;
+}
+
+.annotation-panel-header {
+  padding: 20px 16px 12px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.annotation-panel-header h3 {
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+
+/* Filter tabs */
+.filter-tabs {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.filter-tab {
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.filter-tab:hover { background: var(--bg-hover); color: var(--text-primary); }
+.filter-tab.active { background: var(--bg-hover); color: var(--text-primary); border-color: var(--blue); }
+
+.filter-tab .tab-count {
+  margin-left: 3px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+/* Annotation cards */
+.annotation-list {
+  flex: 1;
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+}
+
+.annotation-card {
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  cursor: pointer;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.annotation-card:hover {
+  border-color: var(--text-muted);
+}
+
+.annotation-card.active {
+  box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.3);
+  border-color: var(--blue);
+}
+
+.annotation-card.active.type-protected {
+  box-shadow: 0 0 0 2px rgba(188, 140, 255, 0.3);
+  border-color: var(--purple);
+}
+
+.annotation-card.active.type-suggestion {
+  box-shadow: 0 0 0 2px rgba(57, 210, 192, 0.3);
+  border-color: var(--cyan);
+}
+
+.annotation-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.annotation-card-header .left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.annotation-type-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+}
+
+.annotation-type-icon.comment    { background: var(--blue-bg); color: var(--blue); }
+.annotation-type-icon.protected  { background: var(--purple-bg); color: var(--purple); }
+.annotation-type-icon.suggestion { background: var(--cyan-bg); color: var(--cyan); }
+
+.annotation-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  font-size: 10px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.annotation-num.comment    { background: var(--blue); }
+.annotation-num.protected  { background: var(--purple); }
+.annotation-num.suggestion { background: var(--cyan); }
+
+.annotation-card-section {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.annotation-card-content {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.annotation-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.attempt-count {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* Comment form (disabled mockup) */
+.comment-form {
+  padding: 16px;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.comment-form textarea {
+  width: 100%;
+  height: 60px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-family: var(--font-body);
+  font-size: 13px;
+  padding: 8px 10px;
+  resize: none;
+  cursor: not-allowed;
+}
+
+.comment-form button {
+  margin-top: 8px;
+  padding: 6px 14px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/* Empty state */
+.empty-state {
+  text-align: center;
+  padding: 60px 20px;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+/* ============================================================
+   Responsive
+   ============================================================ */
+@media (max-width: 1024px) {
+  .annotation-panel {
+    position: fixed;
+    top: auto;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    height: 280px;
+    border-left: none;
+    border-top: 1px solid var(--border);
+  }
+
+  .document-pane {
+    margin-right: 0;
+    padding-bottom: 300px;
+  }
+
+  .annotation-list {
+    flex-direction: row;
+    overflow-x: auto;
+    overflow-y: hidden;
+    flex-wrap: nowrap;
+  }
+
+  .annotation-card {
+    min-width: 280px;
+    flex-shrink: 0;
+  }
+}
+
+@media (max-width: 768px) {
+  .sidebar {
+    display: none;
+  }
+
+  .document-pane {
+    margin-left: 0;
+    padding: 16px 20px 260px;
+  }
+
+  .annotation-panel {
+    height: 240px;
+  }
+}
+</style>
+</head>
+<body>
+
+<!-- ============================================================
+     Left Sidebar (Table of Contents)
+     ============================================================ -->
+<nav class="sidebar">
+  <div class="sidebar-header">
+    <h1><span class="logo">F</span> Fano</h1>
+    <div class="page-label">Document Viewer</div>
+  </div>
+
+  <div class="nav-section" style="padding-bottom:0;">
+    <div class="nav-section-title">Pages</div>
+    <a href="/dashboard" class="toc-link" style="border-left-color:transparent;">
+      <span class="toc-index" style="min-width:auto;">&#9673;</span>
+      <span class="toc-title">Dashboard</span>
+    </a>
+    <a href="/document" class="toc-link active" style="border-left-color:var(--blue);">
+      <span class="toc-index" style="min-width:auto;">&#128196;</span>
+      <span class="toc-title">Document Viewer</span>
+    </a>
+  </div>
+
+  <div class="nav-section">
+    <div class="nav-section-title">Table of Contents</div>
+    {% for section in sections %}
+    <a href="#section-{{ section.id }}" class="toc-link{% if loop.first %} active{% endif %}" data-section="section-{{ section.id }}">
+      <span class="toc-index">#{{ section.order_index + 1 }}</span>
+      <span class="toc-title">{{ section.title }}</span>
+      <span class="toc-badge badge badge-{{ section.status.value | replace('_', '-') }}">{{ section.status.value }}</span>
+    </a>
+    {% endfor %}
+  </div>
+
+  <div class="sidebar-stats">
+    <div class="nav-section-title">Document Stats</div>
+    <div class="stat-row"><span>Sections</span> <span class="stat-val">{{ stats.sections }}</span></div>
+    <div class="stat-row"><span>Stable</span> <span class="stat-val" style="color: var(--green);">{{ stats.stable }}</span></div>
+    <div class="stat-row"><span>Provisional</span> <span class="stat-val" style="color: var(--orange);">{{ stats.provisional }}</span></div>
+    <div class="stat-row"><span>Needs work</span> <span class="stat-val" style="color: var(--red);">{{ stats.needs_work }}</span></div>
+    <div class="stat-row"><span>Annotations</span> <span class="stat-val">{{ stats.annotations }}</span></div>
+    <div class="stat-row"><span>Reviews</span> <span class="stat-val">{{ stats.reviews }}</span></div>
+  </div>
+</nav>
+
+<!-- ============================================================
+     Document Pane (Center)
+     ============================================================ -->
+<main class="document-pane" id="document-pane">
+
+  <div class="doc-title-bar">
+    <h2>{% if project %}{{ project.name }}{% else %}Document Viewer{% endif %}</h2>
+    <div class="doc-subtitle">Living document &middot; {{ stats.sections }} section{{ 's' if stats.sections != 1 else '' }}{% if project %} &middot; {{ project.goal }}{% endif %}</div>
+  </div>
+
+  {% for section in sections %}
+  <article class="doc-section {{ section.status.value | replace('_', '-') }}" id="section-{{ section.id }}">
+    <div class="doc-section-header">
+      <div class="left">
+        <span class="order-index">#{{ section.order_index + 1 }}</span>
+        <h3>{{ section.title }}</h3>
+      </div>
+      <div style="display:flex; align-items:center; gap:8px;">
+        <span class="badge badge-{{ section.status.value | replace('_', '-') }}">{{ section.status.value }}</span>
+        <button class="section-meta-toggle" data-target="meta-{{ section.id }}">&#9662; Meta</button>
+      </div>
+    </div>
+
+    <div class="section-meta" id="meta-{{ section.id }}">
+      <div class="section-meta-row">
+        {% if section.source_insight_id %}
+        <strong>Source insight:</strong> {{ section.source_insight_id }}
+        {% endif %}
+        <strong{% if section.source_insight_id %} style="margin-left:12px;"{% endif %}>Reviews:</strong> {{ section.review_count }}
+      </div>
+      {% if section.establishes or section.requires %}
+      <div class="section-meta-row">
+        <div class="concept-tags">
+          {% for concept in section.establishes %}
+          <span class="tag tag-establishes">+ {{ concept }}</span>
+          {% endfor %}
+          {% for concept in section.requires %}
+          <span class="tag tag-requires">&rarr; {{ concept }}</span>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+    </div>
+
+    <div class="section-content">
+      {{ section.content | safe }}
+    </div>
+  </article>
+  {% endfor %}
+
+  {% if not sections %}
+  <div class="empty-state">
+    No sections yet. The documenter will create sections as insights are incorporated.
+  </div>
+  {% endif %}
+
+</main>
+
+<!-- Selection tooltip -->
+<div class="selection-tooltip" id="selection-tooltip">
+  <span class="tt-icon">&#9998;</span> Add Comment
+</div>
+
+<!-- ============================================================
+     Right Annotation Panel
+     ============================================================ -->
+<aside class="annotation-panel">
+  <div class="annotation-panel-header">
+    <h3>Annotations <span style="font-weight:400; color:var(--text-muted); font-size:13px;">({{ ann_counts.all }})</span></h3>
+    <div class="filter-tabs">
+      <div class="filter-tab active" data-filter="all">All <span class="tab-count">{{ ann_counts.all }}</span></div>
+      <div class="filter-tab" data-filter="open">Open <span class="tab-count">{{ ann_counts.open }}</span></div>
+      <div class="filter-tab" data-filter="attempted">Attempted <span class="tab-count">{{ ann_counts.attempted }}</span></div>
+      <div class="filter-tab" data-filter="resolved">Resolved <span class="tab-count">{{ ann_counts.resolved }}</span></div>
+    </div>
+  </div>
+
+  <div class="annotation-list" id="annotation-list">
+    {% for ann in annotations %}
+    {% set linked_sec = section_map.get(ann.section_id) %}
+    <div class="annotation-card type-{{ ann.type.value }}" data-annotation-id="{{ ann.id }}" data-status="{{ ann.status.value }}">
+      <div class="annotation-card-header">
+        <div class="left">
+          <span class="annotation-type-icon {{ ann.type.value }}">{% if ann.type.value == 'comment' %}&#128172;{% elif ann.type.value == 'protected' %}&#128274;{% else %}&#128161;{% endif %}</span>
+          <span class="annotation-num {{ ann.type.value }}">{{ loop.index }}</span>
+          <span class="annotation-card-section">{% if linked_sec %}#{{ linked_sec.order_index + 1 }} {{ linked_sec.title }}{% else %}General{% endif %}</span>
+        </div>
+        <span class="badge badge-{{ ann.status.value | replace('_', '-') }}">{{ ann.status.value }}</span>
+      </div>
+      <div class="annotation-card-content">
+        {{ ann.content }}
+      </div>
+      <div class="annotation-card-footer">
+        <span>Attempts: <span class="attempt-count">{{ ann.attempt_count }}</span></span>
+        <span>{{ ann.type.value }}</span>
+      </div>
+    </div>
+    {% endfor %}
+
+    {% if not annotations %}
+    <div class="empty-state">No annotations yet.</div>
+    {% endif %}
+  </div>
+
+  <div class="comment-form" id="annotation-form-container">
+    <form id="annotation-form" style="display:flex; flex-direction:column; gap:8px;">
+      <select name="type" class="form-select" style="background:var(--bg-tertiary); border:1px solid var(--border); border-radius:var(--radius-sm); padding:6px 10px; color:var(--text-primary); font-size:12px; cursor:pointer;">
+        <option value="comment">Comment</option>
+        <option value="suggestion">Suggestion</option>
+        <option value="protected">Protected</option>
+      </select>
+      <select name="section_id" class="form-select" style="background:var(--bg-tertiary); border:1px solid var(--border); border-radius:var(--radius-sm); padding:6px 10px; color:var(--text-primary); font-size:12px; cursor:pointer;">
+        <option value="">General (no section)</option>
+        {% for section in sections %}
+        <option value="{{ section.id }}">#{{ section.order_index + 1 }} {{ section.title }}</option>
+        {% endfor %}
+      </select>
+      <textarea name="content" placeholder="Add an annotation..." required></textarea>
+      <button type="submit">Submit</button>
+    </form>
+  </div>
+</aside>
+
+<!-- ============================================================
+     JavaScript
+     ============================================================ -->
+<script>
+function initApp() {
+  setupScrollSpy();
+  setupHighlightSync();
+  setupMetaToggles();
+  setupSelectionTooltip();
+  setupFilterTabs();
+  setupAnnotationForm();
+}
+
+/* ---- Scroll Spy ---- */
+function setupScrollSpy() {
+  var sections = document.querySelectorAll('.doc-section');
+  var tocLinks = document.querySelectorAll('.toc-link[data-section]');
+
+  if (!sections.length) return;
+
+  var observer = new IntersectionObserver(function(entries) {
+    entries.forEach(function(entry) {
+      if (entry.isIntersecting) {
+        tocLinks.forEach(function(link) { link.classList.remove('active'); });
+        var activeLink = document.querySelector('.toc-link[data-section="' + entry.target.id + '"]');
+        if (activeLink) activeLink.classList.add('active');
+      }
+    });
+  }, {
+    root: document.getElementById('document-pane'),
+    rootMargin: '-20% 0px -60% 0px',
+    threshold: 0
+  });
+
+  sections.forEach(function(s) { observer.observe(s); });
+
+  /* TOC click navigation */
+  tocLinks.forEach(function(link) {
+    link.addEventListener('click', function(e) {
+      e.preventDefault();
+      var targetId = this.getAttribute('data-section');
+      var target = document.getElementById(targetId);
+      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  });
+}
+
+/* ---- Highlight <-> Annotation Sync ---- */
+function setupHighlightSync() {
+  var highlights = document.querySelectorAll('.hl-target, .hl-badge');
+  var cards = document.querySelectorAll('.annotation-card');
+
+  function clearActive() {
+    document.querySelectorAll('.hl-target.active').forEach(function(el) { el.classList.remove('active'); });
+    document.querySelectorAll('.annotation-card.active').forEach(function(el) { el.classList.remove('active'); });
+  }
+
+  function activatePair(annId) {
+    clearActive();
+    var hl = document.querySelector('.hl-target[data-annotation-id="' + annId + '"]');
+    var card = document.querySelector('.annotation-card[data-annotation-id="' + annId + '"]');
+    if (hl) hl.classList.add('active');
+    if (card) card.classList.add('active');
+    return { hl: hl, card: card };
+  }
+
+  /* Click highlight -> scroll to annotation card */
+  highlights.forEach(function(el) {
+    el.addEventListener('click', function() {
+      var annId = this.getAttribute('data-annotation-id');
+      var pair = activatePair(annId);
+      if (pair.card) pair.card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+  });
+
+  /* Click annotation card -> scroll to highlight in document */
+  cards.forEach(function(card) {
+    card.addEventListener('click', function() {
+      var annId = this.getAttribute('data-annotation-id');
+      var pair = activatePair(annId);
+      if (pair.hl) pair.hl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+  });
+}
+
+/* ---- Meta Toggle ---- */
+function setupMetaToggles() {
+  document.querySelectorAll('.section-meta-toggle').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      var targetId = this.getAttribute('data-target');
+      var meta = document.getElementById(targetId);
+      if (meta) {
+        var isOpen = meta.classList.toggle('open');
+        this.innerHTML = (isOpen ? '&#9652;' : '&#9662;') + ' Meta';
+      }
+    });
+  });
+}
+
+/* ---- Selection Tooltip ---- */
+function setupSelectionTooltip() {
+  var tooltip = document.getElementById('selection-tooltip');
+  var docPane = document.getElementById('document-pane');
+
+  docPane.addEventListener('mouseup', function(e) {
+    var sel = window.getSelection();
+    if (sel && sel.toString().trim().length > 0) {
+      /* Check if selection is within a section-content */
+      var anchor = sel.anchorNode;
+      var inContent = false;
+      var node = anchor;
+      while (node && node !== docPane) {
+        if (node.classList && node.classList.contains('section-content')) {
+          inContent = true;
+          break;
+        }
+        node = node.parentNode;
+      }
+      if (inContent) {
+        var range = sel.getRangeAt(0);
+        var rect = range.getBoundingClientRect();
+        tooltip.style.left = (rect.left + rect.width / 2 - 80) + 'px';
+        tooltip.style.top = (rect.top - 36) + 'px';
+        tooltip.style.display = 'block';
+        return;
+      }
+    }
+    tooltip.style.display = 'none';
+  });
+
+  document.addEventListener('mousedown', function(e) {
+    if (e.target !== tooltip && !tooltip.contains(e.target)) {
+      tooltip.style.display = 'none';
+    }
+  });
+}
+
+/* ---- Filter Tabs ---- */
+function setupFilterTabs() {
+  var tabs = document.querySelectorAll('.filter-tab');
+  var cards = document.querySelectorAll('.annotation-card');
+
+  tabs.forEach(function(tab) {
+    tab.addEventListener('click', function() {
+      tabs.forEach(function(t) { t.classList.remove('active'); });
+      this.classList.add('active');
+      var filter = this.getAttribute('data-filter');
+
+      cards.forEach(function(card) {
+        if (filter === 'all' || card.getAttribute('data-status') === filter) {
+          card.style.display = '';
+        } else {
+          card.style.display = 'none';
+        }
+      });
+    });
+  });
+}
+
+/* ---- Annotation Form ---- */
+function setupAnnotationForm() {
+  var form = document.getElementById('annotation-form');
+  if (!form) return;
+  form.addEventListener('submit', function(e) {
+    e.preventDefault();
+    var projectId = '{{ project.id if project else "" }}';
+    if (!projectId) { alert('No project selected'); return; }
+    var data = {
+      project_id: projectId,
+      type: form.type.value,
+      section_id: form.section_id.value || null,
+      content: form.content.value
+    };
+    fetch('/api/annotations', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(data)
+    })
+    .then(function(res) { return res.json(); })
+    .then(function(json) {
+      if (json.ok) window.location.reload();
+      else alert('Error: ' + (json.error || 'Unknown error'));
+    })
+    .catch(function(err) { alert('Request failed: ' + err.message); });
+  });
+}
+
+/* Fallback if MathJax fails to load */
+if (typeof MathJax === 'undefined') {
+  document.addEventListener('DOMContentLoaded', initApp);
+}
+</script>
+
+</body>
+</html>
