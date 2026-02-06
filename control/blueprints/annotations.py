@@ -1,176 +1,92 @@
-"""
-Annotations Blueprint - Comments and protected regions routes.
+"""Annotations blueprint — CRUD for annotations (v2 API)."""
 
-Annotations use inline markers in the markdown document.
-Markers look like: <!-- @ann:c001 --> for comments, <!-- @ann:p001 --> for protected
-The annotation content is stored in annotations.json
-"""
+from __future__ import annotations
 
-from flask import Blueprint, jsonify, request
+from datetime import datetime, timezone
 
-from ..services import DOC_PATH
+from flask import Blueprint, request
 
-bp = Blueprint("annotations", __name__, url_prefix="/api")
+from control.async_utils import run_async
+from shared.models import (
+    Annotation,
+    AnnotationStatus,
+    AnnotationType,
+    generate_id,
+)
+
+from .helpers import (
+    err,
+    get_store,
+    ok,
+    publish_event,
+    serialize,
+)
+
+bp = Blueprint("annotations_v2", __name__, url_prefix="/api")
 
 
-@bp.route("/annotations")
-def api_annotations():
-    """Get all annotations."""
-    try:
-        from documenter.annotations import AnnotationManager
-        from documenter.document import Document
+@bp.route("/annotations", methods=["GET"])
+def list_annotations():
+    project_id = request.args.get("project_id")
+    if not project_id:
+        return err("project_id query parameter is required", "VALIDATION_ERROR")
 
-        am = AnnotationManager(DOC_PATH)
-        doc = Document(DOC_PATH)
-        doc.load()
+    store = get_store()
+    status_filter = request.args.get("status")
+    ans = None
+    if status_filter:
+        try:
+            ans = AnnotationStatus(status_filter)
+        except ValueError:
+            return err(f"Invalid status: {status_filter}", "VALIDATION_ERROR")
 
-        # Get markers present in document
-        markers_in_doc = set(doc.find_all_markers())
+    annotations = run_async(store.list_annotations(project_id, status=ans))
+    return ok([serialize(a) for a in annotations])
 
-        # Build response with linked/unlinked info
-        annotations = {}
-        unlinked = []
 
-        for ann_id, ann in am.annotations.items():
-            ann_dict = ann.to_dict()
-            if ann_id in markers_in_doc:
-                ann_dict["linked"] = True
-                annotations[ann_id] = ann_dict
-            else:
-                ann_dict["linked"] = False
-                unlinked.append(ann_dict)
-
-        return jsonify({
-            "annotations": annotations,
-            "unlinked": unlinked,
-        })
-    except Exception as e:
-        return jsonify({"error": str(e), "annotations": {}, "unlinked": []}), 500
+@bp.route("/annotations/<annotation_id>", methods=["GET"])
+def get_annotation(annotation_id: str):
+    store = get_store()
+    annotation = run_async(store.get_annotation(annotation_id))
+    if annotation is None:
+        return err("Annotation not found", "NOT_FOUND", 404)
+    return ok(serialize(annotation))
 
 
 @bp.route("/annotations", methods=["POST"])
-def api_add_annotation():
-    """Add a new annotation (comment or protected)."""
+def create_annotation():
+    body = request.get_json(silent=True) or {}
+    project_id = body.get("project_id")
+    content = body.get("content", "")
+    if not project_id:
+        return err("project_id is required", "VALIDATION_ERROR")
+
+    type_str = body.get("type", "comment")
     try:
-        data = request.json
-        ann_type = data.get("type", "comment")  # "comment" or "protected"
-        content = data.get("content", "")
-        char_offset = data.get("char_offset", 0)
-        text_preview = data.get("text_preview", "")
-        # Full selected text for searching in markdown
-        search_text = data.get("search_text", text_preview)
+        ann_type = AnnotationType(type_str)
+    except ValueError:
+        return err(f"Invalid annotation type: {type_str}", "VALIDATION_ERROR")
 
-        if ann_type == "comment" and not content:
-            return jsonify({"error": "Comment content is required"}), 400
+    now = datetime.now(timezone.utc)
+    annotation = Annotation(
+        id=generate_id(),
+        project_id=project_id,
+        type=ann_type,
+        section_id=body.get("section_id"),
+        content=content,
+        status=AnnotationStatus.OPEN,
+        attempt_count=0,
+        last_attempted_at=None,
+        created_at=now,
+        resolved_at=None,
+    )
+    store = get_store()
+    run_async(store.create_annotation(annotation))
 
-        from documenter.annotations import AnnotationManager
-        from documenter.document import Document
+    publish_event("user.annotation.created", {
+        "annotation_id": annotation.id,
+        "project_id": project_id,
+        "type": type_str,
+    })
 
-        # Create annotation (generates ID)
-        am = AnnotationManager(DOC_PATH)
-        annotation = am.add(ann_type, content, text_preview)
-
-        # Insert marker into document - use search_text to find correct position
-        doc = Document(DOC_PATH, enable_versioning=True)
-        doc.load()
-        doc.insert_marker(annotation.id, char_offset, search_text)
-        doc.save(f"Added annotation {annotation.id}")
-
-        return jsonify({
-            "success": True,
-            "annotation": annotation.to_dict(),
-        })
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@bp.route("/annotations/<ann_id>", methods=["DELETE"])
-def api_delete_annotation(ann_id):
-    """Delete an annotation and its marker."""
-    try:
-        from documenter.annotations import AnnotationManager
-        from documenter.document import Document
-
-        # Delete from annotations
-        am = AnnotationManager(DOC_PATH)
-        if not am.delete(ann_id):
-            return jsonify({"error": "Annotation not found"}), 404
-
-        # Remove marker from document
-        doc = Document(DOC_PATH, enable_versioning=True)
-        doc.load()
-        doc.remove_marker(ann_id)
-        doc.save(f"Removed annotation {ann_id}")
-
-        return jsonify({"success": True})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-# Legacy endpoints for backwards compatibility
-@bp.route("/comments", methods=["POST"])
-def api_add_comment():
-    """Add a new comment (legacy endpoint)."""
-    try:
-        data = request.json or {}
-        content = data.get("content", "")
-        char_offset = data.get("char_offset", 0)
-        selected_text = data.get("selected_text", "")
-        text_preview = data.get("text_preview", selected_text[:50])
-        search_text = data.get("search_text", selected_text)
-
-        if not content:
-            return jsonify({"error": "Comment content is required"}), 400
-
-        from documenter.annotations import AnnotationManager
-        from documenter.document import Document
-
-        am = AnnotationManager(DOC_PATH)
-        annotation = am.add("comment", content, text_preview)
-
-        doc = Document(DOC_PATH, enable_versioning=True)
-        doc.load()
-        doc.insert_marker(annotation.id, char_offset, search_text)
-        doc.save(f"Added comment {annotation.id}")
-
-        return jsonify({"success": True, "comment": annotation.to_dict()})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@bp.route("/comments/<comment_id>", methods=["DELETE"])
-def api_delete_comment(comment_id):
-    """Delete a comment (legacy endpoint)."""
-    return api_delete_annotation(comment_id)
-
-
-@bp.route("/protected", methods=["POST"])
-def api_add_protected():
-    """Add a new protected region (legacy endpoint)."""
-    try:
-        data = request.json or {}
-        char_offset = data.get("char_offset", 0)
-        selected_text = data.get("selected_text", "")
-        text_preview = data.get("text_preview", selected_text[:50])
-        search_text = data.get("search_text", selected_text)
-
-        from documenter.annotations import AnnotationManager
-        from documenter.document import Document
-
-        am = AnnotationManager(DOC_PATH)
-        annotation = am.add("protected", "", text_preview)
-
-        doc = Document(DOC_PATH, enable_versioning=True)
-        doc.load()
-        doc.insert_marker(annotation.id, char_offset, search_text)
-        doc.save(f"Added protected region {annotation.id}")
-
-        return jsonify({"success": True, "protected": annotation.to_dict()})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@bp.route("/protected/<protected_id>", methods=["DELETE"])
-def api_delete_protected(protected_id):
-    """Delete a protected region (legacy endpoint)."""
-    return api_delete_annotation(protected_id)
+    return ok(serialize(annotation), status=201)

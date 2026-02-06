@@ -1,7 +1,5 @@
-"""
-Fano Control Panel - Web UI for managing Explorer and Documenter.
-"""
+"""Fano Control Panel v2 — REST API for managing the research assistant."""
 
-from .server import create_app, start_server
+from .server import create_app
 
-__all__ = ["create_app", "start_server"]
+__all__ = ["create_app"]

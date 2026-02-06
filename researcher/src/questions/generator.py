@@ -1,256 +1,116 @@
+"""QuestionGenerator — generates research questions from insights.
+
+Uses LLM to produce searchable questions grounded in project context.
+CRITICAL: No hardcoded domain fallbacks.
 """
-Research question generation from context observations.
-"""
 
-import random
-from pathlib import Path
-from typing import Optional
-import yaml
+from __future__ import annotations
 
-from shared.logging import get_logger
-from ..store.models import ResearchContext
+import json
+import logging
+from typing import TYPE_CHECKING
 
-log = get_logger("researcher", "questions")
+from researcher.src.prompts import (
+    DIRECTED_QUESTION_GENERATION,
+    QUESTION_GENERATION,
+    QUESTION_GENERATION_FALLBACK,
+)
+
+if TYPE_CHECKING:
+    from shared.config import Config
+    from shared.models import Insight, LLMClientInterface, Project
+
+logger = logging.getLogger(__name__)
+
+
+def _format_domains(project: Project) -> str:
+    """Format research domains for prompt injection."""
+    if not project.research_domains:
+        return "General research"
+    parts = []
+    for d in project.research_domains:
+        kw = ", ".join(d.keywords) if d.keywords else "general"
+        parts.append(f"{d.name} (keywords: {kw})")
+    return "; ".join(parts)
 
 
 class QuestionGenerator:
-    """
-    Generates research questions based on observations.
+    """Generates research questions from attested insights or directed requests."""
 
-    Uses templates and context to formulate relevant search queries.
-    """
+    def __init__(self, llm_client: LLMClientInterface, config: Config) -> None:
+        self._llm = llm_client
+        self._config = config
 
-    def __init__(self, templates_path: Path, domains_path: Path):
-        """
-        Initialize generator.
-
-        Args:
-            templates_path: Path to question_templates.yaml
-            domains_path: Path to domains.yaml
-        """
-        self.templates = self._load_templates(templates_path)
-        self.domains = self._load_domains(domains_path)
-
-        # Extract domain modifiers and search terms
-        self.domain_modifiers = self.templates.get("domain_modifiers", {})
-        self.priorities = self.templates.get("priorities", {
-            "supporting": 1.0,
-            "contextual": 0.8,
-            "challenging": 0.6,
-            "alternative": 0.5
-        })
-
-    def _load_templates(self, path: Path) -> dict:
-        """Load question templates."""
-        try:
-            with open(path, encoding="utf-8") as f:
-                return yaml.safe_load(f)
-        except (FileNotFoundError, yaml.YAMLError):
-            return {"templates": {}}
-
-    def _load_domains(self, path: Path) -> dict:
-        """Load domains config."""
-        try:
-            with open(path, encoding="utf-8") as f:
-                return yaml.safe_load(f)
-        except (FileNotFoundError, yaml.YAMLError):
-            return {}
-
-    def generate(
+    async def generate(
         self,
-        context: ResearchContext,
-        max_questions: int = 20
-    ) -> list[dict]:
-        """
-        Generate research questions from context.
+        insight: Insight,
+        project: Project,
+        max_questions: int | None = None,
+    ) -> list[str]:
+        """Generate research questions for an attested insight."""
+        limit = max_questions or self._config.get(
+            "researcher.max_questions_per_insight", 10,
+        )
+        prompt = QUESTION_GENERATION.format(
+            project_goal=project.goal,
+            project_context=project.context,
+            insight_text=insight.text,
+            formatted_domains=_format_domains(project),
+            max_questions=limit,
+        )
+        backends = self._llm.get_available_backends()
+        backend = backends[0] if backends else "claude"
 
-        Args:
-            context: Current research context
-            max_questions: Maximum questions to generate
+        resp = await self._llm.send(backend, prompt=prompt)
+        if resp.success:
+            questions = self._parse_questions(resp.text)
+            if questions:
+                return questions[:limit]
 
-        Returns:
-            List of question dicts with query, type, priority
-        """
-        questions = []
+        # Fallback: use project.goal as generic context (no domain strings)
+        fallback_prompt = QUESTION_GENERATION_FALLBACK.format(
+            project_goal=project.goal,
+            insight_text=insight.text,
+            max_questions=limit,
+        )
+        resp2 = await self._llm.send(backend, prompt=fallback_prompt)
+        if resp2.success:
+            questions = self._parse_questions(resp2.text)
+            return questions[:limit]
 
-        # Generate from numbers
-        for number in context.active_numbers[:5]:
-            qs = self._generate_number_questions(number, context)
-            questions.extend(qs)
+        return []
 
-        # Generate from concepts
-        for concept in context.active_concepts[:5]:
-            qs = self._generate_concept_questions(concept, context)
-            questions.extend(qs)
-
-        # Generate from documenter topics
-        for topic in context.documenter_topics[:3]:
-            qs = self._generate_topic_questions(topic, context)
-            questions.extend(qs)
-
-        # Generate cross-domain questions
-        if context.active_numbers and context.active_domains:
-            qs = self._generate_cross_domain_questions(context)
-            questions.extend(qs)
-
-        # Sort by priority and limit
-        questions.sort(key=lambda q: q.get("priority", 0), reverse=True)
-
-        log.info("questions.generated", count=len(questions[:max_questions]))
-        return questions[:max_questions]
-
-    def _generate_number_questions(
-        self,
-        number: int,
-        context: ResearchContext
-    ) -> list[dict]:
-        """Generate questions about a number."""
-        questions = []
-        templates = self.templates.get("templates", {}).get("number_observed", {})
-
-        for qtype, template_list in templates.items():
-            priority = self.priorities.get(qtype, 0.5)
-
-            for template in template_list[:2]:  # Limit templates per type
-                # Substitute variables
-                query = template.format(
-                    number=number,
-                    domain=context.active_domains[0] if context.active_domains else "Hindu tradition",
-                    related_domain="Indian philosophy",
-                    context="sacred texts"
-                )
-
-                questions.append({
-                    "query": query,
-                    "type": qtype,
-                    "priority": priority,
-                    "source": "number",
-                    "source_value": number,
-                })
-
-        return questions
-
-    def _generate_concept_questions(
-        self,
-        concept: str,
-        context: ResearchContext
-    ) -> list[dict]:
-        """Generate questions about a concept."""
-        questions = []
-        templates = self.templates.get("templates", {}).get("concept_observed", {})
-
-        for qtype, template_list in templates.items():
-            priority = self.priorities.get(qtype, 0.5)
-
-            for template in template_list[:2]:
-                # Find related concept if available
-                related = context.active_concepts[0] if context.active_concepts else "philosophy"
-                if related == concept and len(context.active_concepts) > 1:
-                    related = context.active_concepts[1]
-
-                query = template.format(
-                    concept=concept,
-                    domain=context.active_domains[0] if context.active_domains else "Hindu",
-                    tradition="Indian",
-                    related_text="scripture",
-                    related_concept=related
-                )
-
-                questions.append({
-                    "query": query,
-                    "type": qtype,
-                    "priority": priority,
-                    "source": "concept",
-                    "source_value": concept,
-                })
-
-        return questions
-
-    def _generate_topic_questions(
+    async def generate_directed(
         self,
         topic: str,
-        context: ResearchContext
-    ) -> list[dict]:
-        """Generate questions for documenter topics."""
-        questions = []
-        templates = self.templates.get("templates", {}).get("documenter_section", {})
+        context: str,
+        project: Project,
+    ) -> list[str]:
+        """Generate questions for a directed research request."""
+        limit = self._config.get("researcher.max_questions_per_insight", 10)
+        prompt = DIRECTED_QUESTION_GENERATION.format(
+            project_goal=project.goal,
+            topic=topic,
+            context=context,
+            formatted_domains=_format_domains(project),
+            max_questions=limit,
+        )
+        backends = self._llm.get_available_backends()
+        backend = backends[0] if backends else "claude"
 
-        for qtype, template_list in templates.items():
-            priority = self.priorities.get(qtype, 0.5)
+        resp = await self._llm.send(backend, prompt=prompt)
+        if resp.success:
+            questions = self._parse_questions(resp.text)
+            return questions[:limit]
+        return []
 
-            for template in template_list[:1]:  # Fewer for topics
-                query = template.format(
-                    topic=topic,
-                    claim=topic
-                )
-
-                questions.append({
-                    "query": query,
-                    "type": qtype,
-                    "priority": priority,
-                    "source": "documenter",
-                    "source_value": topic,
-                })
-
-        return questions
-
-    def _generate_cross_domain_questions(
-        self,
-        context: ResearchContext
-    ) -> list[dict]:
-        """Generate cross-domain pattern questions."""
-        questions = []
-        templates = self.templates.get("templates", {}).get("cross_domain", [])
-
-        if len(context.active_domains) >= 2:
-            domain1, domain2 = context.active_domains[:2]
-
-            for template in templates[:2]:
-                if context.active_numbers:
-                    number = context.active_numbers[0]
-                    query = template.format(
-                        number=number,
-                        domain1=domain1.replace("_", " "),
-                        domain2=domain2.replace("_", " "),
-                        concept1=context.active_concepts[0] if context.active_concepts else "",
-                        concept2=context.active_concepts[1] if len(context.active_concepts) > 1 else "",
-                        pattern1="structure",
-                        pattern2="pattern"
-                    )
-
-                    questions.append({
-                        "query": query,
-                        "type": "cross_domain",
-                        "priority": 0.9,  # High priority for cross-domain
-                        "source": "cross_domain",
-                        "source_value": f"{domain1}+{domain2}",
-                    })
-
-        return questions
-
-    def prioritize_by_context(
-        self,
-        questions: list[dict],
-        context: ResearchContext
-    ) -> list[dict]:
-        """
-        Adjust question priorities based on recent insights.
-
-        Boosts questions related to recently blessed insights.
-        """
-        # Extract concepts from recent insights
-        recent_concepts = set()
-        for insight in context.recent_insights:
-            if isinstance(insight, dict):
-                recent_concepts.update(insight.get("tags", []))
-
-        # Boost questions matching recent concepts
-        for q in questions:
-            query_lower = q["query"].lower()
-            for concept in recent_concepts:
-                if concept.lower() in query_lower:
-                    q["priority"] = min(1.0, q["priority"] + 0.2)
-                    break
-
-        questions.sort(key=lambda q: q["priority"], reverse=True)
-        return questions
+    @staticmethod
+    def _parse_questions(text: str) -> list[str]:
+        """Parse JSON array of question strings from LLM response."""
+        try:
+            parsed = json.loads(text.strip())
+            if isinstance(parsed, list):
+                return [str(q) for q in parsed if isinstance(q, str)]
+        except (json.JSONDecodeError, TypeError):
+            logger.warning("Failed to parse questions from LLM response")
+        return []

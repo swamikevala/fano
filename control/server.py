@@ -1,179 +1,97 @@
-"""
-Control Panel Server - Flask app for managing Fano components.
+"""Control Panel Server v2 — Flask app translating HTTP to events and state reads.
 
-This module provides the main Flask application factory and server startup.
-Route handlers are organized into blueprints in the blueprints/ directory.
+This module provides the application factory. The control panel contains
+NO business logic; it translates HTTP requests to EventBus events and
+StateStore reads to JSON envelopes.
 """
+
+from __future__ import annotations
 
 import logging
-import subprocess
 import sys
 import warnings
-from typing import Optional
+from typing import TYPE_CHECKING
 
-from flask import Flask
+from flask import Flask, jsonify
 
-from shared.logging import get_logger
-from .services import FANO_ROOT, load_config
-from .services.process_manager import ProcessManager
+if TYPE_CHECKING:
+    from shared.config import Config
+    from shared.models import EventBusInterface, StateStoreInterface
 
-log = get_logger("control", "server")
-from .blueprints import (
-    ui_bp,
-    status_bp,
-    components_bp,
-    documenter_bp,
-    annotations_bp,
-    explorer_bp,
-    researcher_bp,
-    pool_bp,
-    orchestrator_bp,
-)
 
-# Suppress ResourceWarning about unclosed transports during shutdown
-# These are harmless on Windows when child processes are being terminated
+# Suppress noisy warnings on Windows
 warnings.filterwarnings("ignore", category=ResourceWarning, message="unclosed transport")
-
-# Suppress "Exception ignored in __del__" errors during interpreter shutdown on Windows
 if sys.platform == "win32":
     def _quiet_unraisablehook(unraisable):
-        # Suppress ValueError from closed pipes during shutdown
         if unraisable.exc_type is ValueError and "closed pipe" in str(unraisable.exc_value):
             return
         sys.__unraisablehook__(unraisable)
-
     sys.unraisablehook = _quiet_unraisablehook
 
 
-class StatusLogFilter(logging.Filter):
-    """Filter out frequent polling requests from Flask logs."""
-
-    NOISY_ENDPOINTS = [
-        "/api/status",
-        "/health",
-        "/api/documenter/activity",
-        "/api/explorer/stats",
-        "/api/pool/activity",
-    ]
+class _StatusLogFilter(logging.Filter):
+    _NOISY = ["/api/status", "/health"]
 
     def filter(self, record: logging.LogRecord) -> bool:
-        message = record.getMessage()
-        for endpoint in self.NOISY_ENDPOINTS:
-            if endpoint in message:
-                return False
-        return True
+        msg = record.getMessage()
+        return not any(ep in msg for ep in self._NOISY)
 
 
-class AsyncioNoiseFilter(logging.Filter):
-    """Filter out noisy asyncio connection reset errors on Windows."""
-
-    def filter(self, record: logging.LogRecord) -> bool:
-        message = record.getMessage()
-        # Filter out Windows connection reset noise
-        if "ConnectionResetError" in message or "_call_connection_lost" in message:
-            return False
-        return True
+logging.getLogger("werkzeug").addFilter(_StatusLogFilter())
 
 
-# Apply filters
-logging.getLogger("werkzeug").addFilter(StatusLogFilter())
-logging.getLogger("asyncio").addFilter(AsyncioNoiseFilter())
+# ── Application factory ─────────────────────────────────────
 
 
-def _check_pool_health(host: str, port: int) -> bool:
-    """Quick check if pool is responding."""
-    import urllib.request
-    import urllib.error
-
-    try:
-        with urllib.request.urlopen(f"http://{host}:{port}/health", timeout=2) as resp:
-            return resp.status == 200
-    except (urllib.error.URLError, TimeoutError, OSError):
-        return False
-
-
-def _ensure_pool_running(pm: ProcessManager, config: dict) -> None:
-    """
-    Pool auto-start is disabled - all LLM access is now via API.
-
-    This function is kept for compatibility but does nothing.
-    """
-    # Pool is no longer needed - LLM access is via OpenRouter API
-    log.info("control.pool.skipped", reason="LLM access via API, pool not needed")
-
-
-def create_app(process_manager: Optional[ProcessManager] = None) -> Flask:
-    """
-    Create the Flask application.
+def create_app(
+    store: StateStoreInterface,
+    event_bus: EventBusInterface,
+    config: Config,
+) -> Flask:
+    """Create Flask app with all v2 blueprints registered.
 
     Args:
-        process_manager: Optional ProcessManager instance. If not provided,
-                        a new one will be created.
+        store: Initialised StateStore (already connected).
+        event_bus: EventBus instance for publishing user actions.
+        config: Validated Config object.
 
     Returns:
         Configured Flask application.
     """
-    app = Flask(
-        __name__,
-        template_folder=str(FANO_ROOT / "control" / "templates"),
-        static_folder=str(FANO_ROOT / "control" / "static"),
+    app = Flask(__name__)
+
+    # Stash dependencies where blueprints can reach them
+    app.config["state_store"] = store
+    app.config["event_bus"] = event_bus
+    app.config["app_config"] = config
+
+    # Import blueprints here (after module fully loads) to avoid circular deps
+    from control.blueprints import (
+        annotations_bp,
+        document_bp,
+        insights_bp,
+        projects_bp,
+        research_bp,
+        seeds_bp,
+        status_bp,
     )
 
-    # Store process manager in app config for blueprint access
-    if process_manager is None:
-        process_manager = ProcessManager()
-    app.config["process_manager"] = process_manager
-
-    # Auto-start pool if configured
-    config = load_config()
-    services_config = config.get("services", {})
-    pool_service_config = services_config.get("pool", {})
-
-    if pool_service_config.get("auto_start", True):
-        _ensure_pool_running(process_manager, config)
-
-    # Register blueprints
-    app.register_blueprint(ui_bp)
-    app.register_blueprint(status_bp)
-    app.register_blueprint(components_bp)
-    app.register_blueprint(documenter_bp)
+    # Register v2 API blueprints
+    app.register_blueprint(projects_bp)
+    app.register_blueprint(seeds_bp)
+    app.register_blueprint(insights_bp)
+    app.register_blueprint(document_bp)
     app.register_blueprint(annotations_bp)
-    app.register_blueprint(explorer_bp)
-    app.register_blueprint(researcher_bp)
-    app.register_blueprint(pool_bp)
-    app.register_blueprint(orchestrator_bp)
+    app.register_blueprint(research_bp)
+    app.register_blueprint(status_bp)
+
+    # Global error handler for unhandled exceptions
+    @app.errorhandler(404)
+    def not_found(e):
+        return jsonify({"ok": False, "error": "Resource not found", "code": "NOT_FOUND"}), 404
+
+    @app.errorhandler(500)
+    def internal_error(e):
+        return jsonify({"ok": False, "error": "Internal server error", "code": "INTERNAL_ERROR"}), 500
 
     return app
-
-
-def start_server(
-    host: str = "127.0.0.1",
-    port: int = 8080,
-    debug: bool = True,
-    pool_process: Optional[subprocess.Popen] = None
-):
-    """
-    Start the control panel server.
-
-    Args:
-        host: Host to bind to
-        port: Port to bind to
-        debug: Enable debug mode
-        pool_process: Optional externally-started pool process to register
-    """
-    # Create process manager and register any external processes
-    pm = ProcessManager()
-    if pool_process is not None:
-        pm.register_external("pool", pool_process)
-
-    app = create_app(process_manager=pm)
-
-    print(f"\n  Fano Control Panel")
-    print(f"  ==================")
-    print(f"  Open http://{host}:{port} in your browser\n")
-
-    app.run(host=host, port=port, debug=debug, use_reloader=False)
-
-
-if __name__ == "__main__":
-    start_server()

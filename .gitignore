@@ -51,3 +51,11 @@ tmpclaude-*-cwd
 
 fano.egg-info/
 data/
+
+# Test artifacts
+test_output.txt
+test_results.txt
+TESTING_ISSUES.md
+
+# uv lock file (we use pip/pyproject.toml)
+uv.lock

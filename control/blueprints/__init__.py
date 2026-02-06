@@ -1,23 +1,19 @@
-"""Flask blueprints for the control panel."""
+"""Flask blueprints for the control panel v2 API."""
 
-from .ui import bp as ui_bp
-from .status import bp as status_bp
-from .components import bp as components_bp
-from .documenter import bp as documenter_bp
+from .projects import bp as projects_bp
+from .seeds import bp as seeds_bp
+from .insights import bp as insights_bp
+from .document import bp as document_bp
 from .annotations import bp as annotations_bp
-from .explorer import bp as explorer_bp
-from .researcher import bp as researcher_bp
-from .pool import bp as pool_bp
-from .orchestrator import bp as orchestrator_bp
+from .research import bp as research_bp
+from .status import bp as status_bp
 
 __all__ = [
-    "ui_bp",
-    "status_bp",
-    "components_bp",
-    "documenter_bp",
+    "projects_bp",
+    "seeds_bp",
+    "insights_bp",
+    "document_bp",
     "annotations_bp",
-    "explorer_bp",
-    "researcher_bp",
-    "pool_bp",
-    "orchestrator_bp",
+    "research_bp",
+    "status_bp",
 ]

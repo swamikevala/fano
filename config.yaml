@@ -1,170 +1,90 @@
-# Fano Platform Configuration
-# Unified configuration for all components
+# Research Project Assistant — Infrastructure Configuration
+# System-wide settings. Project-specific settings live in projects/*.yaml
+#
+# Environment variable overrides: FANO_<SECTION>__<KEY> (double underscore = dot)
+# Example: FANO_LLM__MODELS__GEMINI overrides llm.models.gemini
 
-# =============================================================================
-# LLM BACKENDS (OpenRouter API)
-# =============================================================================
 llm:
-  # API configuration
   api_key_env: "OPENROUTER_API_KEY"
-  base_url: "https://openrouter.ai/api/v1"
-
-  # Model mappings (backend alias -> OpenRouter model ID)
-  # Override with your preferred models
+  endpoint: "https://openrouter.ai/api/v1"
   models:
     gemini: "google/gemini-2.0-flash-thinking-exp-01-21"
     chatgpt: "openai/gpt-4o"
     claude: "anthropic/claude-sonnet-4-20250514"
     deepseek: "deepseek/deepseek-r1"
-
-  # Default request parameters
-  defaults:
-    temperature: 0.7
-    max_tokens: 8192
-    timeout_seconds: 300
-
-  # Rate limiting (requests per minute per backend)
-  rate_limits:
+  rate_limits:       # Requests per minute
     gemini: 10
     chatgpt: 60
     claude: 50
     deepseek: 10
+  default_timeout_seconds: 300
+  max_retries: 3
 
-# =============================================================================
-# CONSENSUS SETTINGS
-# =============================================================================
 consensus:
-  # Which backends to use for consensus (order matters for tie-breaking)
-  backends:
-    - gemini
-    - chatgpt
-    - claude
+  backends: [gemini, chatgpt, claude]
+  max_rounds: 4
+  min_valid_responses: 2
+  max_retries_per_backend: 2
+  convergence_threshold: 0.7
+  decision_method: "majority"     # majority | supermajority | unanimous
+  minimum_agreement: 0.66
 
-  # Default settings
-  max_rounds: 3
-  require_unanimous: false  # If false, 2/3 majority is enough
-
-  # When to use deep modes
-  deep_modes:
-    # Explorer uses deep modes for Round 2 review
-    explorer_review_round2: true
-    # Documenter uses deep modes occasionally for section review
-    documenter_section_review: true
-    # Math evaluation - use deep modes for thorough analysis
-    documenter_math_evaluation: false
-
-# =============================================================================
-# CONTROL PANEL
-# =============================================================================
-control:
-  host: "127.0.0.1"
-  port: 8080
-  debug: true
-
-# =============================================================================
-# SERVICE DEPENDENCIES AND LIFECYCLE
-# =============================================================================
-services:
-  explorer:
-    depends_on: []  # No external service dependencies (API-based)
-  documenter:
-    depends_on: []
-  researcher:
-    depends_on: []
-
-# =============================================================================
-# EXPLORER SETTINGS
-# =============================================================================
 explorer:
-  # Imported from explorer/config.yaml - key settings only
-  orchestration:
-    poll_interval: 30
-    max_active_threads: 3
-    min_exchanges_for_chunk: 4
-    max_exchanges_per_thread: 12
+  max_active_threads: 3
+  min_exchanges_for_chunk: 4
+  max_exchanges_per_thread: 12
+  thread_retirement:
+    max_idle_hours: 48
+    max_reexplore_count: 3
+  model_weights:
+    exploration: { gemini: 60, chatgpt: 40 }
+    critique: { gemini: 30, chatgpt: 70 }
+    synthesis: { claude: 60, chatgpt: 40 }
 
-  review_panel:
-    enabled: true
-    round1:
-      use_deep_modes: false
-    round2:
-      use_deep_modes: true
-    round3:
-      enabled: true
-      max_exchanges: 3
-
-# =============================================================================
-# DOCUMENTER SETTINGS
-# =============================================================================
 documenter:
-  document:
-    path: "document/main.md"
-    archive_dir: "document/archive"
-    snapshot_time: "00:00"
-
-  inputs:
-    blessed_insights_dir: "explorer/data/chunks/insights/blessed/"
-    # Optional free-form guidance file for document direction
-    guidance_file: "document/guidance.md"
-
+  document_dir: "data/document"
   work_allocation:
-    new_material: 70
-    review_existing: 30
-
-  review:
-    max_age_days: 7
-    use_deep_mode: true  # Use deep modes when reviewing sections
-
+    new_material_percent: 70
+    review_existing_percent: 30
   context:
     max_tokens: 8000
+  max_annotation_attempts: 3
+  max_disputes_before_shelve: 3
 
-  termination:
-    max_consecutive_disputes: 3
-    max_consensus_calls_per_session: 100
+researcher:
+  max_questions_per_insight: 10
+  max_searches_per_question: 5
+  max_findings_per_source: 20
+  idle_polling_interval_seconds: 300
+  trust:
+    min_trust_score: 50
 
-  # Math evaluation criteria (can be adjusted)
-  evaluation:
-    # How strict to be - "strict" requires profound/inevitable, "moderate" is more permissive
-    strictness: "moderate"
+quotas:
+  daily_budget_usd: 10.00
+  per_module_weights:
+    explorer: 50
+    documenter: 35
+    researcher: 15
+  alert_at_percent: 80
 
-# =============================================================================
-# DEDUPLICATION SETTINGS (shared across explorer and documenter)
-# =============================================================================
-deduplication:
-  # Enable deduplication checking
-  enabled: true
-
-  # LLM model for semantic duplicate detection (use cheap/fast model)
-  model: "claude-sonnet-4-20250514"
-
-  # Detection method: LLM-first approach (recommended for mathematical content)
-  # Heuristics often miss semantic duplicates where same concept is expressed differently
-  use_signature_check: true   # Instant - catches exact duplicates
-  use_heuristic_check: false  # Disabled by default - LLM is better for math
-  use_llm_check: true         # Primary detection method
-  use_batch_llm: true         # Efficient batch checking
-
-  # Batch size for LLM checks (items checked in one API call)
-  batch_size: 20
-
-  # Heuristic thresholds (only used if use_heuristic_check is true)
-  keyword_threshold: 0.40
-  concept_threshold: 0.45
-  combined_threshold: 0.50
-
-  # LLM confidence requirements
-  require_high_confidence: false
-
-  # Timeout for LLM calls (seconds)
-  llm_timeout: 60
-
-  # Stats logging interval (log stats every N checks, 0 to disable)
-  stats_log_interval: 50
-
-# =============================================================================
-# LOGGING
-# =============================================================================
 logging:
   level: "INFO"
   directory: "./logs"
-  format: "jsonl"  # JSON Lines for machine parsing
+  max_bytes: 10485760
+  backup_count: 10
+
+control:
+  host: "127.0.0.1"
+  port: 8080
+
+database:
+  path: "data/research.db"
+
+retention:
+  events_max_age_days: 90
+  metrics_max_age_days: 365
+  snapshots_max_count: 90
+  logs_max_age_days: 30
+  logs_max_size_mb: 500
+
+active_project: "fano-mathematics"

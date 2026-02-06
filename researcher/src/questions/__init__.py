@@ -1,7 +1,5 @@
-"""
-Question generation modules.
-"""
+"""Question generation for the Researcher Engine v2."""
 
-from .generator import QuestionGenerator
+from researcher.src.questions.generator import QuestionGenerator
 
 __all__ = ["QuestionGenerator"]
