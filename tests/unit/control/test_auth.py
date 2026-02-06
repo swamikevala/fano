@@ -228,6 +228,53 @@ class TestLogin:
         assert "/login" in resp.headers["Location"]
 
 
+# ── Dev mode tests ───────────────────────────────────────────
+
+
+class TestDevMode:
+    def test_dev_mode_skips_ldap(self, loop):
+        """With auth.dev_mode=True, login succeeds without LDAP."""
+        from control.server import create_app
+
+        store = StateStore(":memory:")
+        loop.run_until_complete(store.connect())
+        bus = EventBus(store=None)
+        config = Config.from_dict({
+            "llm": {
+                "api_key_env": "FANO_TEST_KEY",
+                "models": {"claude": {"model": "claude-3"}},
+            },
+            "consensus": {"backends": ["claude"]},
+            "control": {"host": "127.0.0.1", "port": 8080},
+            "auth": {
+                "dev_mode": True,
+                "secret_key": "test-secret",
+            },
+        })
+        app = create_app(store, bus, config)
+        app.config["TESTING"] = True
+        client = app.test_client()
+
+        resp = client.post("/login", data={
+            "username": "devuser",
+            "password": "anything",
+        }, follow_redirects=False)
+
+        assert resp.status_code == 302
+        assert "/dashboard" in resp.headers["Location"]
+
+        # User was created
+        user = loop.run_until_complete(store.get_user_by_username("devuser"))
+        assert user is not None
+        assert user.display_name == "devuser"
+
+        # Session is set — can access API
+        resp2 = client.get("/api/projects")
+        assert resp2.status_code == 200
+
+        loop.run_until_complete(store.close())
+
+
 # ── Logout tests ─────────────────────────────────────────────
 
 

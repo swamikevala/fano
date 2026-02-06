@@ -31,45 +31,48 @@ def login_submit():
 
     config = get_config()
     store = get_store()
+    dev_mode = config.get("auth.dev_mode", False)
 
-    # DB settings take priority over config.yaml
-    ldap_server = run_async(store.get_setting("auth.ldap_server")) or config.get("auth.ldap_server", "")
-    ldap_domain = run_async(store.get_setting("auth.ldap_domain")) or config.get("auth.ldap_domain", "")
+    if not dev_mode:
+        # DB settings take priority over config.yaml
+        ldap_server = run_async(store.get_setting("auth.ldap_server")) or config.get("auth.ldap_server", "")
+        ldap_domain = run_async(store.get_setting("auth.ldap_domain")) or config.get("auth.ldap_domain", "")
 
-    if not ldap_server:
-        flash("LDAP server not configured.", "error")
-        return redirect(url_for("auth.login_page"))
+        if not ldap_server:
+            flash("LDAP server not configured.", "error")
+            return redirect(url_for("auth.login_page"))
 
-    # Attempt LDAP bind
-    display_name = username
-    try:
-        server = ldap3.Server(ldap_server, get_info=ldap3.NONE)
-        bind_user = f"{ldap_domain}\\{username}" if ldap_domain else username
-        conn = ldap3.Connection(server, user=bind_user, password=password, auto_bind=True)
-
-        # Try to fetch displayName from AD
+        # Attempt LDAP bind
+        display_name = username
         try:
-            base_dn = ",".join(f"DC={p}" for p in ldap_domain.split(".")) if "." in ldap_domain else f"DC={ldap_domain}"
-            conn.search(base_dn, f"(sAMAccountName={username})",
-                        attributes=["displayName"])
-            if conn.entries:
-                dn = conn.entries[0].displayName.value
-                if dn:
-                    display_name = dn
-        except Exception:
-            pass  # displayName lookup is best-effort
+            server = ldap3.Server(ldap_server, get_info=ldap3.NONE)
+            bind_user = f"{ldap_domain}\\{username}" if ldap_domain else username
+            conn = ldap3.Connection(server, user=bind_user, password=password, auto_bind=True)
 
-        conn.unbind()
-    except Exception as exc:
-        err_msg = str(exc)
-        if "invalidCredentials" in err_msg or "INVALID_CREDENTIALS" in err_msg:
-            flash("Invalid username or password.", "error")
-        else:
-            flash("Could not reach AD server. Please try again later.", "error")
-        return redirect(url_for("auth.login_page"))
+            # Try to fetch displayName from AD
+            try:
+                base_dn = ",".join(f"DC={p}" for p in ldap_domain.split(".")) if "." in ldap_domain else f"DC={ldap_domain}"
+                conn.search(base_dn, f"(sAMAccountName={username})",
+                            attributes=["displayName"])
+                if conn.entries:
+                    dn = conn.entries[0].displayName.value
+                    if dn:
+                        display_name = dn
+            except Exception:
+                pass  # displayName lookup is best-effort
 
-    # LDAP bind succeeded — upsert local user
-    store = get_store()
+            conn.unbind()
+        except Exception as exc:
+            err_msg = str(exc)
+            if "invalidCredentials" in err_msg or "INVALID_CREDENTIALS" in err_msg:
+                flash("Invalid username or password.", "error")
+            else:
+                flash("Could not reach AD server. Please try again later.", "error")
+            return redirect(url_for("auth.login_page"))
+    else:
+        display_name = username
+
+    # Upsert local user
     user = run_async(store.get_user_by_username(username))
     if user is None:
         user = User(
