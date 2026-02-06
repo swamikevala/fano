@@ -188,6 +188,32 @@ class StateStore(StateStoreInterface):
         except Exception as exc:
             raise StoreError(str(exc)) from exc
 
+    # ── System Settings ──────────────────────────────────────
+
+    async def get_setting(self, key: str) -> str | None:
+        row = await self._get_row("system_settings", "key=?", (key,))
+        return row["value"] if row else None
+
+    async def set_setting(self, key: str, value: str) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        try:
+            await self._db.execute(
+                "INSERT OR REPLACE INTO system_settings (key, value, updated_at) VALUES (?, ?, ?)",
+                (key, value, now),
+            )
+            await self._maybe_commit()
+        except Exception as exc:
+            raise StoreError(str(exc)) from exc
+
+    async def list_settings(self, prefix: str | None = None) -> dict[str, str]:
+        if prefix:
+            rows = await self._get_rows(
+                "system_settings", "key LIKE ?", (prefix + "%",),
+            )
+        else:
+            rows = await self._get_rows("system_settings")
+        return {r["key"]: r["value"] for r in rows}
+
     # ── Users ───────────────────────────────────────────────
 
     async def create_user(self, user: User) -> None:

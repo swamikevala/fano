@@ -19,6 +19,12 @@ def dashboard() -> str:
     return render_template("dashboard.html")
 
 
+@bp.route("/settings")
+def settings() -> str:
+    """Serve the settings page."""
+    return render_template("settings.html")
+
+
 @bp.route("/document")
 def document() -> str:
     """Serve the document viewer with data from the store."""

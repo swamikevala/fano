@@ -79,6 +79,7 @@ def create_app(
         projects_bp,
         research_bp,
         seeds_bp,
+        settings_bp,
         status_bp,
         ui_bp,
     )
@@ -93,6 +94,7 @@ def create_app(
     app.register_blueprint(document_bp)
     app.register_blueprint(annotations_bp)
     app.register_blueprint(research_bp)
+    app.register_blueprint(settings_bp)
     app.register_blueprint(status_bp)
 
     # Register UI page routes

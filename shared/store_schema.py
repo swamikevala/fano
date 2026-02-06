@@ -14,6 +14,7 @@ JSON_COLS: dict[str, set[str]] = {
 # ── datetime columns per table ───────────────────────────────
 
 DT_COLS: dict[str, set[str]] = {
+    "system_settings": {"updated_at"},
     "users": {"created_at"},
     "projects": {"created_at", "updated_at"},
     "seeds": {"created_at", "updated_at"},
@@ -37,6 +38,12 @@ TABLES_WITH_UPDATED_AT = {"projects", "seeds", "threads", "insights", "sections"
 # ── Schema SQL ───────────────────────────────────────────────
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS system_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
     username TEXT UNIQUE NOT NULL,

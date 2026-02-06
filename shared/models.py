@@ -518,6 +518,14 @@ class StateStoreInterface(ABC):
     async def transaction(self) -> AsyncIterator[None]:
         yield  # pragma: no cover
 
+    # -- System Settings --
+    @abstractmethod
+    async def get_setting(self, key: str) -> str | None: ...
+    @abstractmethod
+    async def set_setting(self, key: str, value: str) -> None: ...
+    @abstractmethod
+    async def list_settings(self, prefix: str | None = None) -> dict[str, str]: ...
+
     # -- Users --
     @abstractmethod
     async def create_user(self, user: User) -> None: ...

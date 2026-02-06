@@ -7,6 +7,7 @@ from .insights import bp as insights_bp
 from .document import bp as document_bp
 from .annotations import bp as annotations_bp
 from .research import bp as research_bp
+from .settings import bp as settings_bp
 from .status import bp as status_bp
 from .ui import bp as ui_bp
 
@@ -18,6 +19,7 @@ __all__ = [
     "document_bp",
     "annotations_bp",
     "research_bp",
+    "settings_bp",
     "status_bp",
     "ui_bp",
 ]

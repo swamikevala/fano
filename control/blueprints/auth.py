@@ -30,8 +30,11 @@ def login_submit():
         return redirect(url_for("auth.login_page"))
 
     config = get_config()
-    ldap_server = config.get("auth.ldap_server", "")
-    ldap_domain = config.get("auth.ldap_domain", "")
+    store = get_store()
+
+    # DB settings take priority over config.yaml
+    ldap_server = run_async(store.get_setting("auth.ldap_server")) or config.get("auth.ldap_server", "")
+    ldap_domain = run_async(store.get_setting("auth.ldap_domain")) or config.get("auth.ldap_domain", "")
 
     if not ldap_server:
         flash("LDAP server not configured.", "error")

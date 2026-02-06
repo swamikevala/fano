@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fano &mdash; Settings</title>
+<style>
+:root {
+  --bg-primary: #0d1117;
+  --bg-secondary: #161b22;
+  --bg-tertiary: #21262d;
+  --bg-hover: #30363d;
+  --border: #30363d;
+  --border-muted: #21262d;
+  --text-primary: #e6edf3;
+  --text-secondary: #8b949e;
+  --text-muted: #6e7681;
+  --text-link: #58a6ff;
+  --green: #3fb950;
+  --green-bg: #0d3117;
+  --orange: #d29922;
+  --red: #f85149;
+  --red-bg: #3d1117;
+  --blue: #58a6ff;
+  --blue-bg: #0c2d6b;
+  --purple: #bc8cff;
+  --sidebar-width: 260px;
+  --font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --radius: 8px;
+  --radius-sm: 4px;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: var(--font-body);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  line-height: 1.5;
+  font-size: 14px;
+  display: flex;
+  min-height: 100vh;
+}
+
+a { color: var(--text-link); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* Sidebar */
+.sidebar {
+  width: var(--sidebar-width);
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--border);
+  padding: 20px 0;
+  display: flex;
+  flex-direction: column;
+  position: fixed;
+  top: 0; left: 0; bottom: 0;
+  overflow-y: auto;
+  z-index: 100;
+}
+
+.sidebar-header {
+  padding: 0 16px 20px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 12px;
+}
+
+.sidebar-header h1 {
+  font-size: 18px; font-weight: 600;
+  display: flex; align-items: center; gap: 8px;
+}
+
+.sidebar-header h1 .logo {
+  width: 24px; height: 24px;
+  background: var(--purple);
+  border-radius: 6px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 14px; font-weight: 700; color: #fff;
+}
+
+.page-label {
+  margin-top: 8px; font-size: 12px; color: var(--text-muted);
+}
+
+.nav-section { padding: 8px 0; }
+
+.nav-section-title {
+  padding: 4px 16px; font-size: 11px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted);
+}
+
+.nav-link {
+  display: flex; align-items: center; gap: 10px;
+  padding: 7px 16px; color: var(--text-secondary);
+  font-size: 13px; cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.nav-link:hover { background: var(--bg-hover); color: var(--text-primary); text-decoration: none; }
+.nav-link.active { background: var(--bg-hover); color: var(--text-primary); border-left: 2px solid var(--blue); padding-left: 14px; }
+
+.nav-link .icon { width: 16px; text-align: center; font-size: 14px; flex-shrink: 0; }
+
+.sidebar-footer {
+  margin-top: auto; padding: 16px;
+  border-top: 1px solid var(--border);
+}
+
+/* Main */
+.main {
+  margin-left: var(--sidebar-width);
+  flex: 1; padding: 24px 32px;
+  max-width: 800px;
+}
+
+.main h2 {
+  font-size: 20px; font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.main .subtitle {
+  font-size: 13px; color: var(--text-muted);
+  margin-bottom: 24px;
+}
+
+/* Form card */
+.settings-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px;
+  margin-bottom: 24px;
+}
+
+.settings-card h3 {
+  font-size: 15px; font-weight: 600; margin-bottom: 16px;
+  padding-bottom: 10px; border-bottom: 1px solid var(--border);
+}
+
+.form-group { margin-bottom: 16px; }
+
+.form-group label {
+  display: block; font-size: 12px; font-weight: 600;
+  color: var(--text-secondary); margin-bottom: 6px;
+}
+
+.form-group .hint {
+  font-size: 11px; color: var(--text-muted); margin-top: 4px;
+}
+
+.form-input {
+  width: 100%; background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  color: var(--text-primary);
+  font-size: 13px; font-family: var(--font-body);
+}
+
+.form-input:focus {
+  outline: none; border-color: var(--blue);
+  box-shadow: 0 0 0 2px rgba(88,166,255,0.15);
+}
+
+.btn-row {
+  display: flex; gap: 10px; margin-top: 20px;
+}
+
+.btn {
+  padding: 8px 20px; border-radius: var(--radius-sm);
+  font-size: 13px; cursor: pointer; border: 1px solid var(--border);
+  font-family: var(--font-body);
+}
+
+.btn-primary {
+  background: var(--blue); color: #fff; border-color: var(--blue);
+}
+.btn-primary:hover { opacity: 0.85; }
+.btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.btn-secondary {
+  background: var(--bg-tertiary); color: var(--text-secondary);
+}
+.btn-secondary:hover { background: var(--bg-hover); color: var(--text-primary); }
+
+/* Toast */
+.toast-container {
+  position: fixed; bottom: 20px; right: 20px; z-index: 300;
+  display: flex; flex-direction: column-reverse; gap: 8px;
+}
+
+.toast {
+  background: var(--bg-secondary); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 12px 16px;
+  font-size: 13px; color: var(--text-primary); min-width: 280px;
+  animation: slideIn 0.3s ease-out;
+  border-left: 4px solid var(--green);
+}
+.toast.error { border-left-color: var(--red); }
+.toast.warn { border-left-color: var(--orange); }
+
+@keyframes slideIn {
+  from { transform: translateX(100%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+/* Test result */
+.test-result {
+  margin-top: 12px; padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 13px; display: none;
+}
+.test-result.success {
+  background: var(--green-bg); color: var(--green);
+  border: 1px solid rgba(63,185,80,0.3); display: block;
+}
+.test-result.failure {
+  background: var(--red-bg); color: var(--red);
+  border: 1px solid rgba(248,81,73,0.3); display: block;
+}
+
+@media (max-width: 768px) {
+  .sidebar { display: none; }
+  .main { margin-left: 0; padding: 16px; }
+}
+</style>
+</head>
+<body>
+
+<nav class="sidebar">
+  <div class="sidebar-header">
+    <h1><span class="logo">F</span> Fano</h1>
+    <div class="page-label">Settings</div>
+  </div>
+
+  <div class="nav-section">
+    <div class="nav-section-title">Pages</div>
+    <a href="/dashboard" class="nav-link">
+      <span class="icon">&#9673;</span> Dashboard
+    </a>
+    <a href="/document" class="nav-link">
+      <span class="icon">&#128196;</span> Document Viewer
+    </a>
+    <a href="/settings" class="nav-link active">
+      <span class="icon">&#9881;</span> Settings
+    </a>
+  </div>
+
+  <div class="sidebar-footer">
+    {% if g and g.user %}
+    <div style="display: flex; align-items: center; justify-content: space-between;">
+      <span style="font-size: 12px; color: var(--text-secondary);">{{ g.user.display_name }}</span>
+      <form method="POST" action="/logout" style="margin: 0;">
+        <button type="submit" style="background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-muted); font-size: 11px; padding: 3px 10px; cursor: pointer;">Logout</button>
+      </form>
+    </div>
+    {% endif %}
+  </div>
+</nav>
+
+<main class="main">
+  <h2>Settings</h2>
+  <p class="subtitle">Configure AD/LDAP authentication and system settings.</p>
+
+  <div class="settings-card">
+    <h3>AD / LDAP Authentication</h3>
+
+    <div class="form-group">
+      <label for="ldap-server">LDAP Server URL</label>
+      <input type="text" class="form-input" id="ldap-server"
+             placeholder="ldap://ad.company.com" autocomplete="off">
+      <div class="hint">Full URL including protocol and optional port, e.g. ldap://ad.company.com:389</div>
+    </div>
+
+    <div class="form-group">
+      <label for="ldap-domain">LDAP Domain</label>
+      <input type="text" class="form-input" id="ldap-domain"
+             placeholder="COMPANY" autocomplete="off">
+      <div class="hint">NetBIOS domain name used for DOMAIN\username bind format</div>
+    </div>
+
+    <div class="form-group">
+      <label for="secret-key">Session Secret Key</label>
+      <input type="password" class="form-input" id="secret-key"
+             placeholder="Enter secret key..." autocomplete="new-password">
+      <div class="hint">Secret key for signing session cookies. Leave blank to keep current value.</div>
+    </div>
+
+    <div id="test-result" class="test-result"></div>
+
+    <div class="btn-row">
+      <button class="btn btn-secondary" id="btn-test" onclick="testConnection()">Test Connection</button>
+      <button class="btn btn-primary" id="btn-save" onclick="saveSettings()">Save Settings</button>
+    </div>
+  </div>
+</main>
+
+<div id="toast-container" class="toast-container"></div>
+
+<script>
+function showToast(message, type) {
+  var container = document.getElementById('toast-container');
+  var toast = document.createElement('div');
+  toast.className = 'toast' + (type === 'error' ? ' error' : type === 'warn' ? ' warn' : '');
+  toast.textContent = message;
+  container.appendChild(toast);
+  setTimeout(function() { toast.remove(); }, 4000);
+}
+
+function loadSettings() {
+  fetch('/api/settings')
+    .then(function(res) { return res.json(); })
+    .then(function(json) {
+      if (!json.ok) throw new Error(json.error);
+      var data = json.data;
+      document.getElementById('ldap-server').value = data['auth.ldap_server'] || '';
+      document.getElementById('ldap-domain').value = data['auth.ldap_domain'] || '';
+      // Don't prefill secret key for security
+    })
+    .catch(function(e) {
+      showToast('Failed to load settings: ' + e.message, 'error');
+    });
+}
+
+function saveSettings() {
+  var btn = document.getElementById('btn-save');
+  btn.disabled = true;
+  btn.textContent = 'Saving...';
+
+  var body = {
+    'auth.ldap_server': document.getElementById('ldap-server').value.trim(),
+    'auth.ldap_domain': document.getElementById('ldap-domain').value.trim()
+  };
+
+  var secretKey = document.getElementById('secret-key').value;
+  if (secretKey) {
+    body['auth.secret_key'] = secretKey;
+  }
+
+  fetch('/api/settings', {
+    method: 'PUT',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body)
+  })
+    .then(function(res) { return res.json(); })
+    .then(function(json) {
+      if (!json.ok) throw new Error(json.error);
+      showToast('Settings saved successfully');
+      document.getElementById('secret-key').value = '';
+    })
+    .catch(function(e) {
+      showToast('Failed to save: ' + e.message, 'error');
+    })
+    .finally(function() {
+      btn.disabled = false;
+      btn.textContent = 'Save Settings';
+    });
+}
+
+function testConnection() {
+  var btn = document.getElementById('btn-test');
+  var resultEl = document.getElementById('test-result');
+  btn.disabled = true;
+  btn.textContent = 'Testing...';
+  resultEl.className = 'test-result';
+  resultEl.style.display = 'none';
+
+  var body = {
+    'auth.ldap_server': document.getElementById('ldap-server').value.trim(),
+    'auth.ldap_domain': document.getElementById('ldap-domain').value.trim()
+  };
+
+  fetch('/api/settings/test-connection', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body)
+  })
+    .then(function(res) { return res.json(); })
+    .then(function(json) {
+      if (!json.ok) throw new Error(json.error);
+      var data = json.data;
+      if (data.success) {
+        resultEl.className = 'test-result success';
+        resultEl.textContent = 'Connection successful to ' + data.server;
+      } else {
+        resultEl.className = 'test-result failure';
+        resultEl.textContent = 'Connection failed: ' + (data.error || 'Unknown error');
+      }
+    })
+    .catch(function(e) {
+      resultEl.className = 'test-result failure';
+      resultEl.textContent = 'Request failed: ' + e.message;
+    })
+    .finally(function() {
+      btn.disabled = false;
+      btn.textContent = 'Test Connection';
+    });
+}
+
+document.addEventListener('DOMContentLoaded', loadSettings);
+</script>
+
+</body>
+</html>
