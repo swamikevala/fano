@@ -1,540 +1,301 @@
-"""
-LLM Client - Unified interface for LLM access via OpenRouter.
+"""LLMClient v2 — OpenRouter API client with rate limiting, circuit breaker,
+retry with exponential backoff, and token/cost tracking.
 
-All backends route through OpenRouter API for simplicity.
-Supports: gemini, chatgpt, claude, deepseek, and any other OpenRouter model.
+Implements LLMClientInterface from shared.models.
 """
+from __future__ import annotations
 
 import asyncio
 import os
 import time
-from typing import Optional
+import uuid
+from datetime import datetime, timezone
+from typing import Any
 
 import aiohttp
 
+from shared.config import Config
+from shared.errors import LLMError
 from shared.logging import get_logger
-
-from .models import (
-    LLMResponse,
-    ImageAttachment,
+from shared.models import (
+    BackendState, BackendStatus, Event, EventBusInterface,
+    LLMClientInterface, LLMResponse, TokenUsage,
 )
 
 log = get_logger("llm", "client")
 
 
-# Default model mappings (backend alias -> OpenRouter model ID)
-DEFAULT_MODELS = {
-    "gemini": "google/gemini-2.0-flash-thinking-exp-01-21",
-    "chatgpt": "openai/gpt-4o",
-    "claude": "anthropic/claude-sonnet-4-20250514",
-    "deepseek": "deepseek/deepseek-r1",
-}
-
-# Rate limits (requests per minute) - conservative defaults
-DEFAULT_RATE_LIMITS = {
-    "gemini": 10,
-    "chatgpt": 60,
-    "claude": 50,
-    "deepseek": 10,
-}
-
-
 class RateLimiter:
-    """Simple token bucket rate limiter per backend."""
+    """Token bucket rate limiter, per-backend."""
 
-    def __init__(self, limits: dict[str, int] | None = None):
-        self._limits = limits or DEFAULT_RATE_LIMITS
+    def __init__(self, limits: dict[str, int]) -> None:
+        self._limits = dict(limits)
         self._tokens: dict[str, float] = {}
         self._last_update: dict[str, float] = {}
 
     async def acquire(self, backend: str) -> None:
-        """Wait until we can make a request to this backend."""
-        limit = self._limits.get(backend, 60)  # Default 60 rpm
-        tokens_per_second = limit / 60.0
-
+        """Wait until a request slot is available for *backend*."""
+        limit = self._limits.get(backend, 60)
+        tps = limit / 60.0
         now = time.time()
-
-        # Initialize if first request
         if backend not in self._tokens:
-            self._tokens[backend] = limit
+            self._tokens[backend] = float(limit)
             self._last_update[backend] = now
-
-        # Refill tokens based on time elapsed
         elapsed = now - self._last_update[backend]
-        self._tokens[backend] = min(limit, self._tokens[backend] + elapsed * tokens_per_second)
+        self._tokens[backend] = min(float(limit), self._tokens[backend] + elapsed * tps)
         self._last_update[backend] = now
-
-        # Wait if no tokens available
-        if self._tokens[backend] < 1:
-            wait_time = (1 - self._tokens[backend]) / tokens_per_second
-            log.info("llm.rate_limit.waiting", backend=backend, wait_seconds=wait_time)
-            await asyncio.sleep(wait_time)
-            self._tokens[backend] = 0
+        if self._tokens[backend] < 1.0:
+            wait = (1.0 - self._tokens[backend]) / tps
+            log.info("llm.rate_limit.waiting", backend=backend, wait_seconds=round(wait, 3))
+            await asyncio.sleep(wait)
+            self._tokens[backend] = 0.0
         else:
-            self._tokens[backend] -= 1
+            self._tokens[backend] -= 1.0
 
 
-class LLMClient:
-    """
-    Unified client for LLM access via OpenRouter.
+class CircuitBreaker:
+    """Per-backend circuit breaker: closed -> open -> half_open -> closed."""
 
-    All backends route through OpenRouter API using model mappings.
-    No browser automation or pool service required.
+    def __init__(self, failure_threshold: int = 5, recovery_timeout_seconds: int = 60) -> None:
+        self._failure_threshold = failure_threshold
+        self._recovery_timeout = recovery_timeout_seconds
+        self._backends: dict[str, dict[str, Any]] = {}
 
-    Usage:
-        client = LLMClient()
+    def _ensure(self, backend: str) -> dict[str, Any]:
+        if backend not in self._backends:
+            self._backends[backend] = {
+                "state": BackendState.CLOSED, "failure_count": 0,
+                "opened_at": 0.0, "last_failure_at": None,
+            }
+        return self._backends[backend]
 
-        # Send using backend alias
-        response = await client.send("gemini", "Hello!")
-        response = await client.send("claude", "Explain this...")
+    def can_request(self, backend: str) -> bool:
+        """Return True if requests should be attempted."""
+        info = self._ensure(backend)
+        if info["state"] == BackendState.CLOSED:
+            return True
+        if info["state"] == BackendState.OPEN:
+            if time.time() - info["opened_at"] >= self._recovery_timeout:
+                info["state"] = BackendState.HALF_OPEN
+                return True
+            return False
+        return True  # half_open: allow test request
 
-        # Send using specific model
-        response = await client.send("claude", "Hello!", model="anthropic/claude-3-opus")
-    """
+    def record_success(self, backend: str) -> None:
+        info = self._ensure(backend)
+        info["state"] = BackendState.CLOSED
+        info["failure_count"] = 0
 
-    def __init__(
-        self,
-        openrouter_api_key: Optional[str] = None,
-        models: Optional[dict[str, str]] = None,
-        rate_limits: Optional[dict[str, int]] = None,
-        base_url: str = "https://openrouter.ai/api/v1",
-    ):
+    def record_failure(self, backend: str) -> None:
+        info = self._ensure(backend)
+        info["failure_count"] += 1
+        info["last_failure_at"] = datetime.now(timezone.utc)
+        if info["failure_count"] >= self._failure_threshold:
+            info["state"] = BackendState.OPEN
+            info["opened_at"] = time.time()
+
+    def get_state(self, backend: str) -> BackendState:
+        return self._ensure(backend)["state"]
+
+    def get_failure_count(self, backend: str) -> int:
+        return self._ensure(backend)["failure_count"]
+
+    def get_last_failure_at(self, backend: str) -> datetime | None:
+        return self._ensure(backend)["last_failure_at"]
+
+
+class CostEstimator:
+    """Estimates USD cost from token counts. Pricing per 1M tokens: (input, output)."""
+
+    MODEL_PRICING: dict[str, tuple[float, float]] = {
+        "google/gemini-flash": (0.075, 0.30),
+        "google/gemini-2.0-flash-thinking-exp-01-21": (0.0, 0.0),
+        "google/gemini-pro": (0.125, 0.375),
+        "openai/gpt-4o": (2.50, 10.00),
+        "openai/gpt-4o-mini": (0.15, 0.60),
+        "openai/gpt-4-turbo": (10.00, 30.00),
+        "anthropic/claude-sonnet": (3.00, 15.00),
+        "anthropic/claude-sonnet-4-20250514": (3.00, 15.00),
+        "anthropic/claude-haiku": (0.25, 1.25),
+        "anthropic/claude-opus": (15.00, 75.00),
+        "deepseek/deepseek-r1": (0.55, 2.19),
+        "deepseek/deepseek-chat": (0.14, 0.28),
+    }
+
+    def estimate(self, model: str, prompt_tokens: int, completion_tokens: int) -> float:
+        """Return estimated cost in USD. Returns 0.0 for unknown models."""
+        pricing = self.MODEL_PRICING.get(model)
+        if pricing is None:
+            return 0.0
+        inp, out = pricing
+        return (prompt_tokens * inp + completion_tokens * out) / 1_000_000
+
+
+class LLMClient(LLMClientInterface):
+    """OpenRouter API client implementing LLMClientInterface."""
+
+    def __init__(self, config: Config, event_bus: EventBusInterface) -> None:
+        self._config = config
+        self._event_bus = event_bus
+        self._api_key = os.environ.get(config.get("llm.api_key_env", "OPENROUTER_API_KEY"), "")
+        self._endpoint = config.get("llm.endpoint", "https://openrouter.ai/api/v1").rstrip("/")
+        self._models: dict[str, str] = dict(config.get("llm.models", {}))
+        self._default_timeout: int = int(config.get("llm.default_timeout_seconds", 30))
+        self._max_retries: int = int(config.get("llm.max_retries", 2))
+        self._rate_limiter = RateLimiter(config.get("llm.rate_limits", {}))
+        self._circuit_breaker = CircuitBreaker(failure_threshold=5, recovery_timeout_seconds=60)
+        self._cost_estimator = CostEstimator()
+        self._session: aiohttp.ClientSession | None = None
+
+    async def _get_session(self) -> aiohttp.ClientSession:
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession()
+        return self._session
+
+    async def close(self) -> None:
+        if self._session and not self._session.closed:
+            await self._session.close()
+            self._session = None
+
+    # -- Public API --------------------------------------------------------
+
+    async def send(self, backend: str, prompt: str, **kwargs: object) -> LLMResponse:
+        """Send prompt to *backend* via OpenRouter.
+
+        Kwargs: module, temperature, max_tokens, timeout.
         """
-        Initialize the client.
+        return await self._do_send(
+            backend=backend, prompt=prompt,
+            module=str(kwargs.get("module", "unknown")),
+            temperature=float(kwargs.get("temperature", 0.7)),
+            max_tokens=kwargs.get("max_tokens"),  # type: ignore[arg-type]
+            timeout=int(kwargs.get("timeout") or self._default_timeout),
+        )
 
-        Args:
-            openrouter_api_key: API key for OpenRouter (or uses OPENROUTER_API_KEY env var)
-            models: Override default model mappings (backend -> OpenRouter model ID)
-            rate_limits: Override rate limits per backend (requests per minute)
-            base_url: OpenRouter API base URL
-        """
-        self._openrouter_key = openrouter_api_key or os.environ.get("OPENROUTER_API_KEY")
-        self._base_url = base_url.rstrip("/")
-        self._http_session: Optional[aiohttp.ClientSession] = None
+    async def send_structured(self, backend: str, prompt: str, schema: dict, **kwargs: object) -> LLMResponse:
+        """Send prompt expecting JSON response. Adds response_format to API call."""
+        return await self._do_send(
+            backend=backend, prompt=prompt,
+            module=str(kwargs.get("module", "unknown")),
+            temperature=0.7, max_tokens=None, timeout=self._default_timeout,
+            extra_body={"response_format": {"type": "json_object"}},
+        )
 
-        # Model mappings
-        self._models = {**DEFAULT_MODELS}
-        if models:
-            self._models.update(models)
+    def get_available_backends(self) -> list[str]:
+        return [n for n in self._models if self._circuit_breaker.can_request(n)]
 
-        # Rate limiter
-        self._rate_limiter = RateLimiter(rate_limits)
+    def get_backend_status(self, backend: str) -> BackendStatus:
+        rpm = int(self._config.get("llm.rate_limits", {}).get(backend, 60))
+        return BackendStatus(
+            name=backend, state=self._circuit_breaker.get_state(backend),
+            requests_per_minute=rpm, avg_latency_ms=0.0,
+            failure_count=self._circuit_breaker.get_failure_count(backend),
+            last_failure_at=self._circuit_breaker.get_last_failure_at(backend),
+        )
 
-    async def _get_http_session(self) -> aiohttp.ClientSession:
-        """Get or create HTTP session."""
-        if self._http_session is None or self._http_session.closed:
-            self._http_session = aiohttp.ClientSession()
-        return self._http_session
+    # -- Internal ----------------------------------------------------------
 
-    async def close(self):
-        """Close HTTP session."""
-        if self._http_session and not self._http_session.closed:
-            await self._http_session.close()
-            self._http_session = None
-
-    def get_model(self, backend: str) -> str:
-        """Get OpenRouter model ID for a backend alias."""
-        return self._models.get(backend.lower(), backend)
-
-    def set_model(self, backend: str, model: str) -> None:
-        """Set the model for a backend alias."""
-        self._models[backend.lower()] = model
-
-    # --- OpenRouter API Method ---
-
-    async def _send_to_openrouter(
-        self,
-        prompt: str,
-        model: str,
-        backend: str,
-        system_prompt: Optional[str] = None,
-        images: Optional[list[ImageAttachment]] = None,
-        temperature: float = 0.7,
-        max_tokens: int = 8192,
-        timeout_seconds: int = 300,
+    async def _do_send(
+        self, *, backend: str, prompt: str, module: str,
+        temperature: float, max_tokens: int | None, timeout: int,
+        extra_body: dict | None = None,
     ) -> LLMResponse:
-        """
-        Send request to OpenRouter API.
+        if not self._circuit_breaker.can_request(backend):
+            raise LLMError(f"Circuit breaker open for {backend}", backend=backend, is_transient=True)
 
-        Args:
-            prompt: User message
-            model: OpenRouter model ID (e.g., "anthropic/claude-sonnet-4-20250514")
-            backend: Backend alias for logging/tracking
-            system_prompt: Optional system message
-            images: Optional image attachments
-            temperature: Sampling temperature
-            max_tokens: Maximum response tokens
-            timeout_seconds: Request timeout
+        model = self._models.get(backend, backend)
+        last_error = ""
+        total_attempts = 1 + self._max_retries
 
-        Returns:
-            LLMResponse with result or error
-        """
-        if not self._openrouter_key:
-            return LLMResponse(
-                success=False,
-                error="auth_required",
-                message="OPENROUTER_API_KEY not configured",
-            )
+        for attempt in range(total_attempts):
+            await self._rate_limiter.acquire(backend)
+            body: dict[str, Any] = {
+                "model": model,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": temperature,
+            }
+            if max_tokens is not None:
+                body["max_tokens"] = max_tokens
+            if extra_body:
+                body.update(extra_body)
 
-        # Apply rate limiting
-        await self._rate_limiter.acquire(backend)
-
-        start_time = time.time()
-
-        # Build messages
-        messages = []
-        if system_prompt:
-            messages.append({"role": "system", "content": system_prompt})
-
-        # Handle images if present
-        if images:
-            content = [{"type": "text", "text": prompt}]
-            for img in images:
-                content.append({
-                    "type": "image_url",
-                    "image_url": {
-                        "url": f"data:{img.media_type};base64,{img.data}"
-                    }
-                })
-            messages.append({"role": "user", "content": content})
-        else:
-            messages.append({"role": "user", "content": prompt})
-
-        request_body = {
-            "model": model,
-            "messages": messages,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-        }
-
-        log.info("llm.openrouter.request",
-                 backend=backend,
-                 model=model,
-                 prompt_length=len(prompt),
-                 image_count=len(images) if images else 0)
-
-        max_retries = 3
-        retry_delay = 1.0
-
-        for attempt in range(max_retries):
+            start = time.time()
             try:
-                session = await self._get_http_session()
+                session = await self._get_session()
                 async with session.post(
-                    f"{self._base_url}/chat/completions",
+                    f"{self._endpoint}/chat/completions",
                     headers={
-                        "Authorization": f"Bearer {self._openrouter_key}",
+                        "Authorization": f"Bearer {self._api_key}",
                         "Content-Type": "application/json",
                         "HTTP-Referer": "https://github.com/fano-project",
-                        "X-Title": "Fano Mathematical Explorer",
+                        "X-Title": "Fano Research Assistant",
                     },
-                    json=request_body,
-                    timeout=aiohttp.ClientTimeout(total=timeout_seconds),
+                    json=body,
+                    timeout=aiohttp.ClientTimeout(total=timeout),
                 ) as resp:
                     data = await resp.json()
+                    elapsed_ms = (time.time() - start) * 1000
 
-                    # Handle rate limiting
-                    if resp.status == 429:
-                        retry_after = int(resp.headers.get("Retry-After", 60))
-                        if attempt < max_retries - 1:
-                            log.warning("llm.openrouter.rate_limited",
-                                       backend=backend,
-                                       retry_after=retry_after,
-                                       attempt=attempt + 1)
-                            await asyncio.sleep(min(retry_after, 60))
-                            continue
-                        return LLMResponse(
-                            success=False,
-                            error="rate_limited",
-                            message="Rate limited by OpenRouter",
-                            backend=backend,
-                            retry_after_seconds=retry_after,
+                    if resp.status == 200:
+                        text = data["choices"][0]["message"]["content"]
+                        usage = data.get("usage", {})
+                        p_tok = usage.get("prompt_tokens", 0)
+                        c_tok = usage.get("completion_tokens", 0)
+                        cost = self._cost_estimator.estimate(model, p_tok, c_tok)
+                        token_usage = TokenUsage(
+                            prompt_tokens=p_tok, completion_tokens=c_tok,
+                            total_tokens=p_tok + c_tok, estimated_cost_usd=cost,
                         )
-
-                    # Handle other errors
-                    if resp.status != 200:
-                        error_msg = data.get("error", {}).get("message", str(data))
-                        log.error("llm.openrouter.error",
-                                 backend=backend,
-                                 status=resp.status,
-                                 error=error_msg)
-                        return LLMResponse(
-                            success=False,
-                            error="api_error",
-                            message=error_msg,
-                            backend=backend,
+                        self._circuit_breaker.record_success(backend)
+                        response = LLMResponse(
+                            success=True, text=text, backend=backend,
+                            model=model, token_usage=token_usage, error=None,
                         )
+                        await self._publish_completed(backend, model, module, elapsed_ms, token_usage)
+                        return response
 
-                    # Extract response
-                    elapsed = time.time() - start_time
-                    text = data["choices"][0]["message"]["content"]
+                    error_msg = data.get("error", {}).get("message", str(data))
+                    last_error = f"HTTP {resp.status}: {error_msg}"
+            except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+                last_error = str(exc)
 
-                    log.info("llm.openrouter.success",
-                            backend=backend,
-                            model=model,
-                            response_length=len(text),
-                            duration_seconds=round(elapsed, 2))
+            if attempt < total_attempts - 1:
+                delay = 2 ** attempt * 0.5
+                log.warning("llm.request.retrying", backend=backend, attempt=attempt + 1,
+                            delay_seconds=delay, error=last_error)
+                await asyncio.sleep(delay)
 
-                    return LLMResponse(
-                        success=True,
-                        text=text,
-                        backend=backend,
-                        response_time_seconds=elapsed,
-                    )
-
-            except asyncio.TimeoutError:
-                if attempt < max_retries - 1:
-                    log.warning("llm.openrouter.timeout_retry",
-                               backend=backend,
-                               attempt=attempt + 1)
-                    await asyncio.sleep(retry_delay)
-                    retry_delay *= 2
-                    continue
-                return LLMResponse(
-                    success=False,
-                    error="timeout",
-                    message=f"Request timed out after {timeout_seconds} seconds",
-                    backend=backend,
-                )
-
-            except aiohttp.ClientError as e:
-                if attempt < max_retries - 1:
-                    log.warning("llm.openrouter.connection_error",
-                               backend=backend,
-                               error=str(e),
-                               attempt=attempt + 1)
-                    await asyncio.sleep(retry_delay)
-                    retry_delay *= 2
-                    continue
-                return LLMResponse(
-                    success=False,
-                    error="connection_error",
-                    message=str(e),
-                    backend=backend,
-                )
-
-            except Exception as e:
-                log.error("llm.openrouter.unexpected_error",
-                         backend=backend,
-                         error=str(e))
-                return LLMResponse(
-                    success=False,
-                    error="api_error",
-                    message=str(e),
-                    backend=backend,
-                )
-
-    # --- Unified Send Method ---
-
-    async def send(
-        self,
-        backend: str,
-        prompt: str,
-        *,
-        model: Optional[str] = None,
-        system_prompt: Optional[str] = None,
-        images: Optional[list[ImageAttachment]] = None,
-        temperature: float = 0.7,
-        max_tokens: int = 8192,
-        timeout_seconds: int = 300,
-        # Legacy parameters (ignored but accepted for compatibility)
-        deep_mode: bool = False,
-        new_chat: bool = True,
-        priority: str = "normal",
-        thread_id: Optional[str] = None,
-    ) -> LLMResponse:
-        """
-        Send a prompt to an LLM backend via OpenRouter.
-
-        Args:
-            backend: Backend alias ("gemini", "chatgpt", "claude", "deepseek")
-                     or full OpenRouter model ID
-            prompt: The prompt text
-            model: Override model (uses backend's default if not specified)
-            system_prompt: Optional system message
-            images: Optional list of ImageAttachment objects
-            temperature: Sampling temperature (0.0-2.0)
-            max_tokens: Maximum response tokens
-            timeout_seconds: Request timeout
-
-            # Legacy (accepted but ignored - for backward compatibility):
-            deep_mode, new_chat, priority, thread_id
-
-        Returns:
-            LLMResponse with the result
-        """
-        backend = backend.lower()
-
-        # Resolve model: explicit model > backend mapping > backend as model ID
-        resolved_model = model or self._models.get(backend, backend)
-
-        return await self._send_to_openrouter(
-            prompt=prompt,
-            model=resolved_model,
-            backend=backend,
-            system_prompt=system_prompt,
-            images=images,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            timeout_seconds=timeout_seconds,
+        self._circuit_breaker.record_failure(backend)
+        await self._publish_failed(backend, model, module, last_error)
+        raise LLMError(
+            f"All {total_attempts} attempts failed for {backend}: {last_error}",
+            backend=backend, is_transient=True,
         )
 
-    async def send_parallel(
-        self,
-        prompts: dict[str, str],
-        *,
-        timeout_seconds: int = 300,
-        temperature: float = 0.7,
-        max_tokens: int = 8192,
-    ) -> dict[str, LLMResponse]:
-        """
-        Send prompts to multiple backends in parallel.
+    # -- Event helpers -----------------------------------------------------
 
-        Args:
-            prompts: Dict mapping backend name to prompt text
-            timeout_seconds: Request timeout per backend
-            temperature: Sampling temperature
-            max_tokens: Maximum response tokens
+    async def _publish_completed(
+        self, backend: str, model: str, module: str,
+        elapsed_ms: float, token_usage: TokenUsage,
+    ) -> None:
+        await self._event_bus.publish(Event(
+            topic="llm.request.completed", timestamp=datetime.now(timezone.utc),
+            source="llm.client", correlation_id=str(uuid.uuid4()),
+            payload={
+                "backend": backend, "model": model, "module": module, "success": True,
+                "elapsed_ms": round(elapsed_ms, 1),
+                "prompt_tokens": token_usage.prompt_tokens,
+                "completion_tokens": token_usage.completion_tokens,
+                "estimated_cost_usd": token_usage.estimated_cost_usd,
+            },
+        ))
 
-        Returns:
-            Dict mapping backend name to LLMResponse
-        """
-        tasks = {}
-        for backend, prompt in prompts.items():
-            tasks[backend] = self.send(
-                backend,
-                prompt,
-                timeout_seconds=timeout_seconds,
-                temperature=temperature,
-                max_tokens=max_tokens,
-            )
-
-        results = await asyncio.gather(*tasks.values(), return_exceptions=True)
-
-        responses = {}
-        for backend, result in zip(tasks.keys(), results):
-            if isinstance(result, Exception):
-                responses[backend] = LLMResponse(
-                    success=False,
-                    error="exception",
-                    message=str(result),
-                    backend=backend,
-                )
-            else:
-                responses[backend] = result
-
-        return responses
-
-    async def get_available_backends(self) -> list[str]:
-        """
-        Get list of available backends.
-
-        Returns backends that have API key configured.
-        """
-        if self._openrouter_key:
-            return list(self._models.keys())
-        return []
-
-    def list_models(self) -> dict[str, str]:
-        """Get current backend -> model mappings."""
-        return dict(self._models)
-
-    # --- Convenience Methods ---
-
-    async def gemini(
-        self,
-        prompt: str,
-        *,
-        timeout_seconds: int = 300,
-        temperature: float = 0.7,
-    ) -> LLMResponse:
-        """Send prompt to Gemini via OpenRouter."""
-        return await self.send(
-            "gemini", prompt,
-            timeout_seconds=timeout_seconds,
-            temperature=temperature,
-        )
-
-    async def chatgpt(
-        self,
-        prompt: str,
-        *,
-        timeout_seconds: int = 300,
-        temperature: float = 0.7,
-    ) -> LLMResponse:
-        """Send prompt to ChatGPT/GPT-4 via OpenRouter."""
-        return await self.send(
-            "chatgpt", prompt,
-            timeout_seconds=timeout_seconds,
-            temperature=temperature,
-        )
-
-    async def claude(
-        self,
-        prompt: str,
-        *,
-        timeout_seconds: int = 300,
-        temperature: float = 0.7,
-    ) -> LLMResponse:
-        """Send prompt to Claude via OpenRouter."""
-        return await self.send(
-            "claude", prompt,
-            timeout_seconds=timeout_seconds,
-            temperature=temperature,
-        )
-
-    async def deepseek(
-        self,
-        prompt: str,
-        *,
-        timeout_seconds: int = 300,
-        temperature: float = 0.7,
-    ) -> LLMResponse:
-        """Send prompt to DeepSeek via OpenRouter."""
-        return await self.send(
-            "deepseek", prompt,
-            timeout_seconds=timeout_seconds,
-            temperature=temperature,
-        )
-
-    # --- Async Send (compatibility alias) ---
-
-    async def send_async(
-        self,
-        backend: str,
-        prompt: str,
-        job_id: str = "",
-        *,
-        thread_id: Optional[str] = None,
-        task_type: Optional[str] = None,
-        deep_mode: bool = False,
-        new_chat: bool = True,
-        priority: str = "normal",
-        poll_interval: float = 3.0,
-        timeout_seconds: int = 3600,
-        images: Optional[list[ImageAttachment]] = None,
-    ) -> LLMResponse:
-        """
-        Send a prompt (compatibility method).
-
-        With API-based access, this is equivalent to send() since all calls
-        are naturally async. The job_id and polling parameters are ignored.
-
-        Args:
-            backend: Which LLM backend
-            prompt: The prompt text
-            job_id: Ignored (was for pool job tracking)
-            images: Optional image attachments
-            timeout_seconds: Request timeout
-
-            # Legacy parameters (ignored):
-            thread_id, task_type, deep_mode, new_chat, priority, poll_interval
-
-        Returns:
-            LLMResponse with the result
-        """
-        return await self.send(
-            backend,
-            prompt,
-            images=images,
-            timeout_seconds=timeout_seconds,
-        )
+    async def _publish_failed(self, backend: str, model: str, module: str, error: str) -> None:
+        await self._event_bus.publish(Event(
+            topic="llm.request.failed", timestamp=datetime.now(timezone.utc),
+            source="llm.client", correlation_id=str(uuid.uuid4()),
+            payload={
+                "backend": backend, "model": model, "module": module,
+                "success": False, "error": error,
+            },
+        ))

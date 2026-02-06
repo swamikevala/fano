@@ -1,0 +1,80 @@
+# Project configuration: Fano Mathematics
+# Loaded by shared.config.Config as the project-level configuration.
+
+id: "fano-mathematics"
+name: "The Mathematics of Three"
+
+goal: >
+  Explore the mathematical structure that emerges from the principle
+  of "three" -- the idea that the first manifestation is always in the
+  form of three. Investigate its appearance across Indian traditions
+  (yogic systems, Sanskrit grammar, classical music, cosmology) and
+  modern mathematics (finite geometry, group theory, combinatorics).
+
+  We seek what is natural, elegant, beautiful, interesting, and
+  inevitable -- structure that must exist, not structure we impose.
+
+context: >
+  This research explores connections between:
+  the Fano plane incidence geometry (7 points, 7 lines, 3 points per line),
+  the Yogic energy system (chakras, nadis, 5 elements),
+  Sanskrit grammar (Panini's system, 14 Maheshvara Sutras),
+  the Sriyantra / Srichakra,
+  Indian classical music theory (12 swaras, 22 shrutis, 72 melakartas),
+  and Yogic/Tantric cosmology and practice systems.
+
+evaluation_criteria:
+  - name: "rigor"
+    description: "Are the claims logically sound and verifiable?"
+    weight: 1.0
+  - name: "structural_depth"
+    description: "Is this a genuine structural connection, not surface-level pattern matching?"
+    weight: 1.0
+  - name: "naturalness"
+    description: "Does this feel discovered rather than invented? Inevitable rather than forced?"
+    weight: 1.0
+  - name: "cross_domain_bridging"
+    description: "Does this connect multiple domains in a meaningful way?"
+    weight: 0.8
+  - name: "tradition_alignment"
+    description: "Does this align with how these traditions understand themselves?"
+    weight: 0.7
+
+exploration_guidance: >
+  Follow your mathematical curiosity. Let the structure reveal itself.
+  If something feels forced, abandon it. If something feels inevitable,
+  pursue it -- even if it seems unrelated to anything practical.
+
+  The standard to aspire to: "This HAS to be true. It would be
+  bizarre if it weren't."
+
+document_guidance: >
+  The document should build from first principles. Start with the
+  simplest structures and develop toward the profound. Each section
+  should feel like a natural next step from the previous one.
+
+  Use precise mathematical language but remain accessible to someone
+  with undergraduate mathematics background.
+
+seed_modification_enabled: true
+seed_modification_require_approval: false
+
+research_domains:
+  - name: "finite_geometry"
+    keywords: ["Fano plane", "projective plane", "incidence geometry", "PG(2,2)"]
+    source_types: ["academic_paper", "textbook", "lecture_notes"]
+    extraction_patterns:
+      - "\\b(?:theorem|lemma|proposition|corollary)\\s+\\d"
+  - name: "yogic_systems"
+    keywords: ["chakra", "nadi", "kundalini", "tantra"]
+    source_types: ["traditional_text", "commentary", "academic_study"]
+  - name: "sanskrit_grammar"
+    keywords: ["Panini", "Maheshvara Sutras", "Ashtadhyayi"]
+    source_types: ["academic_paper", "traditional_text"]
+  - name: "indian_music"
+    keywords: ["melakarta", "svara", "shruti", "raga"]
+    source_types: ["musicology", "traditional_treatise"]
+
+status: "active"
+created_at: "2025-01-01T00:00:00"
+updated_at: "2025-01-01T00:00:00"

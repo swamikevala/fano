@@ -1,242 +1,46 @@
-"""
-Status Blueprint - Status, config, and logs routes.
-"""
+"""Status blueprint — system health, metrics, events (v2 API)."""
 
-import json
-import os
-import socket
+from __future__ import annotations
 
-from flask import Blueprint, current_app, jsonify, request
+from flask import Blueprint, request
 
-from ..services import FANO_ROOT, LOGS_DIR, load_config, save_config
+from control.async_utils import run_async
 
-bp = Blueprint("status", __name__, url_prefix="/api")
+from .helpers import err, get_store, ok, serialize
+
+bp = Blueprint("status_v2", __name__, url_prefix="/api/status")
 
 
-def get_process_manager():
-    """Get the ProcessManager from the app context."""
-    return current_app.config.get("process_manager")
-
-
-def check_pool_health(host: str = "127.0.0.1", port: int = 9000) -> bool:
-    """
-    Pool health check is deprecated - LLM access is via API.
-
-    Always returns False since pool is no longer used.
-    """
-    return False
-
-
-def check_orchestrator_health(host: str = "127.0.0.1", port: int = 9001) -> bool:
-    """Check if orchestrator is responding to health checks."""
-    try:
-        import urllib.request
-        with urllib.request.urlopen(f"http://{host}:{port}/health", timeout=2) as resp:
-            return resp.status == 200
-    except Exception:
-        return False
-
-
-def get_orchestrator_status(host: str = "127.0.0.1", port: int = 9001) -> dict:
-    """Get orchestrator status from its API."""
-    try:
-        import urllib.request
-        with urllib.request.urlopen(f"http://{host}:{port}/status", timeout=2) as resp:
-            return json.loads(resp.read().decode())
-    except Exception:
-        return None
-
-
-def get_stats() -> dict:
-    """Get statistics from logs and data directories."""
-    stats = {
-        "documenter": {
-            "sections": 0,
-            "consensus_calls": 0,
-        },
-        "explorer": {
-            "threads": 0,
-            "blessed": 0,
-        },
-        "researcher": {
-            "sources": 0,
-            "findings": 0,
-            "patterns": 0,
-            "top_numbers": {},
+@bp.route("", methods=["GET"])
+def status():
+    """Return module health overview."""
+    # In v2, modules register health via events. For now, return a stub
+    # indicating the control panel itself is healthy.
+    data = {
+        "modules": {
+            "control": {"healthy": True, "message": "Control panel running"},
+            "explorer": {"healthy": False, "message": "Not connected"},
+            "documenter": {"healthy": False, "message": "Not connected"},
+            "researcher": {"healthy": False, "message": "Not connected"},
         },
     }
-
-    # Get documenter stats from most recent session summary
-    doc_log = LOGS_DIR / "documenter.jsonl"
-    if doc_log.exists():
-        try:
-            with open(doc_log, "r", encoding="utf-8") as f:
-                for line in reversed(f.readlines()):
-                    try:
-                        entry = json.loads(line)
-                        if entry.get("event_type") == "documenter.session.summary":
-                            stats["documenter"]["sections"] = entry.get("sections", 0)
-                            stats["documenter"]["consensus_calls"] = entry.get("consensus_calls", 0)
-                            break
-                    except json.JSONDecodeError:
-                        pass
-        except Exception:
-            pass
-
-    # Get explorer stats
-    blessed_dir = FANO_ROOT / "explorer" / "data" / "chunks" / "insights" / "blessed"
-    if blessed_dir.exists():
-        stats["explorer"]["blessed"] = len(list(blessed_dir.glob("*.json")))
-
-    # Count active exploration threads
-    explorations_dir = FANO_ROOT / "explorer" / "data" / "explorations"
-    if explorations_dir.exists():
-        active_count = 0
-        for f in explorations_dir.glob("*.json"):
-            try:
-                with open(f, "r", encoding="utf-8") as fp:
-                    data = json.load(fp)
-                    if data.get("status") == "active":
-                        active_count += 1
-            except Exception:
-                pass
-        stats["explorer"]["threads"] = active_count
-
-    # Get researcher stats
-    try:
-        from researcher.src import ResearcherAPI
-        api = ResearcherAPI(FANO_ROOT / "researcher" / "data")
-        researcher_stats = api.get_statistics()
-        stats["researcher"] = {
-            "sources": researcher_stats.get("sources", 0),
-            "findings": researcher_stats.get("findings", 0),
-            "patterns": researcher_stats.get("cross_domain_numbers", 0),
-            "top_numbers": researcher_stats.get("top_numbers", {}),
-        }
-    except Exception:
-        pass  # Keep default zeros
-
-    return stats
+    return ok(data)
 
 
-@bp.route("/status")
-def api_status():
-    """Get status of all components."""
-    config = load_config()
-    pool_host = config.get("llm", {}).get("pool", {}).get("host", "127.0.0.1")
-    pool_port = config.get("llm", {}).get("pool", {}).get("port", 9000)
+@bp.route("/metrics", methods=["GET"])
+def metrics():
+    name = request.args.get("name")
+    if not name:
+        return err("name query parameter is required", "VALIDATION_ERROR")
 
-    pm = get_process_manager()
-
-    # Check pool status - either via subprocess OR by checking if port is responding
-    pool_proc_running = pm.is_running("pool") if pm else False
-    pool_responding = check_pool_health(pool_host, pool_port)
-    pool_running = pool_proc_running or pool_responding
-
-    # Check explorer status - only via subprocess (explorer orchestrator is a background process)
-    # Note: check_explorer_health() was checking port 8765 which is the control panel itself, not explorer
-    explorer_running = pm.is_running("explorer") if pm else False
-
-    # Check documenter status
-    documenter_running = pm.is_running("documenter") if pm else False
-
-    # Check researcher status
-    researcher_running = pm.is_running("researcher") if pm else False
-
-    # Check orchestrator status
-    orchestrator_proc_running = pm.is_running("orchestrator") if pm else False
-    orchestrator_responding = check_orchestrator_health()
-    orchestrator_running = orchestrator_proc_running or orchestrator_responding
-    orchestrator_status = get_orchestrator_status() if orchestrator_running else None
-
-    # Get backend status
-    backends = {}
-    llm_config = config.get("llm", {}).get("backends", {})
-    for name, backend_config in llm_config.items():
-        backends[name] = {
-            "enabled": backend_config.get("enabled", False),
-            "type": backend_config.get("type", "unknown"),
-            "available": False,  # Will be updated by pool status check
-        }
-
-    # All LLM access is now via OpenRouter API
-    openrouter_available = bool(os.environ.get("OPENROUTER_API_KEY"))
-    for backend_name in ["gemini", "chatgpt", "claude", "deepseek"]:
-        if backend_name in backends:
-            backends[backend_name]["available"] = openrouter_available
-            backends[backend_name]["type"] = "api"
-
-    # Get stats from logs
-    stats = get_stats()
-
-    return jsonify({
-        "pool": {
-            "running": pool_running,
-            "pid": pm.get_pid("pool") if pm else None,
-            "external": pool_responding and not pool_proc_running,
-        },
-        "orchestrator": {
-            "running": orchestrator_running,
-            "pid": pm.get_pid("orchestrator") if pm else None,
-            "external": orchestrator_responding and not orchestrator_proc_running,
-            "status": orchestrator_status,
-        },
-        "explorer": {
-            "running": explorer_running,
-            "pid": pm.get_pid("explorer") if pm else None,
-        },
-        "documenter": {
-            "running": documenter_running,
-            "pid": pm.get_pid("documenter") if pm else None,
-        },
-        "researcher": {
-            "running": researcher_running,
-            "pid": pm.get_pid("researcher") if pm else None,
-        },
-        "backends": backends,
-        "stats": stats,
-    })
+    store = get_store()
+    rows = run_async(store.query_metrics(name))
+    return ok(rows)
 
 
-@bp.route("/logs/<component>")
-def api_logs(component: str):
-    """Get recent logs for a component."""
-    if component not in ["pool", "explorer", "documenter", "orchestrator", "llm", "researcher"]:
-        return jsonify({"error": f"Unknown component: {component}"}), 400
-
-    log_file = LOGS_DIR / f"{component}.jsonl"
-    if not log_file.exists():
-        return jsonify({"logs": []})
-
-    # Get last N lines
-    limit = request.args.get("limit", 100, type=int)
-    lines = []
-    try:
-        with open(log_file, "r", encoding="utf-8") as f:
-            all_lines = f.readlines()
-            for line in all_lines[-limit:]:
-                try:
-                    lines.append(json.loads(line))
-                except json.JSONDecodeError:
-                    pass
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-    return jsonify({"logs": lines})
-
-
-@bp.route("/config")
-def api_config():
-    """Get current configuration."""
-    return jsonify(load_config())
-
-
-@bp.route("/config", methods=["POST"])
-def api_update_config():
-    """Update configuration."""
-    try:
-        new_config = request.json
-        save_config(new_config)
-        return jsonify({"status": "updated"})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+@bp.route("/events", methods=["GET"])
+def events():
+    store = get_store()
+    topic = request.args.get("topic")
+    rows = run_async(store.list_events(topic=topic))
+    return ok([serialize(e) for e in rows])
